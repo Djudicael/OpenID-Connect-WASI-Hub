@@ -1,0 +1,22 @@
+[package]
+name = "oidc-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
+argon2 = { workspace = true }
+password-hash = { workspace = true }
+rand = { version = "0.8", features = ["getrandom"] }
+
+[dev-dependencies]
+pretty_assertions = "1"
+proptest = "1"

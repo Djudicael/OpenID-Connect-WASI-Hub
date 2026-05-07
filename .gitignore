@@ -1,0 +1,15 @@
+/target
+**/*.rs.bk
+*.wasm
+*.wasm.gz
+Cargo.lock
+.DS_Store
+node_modules/
+dist/
+*.log
+.env
+.env.local
+front/admin/dist/
+*.dump
+*.pem
+*.key

@@ -1,0 +1,38 @@
+[package]
+name = "openid-connect-wasi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "openid_connect_wasi"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+oidc-core = { path = "../oidc-core" }
+oidc-repository = { path = "../oidc-repository" }
+oidc-oidc = { path = "../oidc-oidc" }
+oidc-apikey = { path = "../oidc-apikey" }
+oidc-mls = { path = "../oidc-mls" }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { version = "0.6", features = ["cors"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wstd = { workspace = true }
+wstd-axum = { workspace = true }
+wasi = { workspace = true }
+getrandom = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

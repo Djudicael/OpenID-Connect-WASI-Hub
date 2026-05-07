@@ -1,0 +1,17 @@
+[build]
+# Default to native target for dev/tests.
+# Use --target wasm32-wasip2 for WASI builds.
+
+[target.wasm32-wasip2]
+runner = "wasmtime run --wasi inherit-network --wasi inherit-env"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+opt-level = 0
+debug = true

@@ -1,0 +1,19 @@
+{
+  "name": "oidc-admin-ui",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "OpenID Connect Hub Admin UI - Native Web Components",
+  "scripts": {
+    "dev": "node dev.js",
+    "build": "node buildJs.js",
+    "build:watch": "nodemon --watch app --watch style buildJs.js"
+  },
+  "dependencies": {
+    "esbuild": "^0.25",
+    "lit-html": "^3"
+  },
+  "devDependencies": {
+    "express": "^4",
+    "nodemon": "^3"
+  }
+}

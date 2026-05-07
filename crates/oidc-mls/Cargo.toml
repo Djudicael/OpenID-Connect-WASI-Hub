@@ -1,0 +1,23 @@
+[package]
+name = "oidc-mls"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+oidc-core = { path = "../oidc-core" }
+oidc-repository = { path = "../oidc-repository" }
+axum = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+aes-gcm = "0.10"
+sha2 = { workspace = true }
+hkdf = "0.12"
+chrono = { version = "0.4", features = ["serde"] }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+openmls = { workspace = true }
