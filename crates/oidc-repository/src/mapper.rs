@@ -28,7 +28,11 @@ pub fn json_string_vec(row: &Row, idx: usize) -> Result<Vec<String>, OidcError> 
 
 /// Serialize a `Vec<String>` into a JSONB value for parameter binding.
 pub fn to_json_value_vec(v: &[String]) -> serde_json::Value {
-    serde_json::Value::Array(v.iter().map(|s| serde_json::Value::String(s.clone())).collect())
+    serde_json::Value::Array(
+        v.iter()
+            .map(|s| serde_json::Value::String(s.clone()))
+            .collect(),
+    )
 }
 
 /// Extract a required `Uuid` from a row column.
@@ -66,3 +70,27 @@ pub fn opt_i64(row: &Row, idx: usize) -> Result<Option<i64>, OidcError> {
     row.get::<Option<i64>>(idx).map_err(pg_err)
 }
 
+/// Extract a required `DateTime<Utc>` from a row column.
+pub fn datetime(row: &Row, idx: usize) -> Result<chrono::DateTime<chrono::Utc>, OidcError> {
+    row.get::<chrono::DateTime<chrono::Utc>>(idx)
+        .map_err(pg_err)
+}
+
+/// Extract an optional `DateTime<Utc>` from a row column.
+pub fn opt_datetime(
+    row: &Row,
+    idx: usize,
+) -> Result<Option<chrono::DateTime<chrono::Utc>>, OidcError> {
+    row.get::<Option<chrono::DateTime<chrono::Utc>>>(idx)
+        .map_err(pg_err)
+}
+
+/// Extract a required `Vec<u8>` from a row column.
+pub fn bytes(row: &Row, idx: usize) -> Result<Vec<u8>, OidcError> {
+    row.get::<Vec<u8>>(idx).map_err(pg_err)
+}
+
+/// Extract an optional `Vec<u8>` from a row column.
+pub fn opt_bytes(row: &Row, idx: usize) -> Result<Option<Vec<u8>>, OidcError> {
+    row.get::<Option<Vec<u8>>>(idx).map_err(pg_err)
+}

@@ -1,7 +1,23 @@
 //! Integration tests for the OpenID Connect WASI Hub.
+//!
+//! These tests require a running PostgreSQL instance. Set `TEST_DATABASE_URL`
+//! or use the default `postgresql://postgres:postgres@localhost:5433/oidc_hub_test`.
+//!
+//! To run with a fresh test container:
+//! ```bash
+//! podman run --rm -d -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=oidc_hub_test \
+//!   -p 5433:5432 --name oidc_test_pg postgres:16-alpine
+//! OIDC_DATABASE_URL=postgresql://postgres:postgres@localhost:5433/oidc_hub_test \
+//!   cargo run -p oidc-migrate
+//! TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5433/oidc_hub_test \
+//!   cargo test -p integration-tests -- --test-threads=1
+//! ```
 
 #[cfg(test)]
-mod tests {
+pub mod db_tests;
+
+#[cfg(test)]
+mod http_tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use http_body_util::BodyExt;
@@ -91,45 +107,5 @@ mod tests {
         assert!(key["kid"].as_str().is_some());
         assert!(key["n"].as_str().is_some());
         assert!(key["e"].as_str().is_some());
-    }
-
-    #[tokio::test]
-    async fn test_api_keys_list_endpoint_exists() {
-        let app = app_router();
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/keys?realm_id=00000000-0000-0000-0000-000000000001")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        // Without a test database, this returns 500. The endpoint exists and is wired correctly.
-        // TODO: spin up a test database or mock the repository to assert 200 OK.
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    }
-
-    #[tokio::test]
-    async fn test_api_keys_create_endpoint_exists() {
-        let app = app_router();
-        let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/api/keys")
-                    .method("POST")
-                    .header("content-type", "application/json")
-                    .body(Body::from(
-                        r#"{"realm_id":"00000000-0000-0000-0000-000000000001","name":"test-key","scopes":["read"]}"#,
-                    ))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        // Without a test database, this returns 500. The endpoint exists and is wired correctly.
-        // TODO: spin up a test database or mock the repository to assert 201/200.
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

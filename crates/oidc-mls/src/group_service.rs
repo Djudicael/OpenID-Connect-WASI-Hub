@@ -1,7 +1,7 @@
 //! MLS group lifecycle service.
 
-use oidc_core::models::mls::MlsGroup;
 use oidc_core::OidcError;
+use oidc_core::models::mls::MlsGroup;
 use oidc_repository::Connection;
 use uuid::Uuid;
 
@@ -26,26 +26,33 @@ impl GroupService {
         "#;
         conn.execute_params(
             sql,
-            &[&id, &group_id, &realm_id, &(epoch as i64), &group_state_encrypted],
+            &[
+                &id,
+                &group_id,
+                &realm_id,
+                &(epoch as i64),
+                &group_state_encrypted,
+            ],
         )
         .await
         .map_err(|e| OidcError::Internal(e.to_string()))?;
 
         Ok(MlsGroup {
             id,
+            group_id,
             realm_id,
             epoch,
-            active: true,
+            roster_hash: None,
+            group_state_encrypted,
+            welcome_message: None,
         })
     }
 
     /// Find a group by its ID.
-    pub async fn get_group(
-        conn: &mut Connection,
-        id: Uuid,
-    ) -> Result<Option<MlsGroup>, OidcError> {
+    pub async fn get_group(conn: &mut Connection, id: Uuid) -> Result<Option<MlsGroup>, OidcError> {
         let sql = r#"
-            SELECT id, realm_id, epoch, group_state_encrypted IS NOT NULL as active
+            SELECT id, group_id, realm_id, epoch, roster_hash,
+                   group_state_encrypted, welcome_message
             FROM mls_groups WHERE id = $1
         "#;
         let row = conn
@@ -55,14 +62,20 @@ impl GroupService {
 
         Ok(row.map(|r| {
             let id: Uuid = r.get(0).unwrap();
-            let realm_id: Uuid = r.get(1).unwrap();
-            let epoch: i64 = r.get(2).unwrap();
-            let active: bool = r.get(3).unwrap();
+            let group_id: Vec<u8> = r.get(1).unwrap();
+            let realm_id: Uuid = r.get(2).unwrap();
+            let epoch: i64 = r.get(3).unwrap();
+            let roster_hash: Option<Vec<u8>> = r.get(4).unwrap();
+            let group_state_encrypted: Vec<u8> = r.get(5).unwrap();
+            let welcome_message: Option<Vec<u8>> = r.get(6).unwrap();
             MlsGroup {
                 id,
+                group_id,
                 realm_id,
                 epoch: epoch as u64,
-                active,
+                roster_hash,
+                group_state_encrypted,
+                welcome_message,
             }
         }))
     }

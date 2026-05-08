@@ -68,7 +68,9 @@ pub async fn join_group<S: MlsState>(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    Ok(Json(json!({"joined": true, "group_id": group_id, "user_id": req.user_id})))
+    Ok(Json(
+        json!({"joined": true, "group_id": group_id, "user_id": req.user_id}),
+    ))
 }
 
 /// Send a commit to a group.
@@ -95,7 +97,9 @@ pub async fn send_commit<S: MlsState>(
             StatusCode::BAD_REQUEST
         })?;
 
-    Ok(Json(json!({"epoch": req.epoch, "accepted": true, "group_id": group_id})))
+    Ok(Json(
+        json!({"epoch": req.epoch, "accepted": true, "group_id": group_id}),
+    ))
 }
 
 /// Upload a KeyPackage.
@@ -150,7 +154,7 @@ pub async fn welcome<S: MlsState>(
             "id": g.id,
             "realm_id": g.realm_id,
             "epoch": g.epoch,
-            "active": g.active,
+            "active": !g.group_state_encrypted.is_empty(),
         }))),
         None => Err(StatusCode::NOT_FOUND),
     }

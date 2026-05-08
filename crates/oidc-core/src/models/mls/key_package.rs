@@ -10,6 +10,12 @@ pub struct KeyPackageEntry {
     pub user_id: Uuid,
     /// MLS KeyPackage reference hash.
     pub key_package_ref: Vec<u8>,
+    /// Encrypted KeyPackage bytes.
+    pub key_package_encrypted: Vec<u8>,
     /// Whether this KeyPackage has been consumed.
     pub used: bool,
+    /// When the KeyPackage was created.
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    /// Optional expiration timestamp.
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }

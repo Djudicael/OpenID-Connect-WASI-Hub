@@ -1,8 +1,13 @@
 //! Repository implementations.
 
 pub mod api_key_repo;
+pub mod audit_event_repo;
 pub mod auth_code_repo;
 pub mod client_repo;
+pub mod mls_group_repo;
+pub mod mls_key_package_repo;
+pub mod mls_member_repo;
 pub mod realm_repo;
 pub mod session_repo;
+pub mod signing_key_repo;
 pub mod user_repo;

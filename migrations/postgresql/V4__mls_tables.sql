@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS mls_members (
     group_id UUID NOT NULL REFERENCES mls_groups(id),
     user_id UUID NOT NULL REFERENCES users(id),
     credential BYTEA NOT NULL,
-    leaf_index INTEGER NOT NULL,
+    leaf_index BIGINT NOT NULL,
     added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     removed_at TIMESTAMPTZ,
     UNIQUE(group_id, user_id)

@@ -9,9 +9,12 @@ openid-connect-wasi = { path = "../../crates/openid-connect-wasi" }
 oidc-core = { path = "../../crates/oidc-core" }
 oidc-repository = { path = "../../crates/oidc-repository" }
 axum = { workspace = true }
-tokio = { workspace = true, features = ["macros"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 tower = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 http-body-util = "0.1"
+wasi-pg-client = { workspace = true, features = ["tokio-transport", "uuid", "chrono", "serde-json"] }
+tracing = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }

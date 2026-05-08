@@ -3,8 +3,8 @@
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use hkdf::Hkdf;
-use oidc_core::models::mls::KeyPackageEntry;
 use oidc_core::OidcError;
+use oidc_core::models::mls::KeyPackageEntry;
 use oidc_repository::Connection;
 use sha2::Sha256;
 use uuid::Uuid;
@@ -69,20 +69,27 @@ impl KeyPackageStore {
         let id = oidc_core::utils::generate_uuid_v7();
         let key_package_ref = sha2_256(&key_package_data);
         let (encrypted, _nonce) = Self::encrypt(&key_package_data)?;
+        let created_at = chrono::Utc::now();
 
         let sql = r#"
-            INSERT INTO mls_key_packages (id, user_id, key_package_ref, key_package_encrypted)
-            VALUES ($1, $2, $3, $4)
+            INSERT INTO mls_key_packages (id, user_id, key_package_ref, key_package_encrypted, created_at)
+            VALUES ($1, $2, $3, $4, $5)
         "#;
-        conn.execute_params(sql, &[&id, &user_id, &key_package_ref, &encrypted])
-            .await
-            .map_err(|e| OidcError::Internal(e.to_string()))?;
+        conn.execute_params(
+            sql,
+            &[&id, &user_id, &key_package_ref, &encrypted, &created_at],
+        )
+        .await
+        .map_err(|e| OidcError::Internal(e.to_string()))?;
 
         Ok(KeyPackageEntry {
             id,
             user_id,
             key_package_ref,
+            key_package_encrypted: encrypted,
             used: false,
+            created_at,
+            expires_at: None,
         })
     }
 
@@ -92,7 +99,7 @@ impl KeyPackageStore {
         key_package_ref: &[u8],
     ) -> Result<Option<KeyPackageEntry>, OidcError> {
         let sql = r#"
-            SELECT id, user_id, key_package_ref, used
+            SELECT id, user_id, key_package_ref, key_package_encrypted, used, created_at, expires_at
             FROM mls_key_packages
             WHERE key_package_ref = $1
         "#;
@@ -105,12 +112,18 @@ impl KeyPackageStore {
             let id: Uuid = r.get(0).unwrap();
             let user_id: Uuid = r.get(1).unwrap();
             let key_package_ref: Vec<u8> = r.get(2).unwrap();
-            let used: bool = r.get(3).unwrap();
+            let key_package_encrypted: Vec<u8> = r.get(3).unwrap();
+            let used: bool = r.get(4).unwrap();
+            let created_at: chrono::DateTime<chrono::Utc> = r.get(5).unwrap();
+            let expires_at: Option<chrono::DateTime<chrono::Utc>> = r.get(6).unwrap();
             KeyPackageEntry {
                 id,
                 user_id,
                 key_package_ref,
+                key_package_encrypted,
                 used,
+                created_at,
+                expires_at,
             }
         }))
     }
