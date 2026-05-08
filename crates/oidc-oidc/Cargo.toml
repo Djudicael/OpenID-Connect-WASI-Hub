@@ -23,6 +23,7 @@ rand = { version = "0.8", features = ["getrandom"] }
 getrandom = { workspace = true }
 urlencoding = "2"
 hex = "0.4"
+url = "2"
 wasi-pg-client = { workspace = true }
 
 [dev-dependencies]

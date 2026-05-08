@@ -1,43 +1,53 @@
-/// Abstract clock for deterministic testing.
+//! Clock trait for mockable time.
+
+/// A trait for getting the current time.
+/// Allows deterministic testing by injecting a mock clock.
 pub trait Clock: Send + Sync {
-    /// Return the current time as seconds since UNIX epoch.
-    fn now(&self) -> u64;
+    /// Returns the current Unix timestamp in seconds.
+    fn now_secs(&self) -> i64;
 }
 
-/// System clock implementation.
+/// Production clock using the system time.
 pub struct SystemClock;
 
 impl Clock for SystemClock {
-    fn now(&self) -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
+    fn now_secs(&self) -> i64 {
+        chrono::Utc::now().timestamp()
     }
 }
 
-/// Mock clock for tests.
+/// Mock clock for deterministic tests.
 pub struct MockClock {
-    seconds: std::sync::atomic::AtomicU64,
+    timestamp: i64,
 }
 
 impl MockClock {
-    /// Create a new mock clock at the given time.
-    pub fn at(seconds: u64) -> Self {
-        Self {
-            seconds: std::sync::atomic::AtomicU64::new(seconds),
-        }
+    /// Create a new mock clock at a specific timestamp.
+    pub fn new(timestamp: i64) -> Self {
+        Self { timestamp }
     }
 
     /// Advance the clock by the given number of seconds.
-    pub fn advance(&self, seconds: u64) {
-        self.seconds
-            .fetch_add(seconds, std::sync::atomic::Ordering::Relaxed);
+    pub fn advance(&mut self, secs: i64) {
+        self.timestamp += secs;
     }
 }
 
 impl Clock for MockClock {
-    fn now(&self) -> u64 {
-        self.seconds.load(std::sync::atomic::Ordering::Relaxed)
+    fn now_secs(&self) -> i64 {
+        self.timestamp
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mock_clock() {
+        let mut clock = MockClock::new(1000);
+        assert_eq!(clock.now_secs(), 1000);
+        clock.advance(500);
+        assert_eq!(clock.now_secs(), 1500);
     }
 }

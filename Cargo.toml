@@ -7,6 +7,7 @@ members = [
     "crates/oidc-apikey",
     "crates/oidc-mls",
     "crates/openid-connect-wasi",
+    "crates/oidc-migrate",
     "tests/integration",
 ]
 
@@ -64,4 +65,3 @@ openmls = "0.6"
 
 # Dev
 tokio = { version = "1", features = ["rt", "macros", "time"] }
-

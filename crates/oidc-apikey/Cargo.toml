@@ -20,6 +20,7 @@ getrandom = { workspace = true }
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
+wasi-pg-client = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }

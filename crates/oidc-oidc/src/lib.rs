@@ -5,6 +5,7 @@
 #![allow(missing_docs)]
 
 pub mod endpoints;
+pub mod errors;
 pub mod flows;
 pub mod state;
 pub mod tokens;

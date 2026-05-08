@@ -33,3 +33,11 @@ CREATE TABLE IF NOT EXISTS mls_key_packages (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at TIMESTAMPTZ
 );
+
+CREATE TABLE IF NOT EXISTS mls_commits (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id UUID NOT NULL REFERENCES mls_groups(id),
+    epoch BIGINT NOT NULL,
+    commit_data BYTEA NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

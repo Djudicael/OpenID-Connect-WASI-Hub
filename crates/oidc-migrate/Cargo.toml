@@ -1,0 +1,19 @@
+[package]
+name = "oidc-migrate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "oidc-migrate"
+path = "src/main.rs"
+
+[dependencies]
+oidc-core = { path = "../oidc-core" }
+oidc-repository = { path = "../oidc-repository" }
+wasi-pg-client = { workspace = true, features = ["tokio-transport"] }
+tokio = { workspace = true, features = ["rt", "macros"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }

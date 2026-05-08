@@ -44,6 +44,10 @@ pub enum OidcError {
     #[error("unsupported grant type")]
     UnsupportedGrantType,
 
+    /// Invalid scope.
+    #[error("invalid scope: {0}")]
+    InvalidScope(String),
+
     /// Internal server error.
     #[error("internal error: {0}")]
     Internal(String),

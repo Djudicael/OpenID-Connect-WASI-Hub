@@ -1,10 +1,11 @@
-use chrono::Utc;
 use oidc_core::errors::OidcError;
 use oidc_core::traits::token_service::TokenService;
+use oidc_core::traits::Clock;
 use rsa::traits::PublicKeyParts;
 use rsa::{RsaPrivateKey, RsaPublicKey};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
+use std::sync::Arc;
 
 /// JWT header.
 #[derive(Debug, Serialize, Deserialize)]
@@ -61,20 +62,34 @@ pub struct Jwks {
 }
 
 /// Pure-Rust JWT token service using RS256 (WASM-compatible).
-#[derive(Clone)]
 pub struct JwtTokenService {
     issuer: String,
     private_key: RsaPrivateKey,
     kid: String,
     access_token_ttl_secs: i64,
     id_token_ttl_secs: i64,
+    clock: Arc<dyn Clock>,
+}
+
+impl Clone for JwtTokenService {
+    fn clone(&self) -> Self {
+        Self {
+            issuer: self.issuer.clone(),
+            private_key: self.private_key.clone(),
+            kid: self.kid.clone(),
+            access_token_ttl_secs: self.access_token_ttl_secs,
+            id_token_ttl_secs: self.id_token_ttl_secs,
+            clock: Arc::new(oidc_core::traits::clock::SystemClock),
+        }
+    }
 }
 
 impl JwtTokenService {
     /// Create a new token service, generating a fresh RSA keypair.
     pub fn new(issuer: impl Into<String>) -> Result<Self, OidcError> {
         let issuer = issuer.into();
-        let mut rng = rand::thread_rng();
+        use rand::rngs::OsRng;
+        let mut rng = OsRng;
         let private_key =
             RsaPrivateKey::new(&mut rng, 2048).map_err(|e| OidcError::Internal(e.to_string()))?;
 
@@ -84,6 +99,25 @@ impl JwtTokenService {
             kid: "key-1".to_string(),
             access_token_ttl_secs: 900, // 15 minutes
             id_token_ttl_secs: 3600,    // 1 hour
+            clock: Arc::new(oidc_core::traits::clock::SystemClock),
+        })
+    }
+
+    /// Create a new token service with a custom clock (for testing).
+    pub fn with_clock(issuer: impl Into<String>, clock: Arc<dyn Clock>) -> Result<Self, OidcError> {
+        let issuer = issuer.into();
+        use rand::rngs::OsRng;
+        let mut rng = OsRng;
+        let private_key =
+            RsaPrivateKey::new(&mut rng, 2048).map_err(|e| OidcError::Internal(e.to_string()))?;
+
+        Ok(Self {
+            issuer,
+            private_key,
+            kid: "key-1".to_string(),
+            access_token_ttl_secs: 900,
+            id_token_ttl_secs: 3600,
+            clock,
         })
     }
 
@@ -107,7 +141,7 @@ impl JwtTokenService {
     }
 
     fn now(&self) -> i64 {
-        Utc::now().timestamp()
+        self.clock.now_secs()
     }
 
     /// Encode a JWT manually: base64url(header) + "." + base64url(payload) + "." + base64url(signature)

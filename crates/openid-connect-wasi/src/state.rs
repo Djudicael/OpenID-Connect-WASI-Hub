@@ -11,6 +11,8 @@ pub struct AppState {
     pub token_service: Arc<oidc_oidc::tokens::JwtTokenService>,
     /// Password/API-key hasher.
     pub hasher: Arc<dyn oidc_core::traits::Hasher>,
+    /// Database configuration for per-request connections.
+    pub db_config: wasi_pg_client::Config,
 }
 
 /// Runtime configuration.
@@ -30,6 +32,18 @@ pub struct AppConfig {
     pub mls_enabled: bool,
 }
 
+impl oidc_apikey::ApiKeyState for AppState {
+    fn db_config(&self) -> &wasi_pg_client::Config {
+        &self.db_config
+    }
+}
+
+impl oidc_mls::MlsState for AppState {
+    fn db_config(&self) -> &wasi_pg_client::Config {
+        &self.db_config
+    }
+}
+
 impl AppState {
     /// Load state from environment variables.
     pub fn from_env() -> Self {
@@ -42,8 +56,7 @@ impl AppState {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(8080),
-            issuer: std::env::var("OIDC_ISSUER")
-                .unwrap_or_else(|_| "http://localhost:8080".into()),
+            issuer: std::env::var("OIDC_ISSUER").unwrap_or_else(|_| "http://localhost:8080".into()),
             encryption_key: std::env::var("OIDC_ENCRYPTION_KEY").unwrap_or_default(),
             mls_enabled: std::env::var("OIDC_MLS_ENABLED")
                 .map(|s| s.eq_ignore_ascii_case("true"))
@@ -54,10 +67,14 @@ impl AppState {
             Arc::new(oidc_oidc::tokens::JwtTokenService::new(&config.issuer).unwrap());
         let hasher = Arc::new(oidc_core::traits::hasher::Argon2idHasher::new());
 
+        let db_config = wasi_pg_client::Config::from_uri(&config.database_url)
+            .unwrap_or_else(|_| wasi_pg_client::Config::new());
+
         Self {
             config: Arc::new(config),
             token_service,
             hasher,
+            db_config,
         }
     }
 

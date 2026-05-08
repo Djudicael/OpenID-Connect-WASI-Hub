@@ -8,7 +8,10 @@ publish = false
 openid-connect-wasi = { path = "../../crates/openid-connect-wasi" }
 oidc-core = { path = "../../crates/oidc-core" }
 oidc-repository = { path = "../../crates/oidc-repository" }
-tokio = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true, features = ["macros"] }
+tower = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
+http-body-util = "0.1"

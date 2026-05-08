@@ -1,8 +1,9 @@
 //! OIDC protocol routes.
 
+use axum::Json;
+use axum::Router;
 use axum::extract::{Form, Query, State};
 use axum::routing::{get, post};
-use axum::Router;
 use std::collections::HashMap;
 
 use crate::state::AppState;
@@ -26,13 +27,19 @@ pub fn router() -> Router<AppState> {
                 .await
                 .unwrap_or_else(|e| axum::Json(serde_json::json!({"error": e.to_string() })))
         }))
-        .route("/oidc/userinfo", get(|| async move {
-            oidc_oidc::endpoints::userinfo::userinfo_handler().await
+        .route("/oidc/userinfo", get(|State(state): State<AppState>, headers: axum::http::HeaderMap| async move {
+            let auth = headers.get(axum::http::header::AUTHORIZATION).cloned();
+            oidc_oidc::endpoints::userinfo::userinfo_handler(State(state.oidc_state()), auth).await
+                .unwrap_or_else(|_| axum::Json(serde_json::json!({"error": "invalid_token"})))
         }))
-        .route("/oidc/introspect", post(|| async move {
-            oidc_oidc::endpoints::introspect::introspect_handler().await
+        .route("/oidc/introspect", post(|State(state): State<AppState>, form: Form<HashMap<String, String>>| async move {
+            oidc_oidc::endpoints::introspect::introspect_handler(State(state.oidc_state()), form).await
         }))
-        .route("/oidc/revoke", post(|| async move {
-            oidc_oidc::endpoints::revoke::revoke_handler().await
+        .route("/oidc/revoke", post(|State(state): State<AppState>, form: Form<HashMap<String, String>>| async move {
+            oidc_oidc::endpoints::revoke::revoke_handler(State(state.oidc_state()), form).await
+        }))
+        .route("/oidc/register", post(|State(state): State<AppState>, Json(req): Json<oidc_oidc::endpoints::registration::RegisterClientRequest>| async move {
+            oidc_oidc::endpoints::registration::register_handler(state.oidc_state(), Json(req)).await
+                .unwrap_or_else(|e| axum::Json(serde_json::json!({"error": e.to_string()})))
         }))
 }

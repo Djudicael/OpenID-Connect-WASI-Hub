@@ -20,3 +20,25 @@ pub fn build_router() -> Router {
             crate::middleware::logging::logging_middleware,
         ))
 }
+
+/// Run the axum server on a TCP listener with graceful shutdown on SIGTERM.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn run_tcp(app: Router, addr: &str, port: u16) -> anyhow::Result<()> {
+    let listener = tokio::net::TcpListener::bind(format!("{}:{}", addr, port)).await?;
+    tracing::info!("Listening on {}:{}", addr, port);
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+
+    Ok(())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn shutdown_signal() {
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        .expect("failed to install SIGTERM handler");
+
+    sigterm.recv().await;
+    tracing::info!("SIGTERM received, starting graceful shutdown");
+}

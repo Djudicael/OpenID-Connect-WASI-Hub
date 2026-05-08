@@ -1,7 +1,7 @@
 use crate::connection::Connection;
 use crate::mapper;
-use oidc_core::models::Session;
 use oidc_core::OidcError;
+use oidc_core::models::Session;
 use uuid::Uuid;
 
 /// PostgreSQL implementation of the Session repository.
@@ -21,7 +21,10 @@ impl SessionRepo {
             FROM sessions
             WHERE id = $1
         "#;
-        let row = conn.query_one_params(sql, &[&id]).await.map_err(mapper::pg_err)?;
+        let row = conn
+            .query_one_params(sql, &[&id])
+            .await
+            .map_err(mapper::pg_err)?;
         row.map(|r| Self::map_row(&r)).transpose()
     }
 
@@ -72,6 +75,46 @@ impl SessionRepo {
         .await
         .map_err(mapper::pg_err)?;
         Ok(())
+    }
+
+    /// Find a non-revoked session by refresh token hash.
+    pub async fn find_by_refresh_token_hash(
+        &self,
+        conn: &mut Connection,
+        hash: &str,
+    ) -> Result<Option<Session>, OidcError> {
+        let sql = r#"
+            SELECT id, user_id, realm_id, client_id, grant_type,
+                   access_token_hash, refresh_token_hash, id_token_jti,
+                   scope, revoked
+            FROM sessions
+            WHERE refresh_token_hash = $1 AND NOT revoked
+        "#;
+        let row = conn
+            .query_one_params(sql, &[&hash])
+            .await
+            .map_err(mapper::pg_err)?;
+        row.map(|r| Self::map_row(&r)).transpose()
+    }
+
+    /// Find a non-revoked, non-expired session by refresh token hash.
+    pub async fn find_active_by_refresh_token_hash(
+        &self,
+        conn: &mut Connection,
+        hash: &str,
+    ) -> Result<Option<Session>, OidcError> {
+        let sql = r#"
+            SELECT id, user_id, realm_id, client_id, grant_type,
+                   access_token_hash, refresh_token_hash, id_token_jti,
+                   scope, revoked
+            FROM sessions
+            WHERE refresh_token_hash = $1 AND NOT revoked AND refresh_expires_at > NOW()
+        "#;
+        let row = conn
+            .query_one_params(sql, &[&hash])
+            .await
+            .map_err(mapper::pg_err)?;
+        row.map(|r| Self::map_row(&r)).transpose()
     }
 
     /// Revoke a session by ID.
