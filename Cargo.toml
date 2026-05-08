@@ -40,6 +40,7 @@ getrandom = "0.4"
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
 webpki-roots = "0.26"
 sha2 = "0.10"
+rsa = { version = "0.9", features = ["sha2"] }
 
 # Utils
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
@@ -48,12 +49,15 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
+# Async traits
+async-trait = "0.1"
+
 # Auth / Hashing
 argon2 = "0.5"
 password-hash = "0.5"
 
-# JWT
-jsonwebtoken = "9"
+# JWT (manual RS256 implementation for WASM compatibility)
+base64 = "0.22"
 
 # MLS
 openmls = "0.6"

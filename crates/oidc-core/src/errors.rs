@@ -32,6 +32,18 @@ pub enum OidcError {
     #[error("invalid token signature")]
     InvalidTokenSignature,
 
+    /// Invalid request parameters.
+    #[error("invalid request")]
+    InvalidRequest,
+
+    /// Invalid client credentials.
+    #[error("invalid client")]
+    InvalidClient,
+
+    /// Unsupported grant type.
+    #[error("unsupported grant type")]
+    UnsupportedGrantType,
+
     /// Internal server error.
     #[error("internal error: {0}")]
     Internal(String),

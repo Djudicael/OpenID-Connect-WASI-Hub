@@ -1,14 +1,16 @@
 use axum::Json;
 use serde_json::{json, Value};
 
+use crate::state::OidcState;
+
 /// OIDC Discovery document handler.
-pub async fn discovery_handler() -> Json<Value> {
+pub async fn discovery_handler(state: OidcState) -> Json<Value> {
     Json(json!({
-        "issuer": "https://auth.example.com",
-        "authorization_endpoint": "/oidc/authorize",
-        "token_endpoint": "/oidc/token",
-        "userinfo_endpoint": "/oidc/userinfo",
-        "jwks_uri": "/oidc/jwks",
+        "issuer": state.issuer,
+        "authorization_endpoint": format!("{}/oidc/authorize", state.issuer),
+        "token_endpoint": format!("{}/oidc/token", state.issuer),
+        "userinfo_endpoint": format!("{}/oidc/userinfo", state.issuer),
+        "jwks_uri": format!("{}/oidc/jwks", state.issuer),
         "scopes_supported": ["openid", "profile", "email"],
         "response_types_supported": ["code", "id_token", "code id_token"],
         "grant_types_supported": ["authorization_code", "client_credentials", "refresh_token"],

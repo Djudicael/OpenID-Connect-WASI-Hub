@@ -3,8 +3,10 @@
 use axum::routing::post;
 use axum::Router;
 
+use crate::state::AppState;
+
 /// Build the MLS sub-router.
-pub fn router() -> Router {
+pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/mls/groups", post(oidc_mls::endpoints::create_group))
         .route("/api/mls/key-packages", post(oidc_mls::endpoints::upload_key_package))

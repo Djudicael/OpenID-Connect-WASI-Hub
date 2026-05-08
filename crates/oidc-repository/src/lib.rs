@@ -5,6 +5,7 @@
 #![allow(missing_docs)]
 
 pub mod connection;
+pub mod mapper;
 pub mod repositories;
 
 pub use connection::Connection;

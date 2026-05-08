@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
     name TEXT NOT NULL,
     prefix TEXT NOT NULL,
     hashed_secret TEXT NOT NULL,
-    scopes TEXT[] NOT NULL DEFAULT ARRAY[],
+    scopes JSONB NOT NULL DEFAULT '[]',
     expires_at TIMESTAMPTZ,
     revoked BOOLEAN NOT NULL DEFAULT FALSE,
     last_used_at TIMESTAMPTZ,

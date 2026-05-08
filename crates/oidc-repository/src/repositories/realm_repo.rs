@@ -1,27 +1,71 @@
-use async_trait::async_trait;
+use crate::connection::Connection;
+use crate::mapper;
 use oidc_core::models::Realm;
-use oidc_core::traits::Repository;
 use oidc_core::OidcError;
 use uuid::Uuid;
 
 /// PostgreSQL implementation of the Realm repository.
 pub struct RealmRepo;
 
-#[async_trait]
-impl Repository<Realm> for RealmRepo {
-    async fn find_by_id(&self, _id: Uuid) -> Result<Option<Realm>, OidcError> {
-        todo!("implement realm find_by_id")
+impl RealmRepo {
+    /// Find a realm by its primary key.
+    pub async fn find_by_id(
+        &self,
+        conn: &mut Connection,
+        id: Uuid,
+    ) -> Result<Option<Realm>, OidcError> {
+        let sql = "SELECT id, name, display_name, enabled FROM realms WHERE id = $1";
+        let row = conn.query_one_params(sql, &[&id]).await.map_err(mapper::pg_err)?;
+        row.map(|r| Self::map_row(&r)).transpose()
     }
 
-    async fn create(&self, _entity: &Realm) -> Result<(), OidcError> {
-        todo!("implement realm create")
+    /// Find a realm by its unique name.
+    pub async fn find_by_name(
+        &self,
+        conn: &mut Connection,
+        name: &str,
+    ) -> Result<Option<Realm>, OidcError> {
+        let sql = "SELECT id, name, display_name, enabled FROM realms WHERE name = $1";
+        let row = conn
+            .query_one_params(sql, &[&name])
+            .await
+            .map_err(mapper::pg_err)?;
+        row.map(|r| Self::map_row(&r)).transpose()
     }
 
-    async fn update(&self, _entity: &Realm) -> Result<(), OidcError> {
-        todo!("implement realm update")
+    /// Insert a new realm.
+    pub async fn create(&self, conn: &mut Connection, entity: &Realm) -> Result<(), OidcError> {
+        let sql = "INSERT INTO realms (id, name, display_name, enabled) VALUES ($1, $2, $3, $4)";
+        conn.execute_params(sql, &[&entity.id, &entity.name, &entity.display_name, &entity.enabled])
+            .await
+            .map_err(mapper::pg_err)?;
+        Ok(())
     }
 
-    async fn delete(&self, _id: Uuid) -> Result<(), OidcError> {
-        todo!("implement realm delete")
+    /// Update an existing realm.
+    pub async fn update(&self, conn: &mut Connection, entity: &Realm) -> Result<(), OidcError> {
+        let sql = "UPDATE realms SET name = $1, display_name = $2, enabled = $3, updated_at = NOW() WHERE id = $4";
+        conn.execute_params(sql, &[&entity.name, &entity.display_name, &entity.enabled, &entity.id])
+            .await
+            .map_err(mapper::pg_err)?;
+        Ok(())
+    }
+
+    /// Hard-delete a realm by ID.
+    pub async fn delete(&self, conn: &mut Connection, id: Uuid) -> Result<(), OidcError> {
+        let sql = "DELETE FROM realms WHERE id = $1";
+        conn.execute_params(sql, &[&id])
+            .await
+            .map_err(mapper::pg_err)?;
+        Ok(())
+    }
+
+    fn map_row(row: &wasi_pg_client::Row) -> Result<Realm, OidcError> {
+        Ok(Realm {
+            id: mapper::uuid(row, 0)?,
+            name: mapper::string(row, 1)?,
+            display_name: mapper::string(row, 2)?,
+            enabled: mapper::bool_(row, 3)?,
+        })
     }
 }

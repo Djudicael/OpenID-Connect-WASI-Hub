@@ -3,8 +3,10 @@
 use axum::routing::{delete, get, post};
 use axum::Router;
 
+use crate::state::AppState;
+
 /// Build the API key sub-router.
-pub fn router() -> Router {
+pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/keys", get(oidc_apikey::endpoints::list_keys))
         .route("/api/keys", post(oidc_apikey::endpoints::create_key))

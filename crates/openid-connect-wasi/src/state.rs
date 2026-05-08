@@ -3,10 +3,14 @@
 use std::sync::Arc;
 
 /// Shared application state.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AppState {
     /// Application configuration.
     pub config: Arc<AppConfig>,
+    /// JWT token service.
+    pub token_service: Arc<oidc_oidc::tokens::JwtTokenService>,
+    /// Password/API-key hasher.
+    pub hasher: Arc<dyn oidc_core::traits::Hasher>,
 }
 
 /// Runtime configuration.
@@ -46,8 +50,25 @@ impl AppState {
                 .unwrap_or(false),
         };
 
+        let token_service =
+            Arc::new(oidc_oidc::tokens::JwtTokenService::new(&config.issuer).unwrap());
+        let hasher = Arc::new(oidc_core::traits::hasher::Argon2idHasher::new());
+
         Self {
             config: Arc::new(config),
+            token_service,
+            hasher,
+        }
+    }
+
+    /// Build the OIDC state used by `oidc-oidc` handlers.
+    pub fn oidc_state(&self) -> oidc_oidc::state::OidcState {
+        oidc_oidc::state::OidcState {
+            issuer: self.config.issuer.clone(),
+            token_service: self.token_service.clone(),
+            hasher: self.hasher.clone(),
+            db_config: wasi_pg_client::Config::from_uri(&self.config.database_url)
+                .unwrap_or_else(|_| wasi_pg_client::Config::new()),
         }
     }
 }
