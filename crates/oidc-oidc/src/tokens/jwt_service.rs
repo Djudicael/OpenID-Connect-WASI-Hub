@@ -1,6 +1,6 @@
 use oidc_core::errors::OidcError;
-use oidc_core::traits::token_service::TokenService;
 use oidc_core::traits::Clock;
+use oidc_core::traits::token_service::{IdTokenExtraClaims, TokenService};
 use rsa::traits::PublicKeyParts;
 use rsa::{RsaPrivateKey, RsaPublicKey};
 use serde::{Deserialize, Serialize};
@@ -36,6 +36,10 @@ pub struct IdTokenClaims {
     pub iat: i64,
     pub auth_time: i64,
     pub nonce: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub c_hash: Option<String>,
     pub email: Option<String>,
     pub email_verified: Option<bool>,
     pub name: Option<String>,
@@ -145,10 +149,7 @@ impl JwtTokenService {
     }
 
     /// Encode a JWT manually: base64url(header) + "." + base64url(payload) + "." + base64url(signature)
-    fn encode_jwt<Claims: Serialize>(
-        &self,
-        claims: &Claims,
-    ) -> Result<String, OidcError> {
+    fn encode_jwt<Claims: Serialize>(&self, claims: &Claims) -> Result<String, OidcError> {
         let header = JwtHeader {
             alg: "RS256".to_string(),
             typ: "JWT".to_string(),
@@ -200,8 +201,8 @@ impl JwtTokenService {
             .map_err(|_| OidcError::InvalidTokenSignature)?;
 
         let claims_json = b64_decode(parts[1]).map_err(|_| OidcError::InvalidTokenSignature)?;
-        let claims: Claims = serde_json::from_slice(&claims_json)
-            .map_err(|_| OidcError::InvalidTokenSignature)?;
+        let claims: Claims =
+            serde_json::from_slice(&claims_json).map_err(|_| OidcError::InvalidTokenSignature)?;
 
         Ok(claims)
     }
@@ -259,34 +260,37 @@ impl TokenService for JwtTokenService {
         &self,
         subject: &str,
         audience: &str,
-        nonce: Option<&str>,
+        extra: Option<IdTokenExtraClaims>,
     ) -> Result<String, OidcError> {
         let now = self.now();
+        let extra = extra.unwrap_or_default();
         let claims = IdTokenClaims {
             sub: subject.to_string(),
             aud: audience.to_string(),
             iss: self.issuer.clone(),
             exp: now + self.id_token_ttl_secs,
             iat: now,
-            auth_time: now,
-            nonce: nonce.map(|s| s.to_string()),
-            email: None,
-            email_verified: None,
-            name: None,
-            given_name: None,
-            family_name: None,
+            auth_time: extra.auth_time.unwrap_or(now),
+            nonce: extra.nonce,
+            at_hash: extra.at_hash,
+            c_hash: extra.c_hash,
+            email: extra.email,
+            email_verified: extra.email_verified,
+            name: extra.name,
+            given_name: extra.given_name,
+            family_name: extra.family_name,
         };
         self.encode_jwt(&claims)
     }
 }
 
 fn b64_encode(data: &[u8]) -> String {
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     URL_SAFE_NO_PAD.encode(data)
 }
 
 fn b64_decode(data: &str) -> Result<Vec<u8>, base64::DecodeError> {
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     URL_SAFE_NO_PAD.decode(data)
 }
 
@@ -320,8 +324,29 @@ mod tests {
     #[tokio::test]
     async fn test_id_token() {
         let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let extra = IdTokenExtraClaims {
+            nonce: Some("abc123".to_string()),
+            ..Default::default()
+        };
         let token = service
-            .issue_id_token("user-456", "my-client", Some("abc123"))
+            .issue_id_token("user-456", "my-client", Some(extra))
+            .await
+            .unwrap();
+        assert_eq!(token.split('.').count(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_id_token_with_hashes() {
+        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let extra = IdTokenExtraClaims {
+            at_hash: Some("at_hash_value".to_string()),
+            c_hash: Some("c_hash_value".to_string()),
+            email: Some("test@example.com".to_string()),
+            email_verified: Some(true),
+            ..Default::default()
+        };
+        let token = service
+            .issue_id_token("user-456", "my-client", Some(extra))
             .await
             .unwrap();
         assert_eq!(token.split('.').count(), 3);

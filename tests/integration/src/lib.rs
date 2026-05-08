@@ -17,6 +17,9 @@
 pub mod db_tests;
 
 #[cfg(test)]
+pub mod oidc_tests;
+
+#[cfg(test)]
 mod http_tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};

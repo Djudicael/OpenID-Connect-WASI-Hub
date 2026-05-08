@@ -1,6 +1,29 @@
 use crate::errors::OidcError;
 use async_trait::async_trait;
 
+/// Claims to include in an ID token.
+#[derive(Debug, Clone, Default)]
+pub struct IdTokenExtraClaims {
+    /// `nonce` from the authorization request.
+    pub nonce: Option<String>,
+    /// `at_hash` — left-half hash of access token.
+    pub at_hash: Option<String>,
+    /// `c_hash` — left-half hash of authorization code.
+    pub c_hash: Option<String>,
+    /// `auth_time` — when the user authenticated (Unix seconds).
+    pub auth_time: Option<i64>,
+    /// User email.
+    pub email: Option<String>,
+    /// Whether email is verified.
+    pub email_verified: Option<bool>,
+    /// User display name.
+    pub name: Option<String>,
+    /// User given name.
+    pub given_name: Option<String>,
+    /// User family name.
+    pub family_name: Option<String>,
+}
+
 /// Abstract token issuance and verification service.
 #[async_trait]
 pub trait TokenService: Send + Sync {
@@ -20,6 +43,6 @@ pub trait TokenService: Send + Sync {
         &self,
         subject: &str,
         audience: &str,
-        nonce: Option<&str>,
+        extra: Option<IdTokenExtraClaims>,
     ) -> Result<String, OidcError>;
 }

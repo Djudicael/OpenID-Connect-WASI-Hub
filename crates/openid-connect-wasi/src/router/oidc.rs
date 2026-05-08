@@ -22,8 +22,8 @@ pub fn router() -> Router<AppState> {
         .route("/oidc/authorize", get(|State(state): State<AppState>, Query(params): Query<HashMap<String, String>>| async move {
             oidc_oidc::endpoints::authorize::authorize_handler(state.oidc_state(), Query(params)).await
         }))
-        .route("/oidc/token", post(|State(state): State<AppState>, Form(params): Form<HashMap<String, String>>| async move {
-            oidc_oidc::endpoints::token::token_handler(state.oidc_state(), params)
+        .route("/oidc/token", post(|State(state): State<AppState>, headers: axum::http::HeaderMap, Form(params): Form<HashMap<String, String>>| async move {
+            oidc_oidc::endpoints::token::token_handler(state.oidc_state(), headers, params)
                 .await
                 .unwrap_or_else(|e| axum::Json(serde_json::json!({"error": e.to_string() })))
         }))
@@ -37,6 +37,9 @@ pub fn router() -> Router<AppState> {
         }))
         .route("/oidc/revoke", post(|State(state): State<AppState>, form: Form<HashMap<String, String>>| async move {
             oidc_oidc::endpoints::revoke::revoke_handler(State(state.oidc_state()), form).await
+        }))
+        .route("/oidc/logout", get(|State(state): State<AppState>, Query(params): Query<HashMap<String, String>>| async move {
+            oidc_oidc::endpoints::logout::logout_handler(state.oidc_state(), Query(params)).await
         }))
         .route("/oidc/register", post(|State(state): State<AppState>, Json(req): Json<oidc_oidc::endpoints::registration::RegisterClientRequest>| async move {
             oidc_oidc::endpoints::registration::register_handler(state.oidc_state(), Json(req)).await

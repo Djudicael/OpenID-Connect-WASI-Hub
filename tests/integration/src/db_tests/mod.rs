@@ -289,6 +289,11 @@ async fn test_session_crud() {
         id_token_jti: Some("jti123".to_string()),
         scope: vec!["openid".to_string(), "profile".to_string()],
         revoked: false,
+        token_family_id: None,
+        previous_session_id: None,
+        rotated_at: None,
+        reused_at: None,
+        family_revoked: false,
     };
 
     repo.create(&mut conn, &session).await.unwrap();
@@ -883,6 +888,11 @@ async fn test_session_token_hash_index_performance() {
             id_token_jti: None,
             scope: vec!["openid".to_string()],
             revoked: false,
+            token_family_id: None,
+            previous_session_id: None,
+            rotated_at: None,
+            reused_at: None,
+            family_revoked: false,
         };
         session_repo.create(&mut conn, &session).await.unwrap();
     }

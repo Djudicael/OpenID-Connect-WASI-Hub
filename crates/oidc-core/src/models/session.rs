@@ -24,4 +24,14 @@ pub struct Session {
     pub scope: Vec<String>,
     /// Whether the session has been revoked.
     pub revoked: bool,
+    /// Token family ID for refresh token rotation.
+    pub token_family_id: Option<Uuid>,
+    /// Previous session ID in the rotation chain.
+    pub previous_session_id: Option<Uuid>,
+    /// When this session was created by rotation.
+    pub rotated_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// When a rotated token was reused (theft detection).
+    pub reused_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Whether the entire token family has been revoked.
+    pub family_revoked: bool,
 }

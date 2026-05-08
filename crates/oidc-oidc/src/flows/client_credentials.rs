@@ -2,6 +2,7 @@
 
 use oidc_core::OidcError;
 use oidc_core::traits::TokenService;
+use oidc_core::utils::sha2_256_hex;
 use oidc_repository::repositories::client_repo::ClientRepo;
 use serde_json::{Value, json};
 
@@ -40,6 +41,8 @@ impl ClientCredentialsFlow {
             .token_service
             .issue_access_token(&client.client_id, &client.client_id, &client.allowed_scopes)
             .await?;
+
+        let _access_hash = sha2_256_hex(&access_token);
 
         Ok(json!({
             "access_token": access_token,

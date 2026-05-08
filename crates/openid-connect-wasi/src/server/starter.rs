@@ -36,9 +36,17 @@ pub async fn run_tcp(app: Router, addr: &str, port: u16) -> anyhow::Result<()> {
 
 #[cfg(not(target_arch = "wasm32"))]
 async fn shutdown_signal() {
-    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        .expect("failed to install SIGTERM handler");
-
-    sigterm.recv().await;
-    tracing::info!("SIGTERM received, starting graceful shutdown");
+    #[cfg(unix)]
+    {
+        let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler");
+        sigterm.recv().await;
+    }
+    #[cfg(windows)]
+    {
+        let mut ctrl_c =
+            tokio::signal::windows::ctrl_c().expect("failed to install Ctrl-C handler");
+        ctrl_c.recv().await;
+    }
+    tracing::info!("shutdown signal received, starting graceful shutdown");
 }

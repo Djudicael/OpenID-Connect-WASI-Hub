@@ -2,11 +2,12 @@
 
 use oidc_core::OidcError;
 use oidc_core::models::Session;
-use oidc_core::traits::token_service::TokenService;
-use oidc_core::utils::{generate_uuid_v7, verify_s256};
+use oidc_core::traits::token_service::{IdTokenExtraClaims, TokenService};
+use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, sha2_256_hex, verify_s256};
 use oidc_repository::repositories::auth_code_repo::AuthCodeRepo;
 use oidc_repository::repositories::client_repo::ClientRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
+use oidc_repository::repositories::user_repo::UserRepo;
 use serde_json::{Value, json};
 
 use crate::state::OidcState;
@@ -68,6 +69,12 @@ impl AuthorizationCodeFlow {
         // --- Mark code as used ---
         AuthCodeRepo.mark_used(&mut conn, auth_code.id).await?;
 
+        // --- Fetch user for ID token claims ---
+        let user = UserRepo
+            .find_by_id(&mut conn, auth_code.user_id)
+            .await?
+            .ok_or(OidcError::NotFound("user".into()))?;
+
         // --- Issue tokens ---
         let subject = auth_code.user_id.to_string();
         let audience = client.client_id.clone();
@@ -77,15 +84,32 @@ impl AuthorizationCodeFlow {
             .token_service
             .issue_access_token(&subject, &audience, &scopes)
             .await?;
+
+        let at_hash = oidc_core::utils::compute_at_hash(&access_token);
+        let c_hash = oidc_core::utils::compute_c_hash(code);
+
+        let id_token_extra = IdTokenExtraClaims {
+            nonce: None, // TODO: propagate nonce from authorize request
+            at_hash: Some(at_hash),
+            c_hash: Some(c_hash),
+            auth_time: Some(chrono::Utc::now().timestamp()),
+            email: Some(user.email.clone()),
+            email_verified: Some(user.email_verified),
+            name: user.username.clone(),
+            given_name: user.given_name.clone(),
+            family_name: user.family_name.clone(),
+        };
+
         let id_token = state
             .token_service
-            .issue_id_token(&subject, &audience, None)
+            .issue_id_token(&subject, &audience, Some(id_token_extra))
             .await?;
 
-        // --- Store session ---
+        // --- Store session with token family ---
         let access_hash = sha2_256_hex(&access_token);
-        let refresh_token_value = format!("{}refresh", access_token);
+        let refresh_token_value = generate_opaque_token();
         let refresh_hash = Some(sha2_256_hex(&refresh_token_value));
+        let token_family_id = generate_uuid_v7();
 
         let session = Session {
             id: generate_uuid_v7(),
@@ -98,6 +122,11 @@ impl AuthorizationCodeFlow {
             id_token_jti: None,
             scope: scopes.clone(),
             revoked: false,
+            token_family_id: Some(token_family_id),
+            previous_session_id: None,
+            rotated_at: None,
+            reused_at: None,
+            family_revoked: false,
         };
 
         SessionRepo.create(&mut conn, &session).await?;
@@ -111,12 +140,4 @@ impl AuthorizationCodeFlow {
             "scope": scopes.join(" "),
         }))
     }
-}
-
-fn sha2_256_hex(data: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(data.as_bytes());
-    let result = hasher.finalize();
-    hex::encode(result)
 }
