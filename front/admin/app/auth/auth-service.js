@@ -11,7 +11,7 @@ class AuthService {
     this.config = {
       authority: (typeof window !== 'undefined' && window.__OIDC_AUTHORITY__) || '/oidc',
       client_id: 'admin-ui',
-      redirect_uri: `${typeof window !== 'undefined' ? window.location.origin : ''}/admin/callback`,
+      redirect_uri: `${typeof window !== 'undefined' ? window.location.origin : ''}/callback`,
       response_type: 'code',
       scope: 'openid profile email',
     };

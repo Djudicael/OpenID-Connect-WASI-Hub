@@ -1,9 +1,7 @@
 /**
  * API base URL resolution.
- * Priority:
- * 1. Runtime global: globalThis.__OIDC_API_BASE_URL__
- * 2. HTML meta tag: <meta name="oidc-api-base-url" content="...">
- * 3. Default: relative paths
+ * In dev mode with the proxy, all API calls use relative paths.
+ * In production, the meta tag or global can override.
  */
 
 function resolveBaseUrl() {

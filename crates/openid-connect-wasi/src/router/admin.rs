@@ -10,7 +10,6 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use oidc_apikey::auth::{ApiKeyAuth, has_scope};
 use oidc_core::models::ClientType;
 use oidc_core::models::audit_event::ActorType;
 use oidc_repository::Connection;
@@ -20,39 +19,50 @@ use oidc_repository::repositories::realm_repo::RealmRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 
+use crate::middleware::admin_auth::AdminAuth;
 use crate::state::AppState;
 
 /// Build the admin sub-router.
 pub fn router() -> Router<AppState> {
     Router::new()
+        // Admin UI SPA fallback — serves index.html for all non-API routes
+        .route("/admin", get(admin_index_handler))
+        .route("/admin/", get(admin_index_handler))
+        .route("/admin/{*path}", get(admin_index_handler))
         // Stats
         .route("/api/stats", get(stats_handler))
         // Users
         .route("/api/users", get(list_users))
-        .route("/api/users/:id", get(get_user))
-        .route("/api/users/:id", put(update_user))
-        .route("/api/users/:id", delete(delete_user))
+        .route("/api/users/{id}", get(get_user))
+        .route("/api/users/{id}", put(update_user))
+        .route("/api/users/{id}", delete(delete_user))
         // Clients
         .route("/api/clients", get(list_clients))
-        .route("/api/clients/:id", get(get_client))
-        .route("/api/clients/:id", put(update_client))
-        .route("/api/clients/:id", delete(delete_client))
+        .route("/api/clients/{id}", get(get_client))
+        .route("/api/clients/{id}", put(update_client))
+        .route("/api/clients/{id}", delete(delete_client))
         // Realms
         .route("/api/realms", get(list_realms))
-        .route("/api/realms/:id", get(get_realm))
-        .route("/api/realms/:id", put(update_realm))
-        .route("/api/realms/:id", delete(delete_realm))
+        .route("/api/realms/{id}", get(get_realm))
+        .route("/api/realms/{id}", put(update_realm))
+        .route("/api/realms/{id}", delete(delete_realm))
         // Sessions
         .route("/api/sessions", get(list_sessions))
-        .route("/api/sessions/:id/revoke", post(revoke_session))
+        .route("/api/sessions/{id}/revoke", post(revoke_session))
         // Audit
         .route("/api/audit/events", get(list_audit_events))
 }
 
+async fn admin_index_handler(
+    _path: axum::extract::Path<String>,
+) -> axum::response::Html<&'static str> {
+    axum::response::Html(include_str!("../../../../front/admin/index.html"))
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-fn admin_or_forbidden(auth: &ApiKeyAuth) -> Option<Response> {
-    if !has_scope(&auth.api_key, "admin") {
+fn admin_or_forbidden(auth: &AdminAuth) -> Option<Response> {
+    if !auth.is_admin() {
         return Some((StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))).into_response());
     }
     None
@@ -82,7 +92,7 @@ struct StatsQuery {
 async fn stats_handler(
     State(state): State<AppState>,
     Query(query): Query<StatsQuery>,
-    auth: ApiKeyAuth,
+    auth: AdminAuth,
 ) -> Response {
     if let Some(r) = admin_or_forbidden(&auth) {
         return r;
@@ -135,7 +145,7 @@ fn default_offset() -> i64 {
 async fn list_users(
     State(state): State<AppState>,
     Query(query): Query<ListQuery>,
-    auth: ApiKeyAuth,
+    auth: AdminAuth,
 ) -> Response {
     if let Some(r) = admin_or_forbidden(&auth) {
         return r;
@@ -191,7 +201,7 @@ async fn list_users(
 async fn get_user(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<Uuid>,
-    auth: ApiKeyAuth,
+    auth: AdminAuth,
 ) -> Response {
     if let Some(r) = admin_or_forbidden(&auth) {
         return r;
@@ -239,7 +249,7 @@ struct UpdateUserRequest {
 async fn update_user(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<Uuid>,
-    auth: ApiKeyAuth,
+    auth: AdminAuth,
     body: String,
 ) -> Response {
     if let Some(r) = admin_or_forbidden(&auth) {
@@ -312,7 +322,7 @@ async fn update_user(
 async fn delete_user(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<Uuid>,
-    auth: ApiKeyAuth,
+    auth: AdminAuth,
 ) -> Response {
     if let Some(r) = admin_or_forbidden(&auth) {
         return r;
@@ -351,7 +361,7 @@ struct ClientListQuery {
 async fn list_clients(
     State(state): State<AppState>,
     Query(query): Query<ClientListQuery>,
-    auth: ApiKeyAuth,
+    auth: AdminAuth,
 ) -> Response {
     if let Some(r) = admin_or_forbidden(&auth) {
         return r;
@@ -412,7 +422,7 @@ async fn list_clients(
 async fn get_client(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<Uuid>,
-    auth: ApiKeyAuth,
+    auth: AdminAuth,
 ) -> Response {
     if let Some(r) = admin_or_forbidden(&auth) {
         return r;
@@ -462,7 +472,7 @@ struct UpdateClientRequest {
 async fn update_client(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<Uuid>,
-    auth: ApiKeyAuth,
+    auth: AdminAuth,
     body: String,
 ) -> Response {
     if let Some(r) = admin_or_forbidden(&auth) {
@@ -535,7 +545,7 @@ async fn update_client(
 async fn delete_client(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<Uuid>,
-    auth: ApiKeyAuth,
+    auth: AdminAuth,
 ) -> Response {
     if let Some(r) = admin_or_forbidden(&auth) {
         return r;
@@ -572,7 +582,7 @@ struct RealmListQuery {
 async fn list_realms(
     State(state): State<AppState>,
     Query(query): Query<RealmListQuery>,
-    auth: ApiKeyAuth,
+    auth: AdminAuth,
 ) -> Response {
     if let Some(r) = admin_or_forbidden(&auth) {
         return r;
@@ -615,7 +625,7 @@ async fn list_realms(
 async fn get_realm(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<Uuid>,
-    auth: ApiKeyAuth,
+    auth: AdminAuth,
 ) -> Response {
     if let Some(r) = admin_or_forbidden(&auth) {
         return r;
@@ -656,7 +666,7 @@ struct UpdateRealmRequest {
 async fn update_realm(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<Uuid>,
-    auth: ApiKeyAuth,
+    auth: AdminAuth,
     body: String,
 ) -> Response {
     if let Some(r) = admin_or_forbidden(&auth) {
@@ -720,7 +730,7 @@ async fn update_realm(
 async fn delete_realm(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<Uuid>,
-    auth: ApiKeyAuth,
+    auth: AdminAuth,
 ) -> Response {
     if let Some(r) = admin_or_forbidden(&auth) {
         return r;
@@ -760,7 +770,7 @@ struct SessionListQuery {
 async fn list_sessions(
     State(state): State<AppState>,
     Query(query): Query<SessionListQuery>,
-    auth: ApiKeyAuth,
+    auth: AdminAuth,
 ) -> Response {
     if let Some(r) = admin_or_forbidden(&auth) {
         return r;
@@ -820,7 +830,7 @@ async fn list_sessions(
 async fn revoke_session(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<Uuid>,
-    auth: ApiKeyAuth,
+    auth: AdminAuth,
 ) -> Response {
     if let Some(r) = admin_or_forbidden(&auth) {
         return r;
@@ -855,7 +865,7 @@ struct AuditListQuery {
 async fn list_audit_events(
     State(state): State<AppState>,
     Query(query): Query<AuditListQuery>,
-    auth: ApiKeyAuth,
+    auth: AdminAuth,
 ) -> Response {
     if let Some(r) = admin_or_forbidden(&auth) {
         return r;
