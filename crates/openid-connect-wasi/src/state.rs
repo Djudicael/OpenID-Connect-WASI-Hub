@@ -32,7 +32,7 @@ pub struct AppConfig {
     pub mls_enabled: bool,
 }
 
-impl oidc_apikey::ApiKeyState for AppState {
+impl oidc_apikey::ApiKeyVerifierState for AppState {
     fn db_config(&self) -> &wasi_pg_client::Config {
         &self.db_config
     }

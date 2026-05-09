@@ -1,30 +1,30 @@
 //! API key HTTP endpoints.
 
 use axum::Json;
-use axum::extract::{Query, State};
 use axum::http::StatusCode;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use oidc_core::models::audit_event::{ActorType, AuditEvent};
 use oidc_repository::Connection;
+use oidc_repository::repositories::api_key_repo::ApiKeyRepo;
+use oidc_repository::repositories::audit_event_repo::AuditEventRepo;
 
-use crate::models::{CreateKeyRequest, ListKeysQuery};
+use crate::auth::{ApiKeyAuth, has_scope};
+use crate::models::{CreateKeyRequest, ListKeysQuery, RotateKeyResponse};
 use crate::service::ApiKeyService;
 
-/// Shared state trait bound used by the apikey router.
-///
-/// The concrete `AppState` in `openid-connect-wasi` implements this.
-pub trait ApiKeyState: Clone + Send + Sync + 'static {
-    /// Obtain a database configuration so we can open a per-request connection.
-    fn db_config(&self) -> &wasi_pg_client::Config;
-}
-
 /// List API keys for a realm.
-pub async fn list_keys<S: ApiKeyState>(
-    State(state): State<S>,
-    Query(query): Query<ListKeysQuery>,
+pub async fn list_keys(
+    db_config: &wasi_pg_client::Config,
+    query: ListKeysQuery,
+    auth: ApiKeyAuth,
 ) -> Result<Json<Value>, StatusCode> {
-    let conn = wasi_pg_client::Connection::connect(state.db_config())
+    if !has_scope(&auth.api_key, "admin") && !has_scope(&auth.api_key, "api_keys:read") {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    let conn = wasi_pg_client::Connection::connect(db_config)
         .await
         .map_err(|e| {
             tracing::error!("db connect error: {e}");
@@ -32,34 +32,31 @@ pub async fn list_keys<S: ApiKeyState>(
         })?;
     let mut conn = Connection::from_pg_client(conn);
 
-    // Simple query; in production this should use a repository method with pagination.
-    let sql = r#"
-        SELECT id, realm_id, name, prefix, hashed_secret,
-               scopes, revoked, request_count
-        FROM api_keys
-        WHERE realm_id = $1 AND NOT revoked
-    "#;
-
-    let result = conn
-        .query_params(sql, &[&query.realm_id])
+    let include_revoked = query.include_revoked.unwrap_or(false);
+    let keys = ApiKeyRepo
+        .find_by_realm(&mut conn, query.realm_id, include_revoked)
         .await
         .map_err(|e| {
             tracing::error!("query error: {e}");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
-    let rows: Vec<Value> = result
-        .into_rows()
+    let rows: Vec<Value> = keys
         .into_iter()
-        .map(|row| {
+        .map(|key| {
             json!({
-                "id": row.get::<Uuid>(0).ok().map(|v| v.to_string()),
-                "realm_id": row.get::<Uuid>(1).ok().map(|v| v.to_string()),
-                "name": row.get::<String>(2).ok(),
-                "prefix": row.get::<String>(3).ok(),
-                "scopes": row.get::<serde_json::Value>(5).ok(),
-                "revoked": row.get::<bool>(6).ok(),
-                "request_count": row.get::<i64>(7).ok(),
+                "id": key.id.to_string(),
+                "realm_id": key.realm_id.to_string(),
+                "name": key.name,
+                "prefix": key.prefix,
+                "scopes": key.scopes,
+                "expires_at": key.expires_at.map(|d| d.to_rfc3339()),
+                "last_used_at": key.last_used_at.map(|d| d.to_rfc3339()),
+                "request_count": key.request_count,
+                "revoked": key.revoked,
+                "created_at": key.created_at.to_rfc3339(),
+                "created_by": key.created_by.map(|u| u.to_string()),
+                "rotated_at": key.rotated_at.map(|d| d.to_rfc3339()),
             })
         })
         .collect();
@@ -68,11 +65,16 @@ pub async fn list_keys<S: ApiKeyState>(
 }
 
 /// Create a new API key.
-pub async fn create_key<S: ApiKeyState>(
-    State(state): State<S>,
-    Json(req): Json<CreateKeyRequest>,
+pub async fn create_key(
+    db_config: &wasi_pg_client::Config,
+    req: CreateKeyRequest,
+    auth: ApiKeyAuth,
 ) -> Result<Json<Value>, StatusCode> {
-    let conn = wasi_pg_client::Connection::connect(state.db_config())
+    if !has_scope(&auth.api_key, "admin") && !has_scope(&auth.api_key, "api_keys:write") {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    let conn = wasi_pg_client::Connection::connect(db_config)
         .await
         .map_err(|e| {
             tracing::error!("db connect error: {e}");
@@ -80,13 +82,36 @@ pub async fn create_key<S: ApiKeyState>(
         })?;
     let mut conn = Connection::from_pg_client(conn);
 
-    let (api_key, raw_key) =
-        ApiKeyService::generate_key(&mut conn, req.realm_id, req.name, req.scopes)
-            .await
-            .map_err(|e| {
-                tracing::error!("generate key error: {e}");
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
+    let created_by = Some(auth.api_key.id);
+    let (api_key, raw_key) = ApiKeyService::generate_key(
+        &mut conn,
+        req.realm_id,
+        req.name,
+        req.scopes,
+        req.expires_in_days,
+        created_by,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!("generate key error: {e}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    // Audit event
+    let audit = AuditEvent {
+        id: Uuid::new_v4(),
+        realm_id: Some(api_key.realm_id),
+        event_type: "api_key.created".into(),
+        actor_id: created_by,
+        actor_type: ActorType::ApiKey,
+        target_type: Some("api_key".into()),
+        target_id: Some(api_key.id),
+        details: json!({"name": &api_key.name, "scopes": &api_key.scopes}),
+        ip_address: None,
+        user_agent: None,
+        created_at: chrono::Utc::now(),
+    };
+    let _ = AuditEventRepo.create(&mut conn, &audit).await;
 
     Ok(Json(json!({
         "id": api_key.id,
@@ -95,17 +120,22 @@ pub async fn create_key<S: ApiKeyState>(
         "prefix": api_key.prefix,
         "scopes": api_key.scopes,
         "raw_key": raw_key,
-        "revoked": api_key.revoked,
-        "request_count": api_key.request_count,
+        "expires_at": api_key.expires_at.map(|d| d.to_rfc3339()),
+        "created_at": api_key.created_at.to_rfc3339(),
     })))
 }
 
 /// Revoke an API key by ID.
-pub async fn revoke_key<S: ApiKeyState>(
-    State(state): State<S>,
-    axum::extract::Path(id): axum::extract::Path<Uuid>,
+pub async fn revoke_key(
+    db_config: &wasi_pg_client::Config,
+    id: Uuid,
+    auth: ApiKeyAuth,
 ) -> Result<Json<Value>, StatusCode> {
-    let conn = wasi_pg_client::Connection::connect(state.db_config())
+    if !has_scope(&auth.api_key, "admin") && !has_scope(&auth.api_key, "api_keys:write") {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    let conn = wasi_pg_client::Connection::connect(db_config)
         .await
         .map_err(|e| {
             tracing::error!("db connect error: {e}");
@@ -120,5 +150,71 @@ pub async fn revoke_key<S: ApiKeyState>(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
+    // Audit event
+    let audit = AuditEvent {
+        id: Uuid::new_v4(),
+        realm_id: None,
+        event_type: "api_key.revoked".into(),
+        actor_id: Some(auth.api_key.id),
+        actor_type: ActorType::ApiKey,
+        target_type: Some("api_key".into()),
+        target_id: Some(id),
+        details: json!({}),
+        ip_address: None,
+        user_agent: None,
+        created_at: chrono::Utc::now(),
+    };
+    let _ = AuditEventRepo.create(&mut conn, &audit).await;
+
     Ok(Json(json!({"revoked": true})))
+}
+
+/// Rotate an API key by ID.
+pub async fn rotate_key(
+    db_config: &wasi_pg_client::Config,
+    id: Uuid,
+    auth: ApiKeyAuth,
+) -> Result<Json<Value>, StatusCode> {
+    if !has_scope(&auth.api_key, "admin") && !has_scope(&auth.api_key, "api_keys:write") {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    let conn = wasi_pg_client::Connection::connect(db_config)
+        .await
+        .map_err(|e| {
+            tracing::error!("db connect error: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    let mut conn = Connection::from_pg_client(conn);
+
+    let (new_key, raw_key) = ApiKeyService::rotate_key(&mut conn, id, None)
+        .await
+        .map_err(|e| {
+            tracing::error!("rotate key error: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+
+    // Audit event
+    let audit = AuditEvent {
+        id: Uuid::new_v4(),
+        realm_id: Some(new_key.realm_id),
+        event_type: "api_key.rotated".into(),
+        actor_id: Some(auth.api_key.id),
+        actor_type: ActorType::ApiKey,
+        target_type: Some("api_key".into()),
+        target_id: Some(new_key.id),
+        details: json!({"previous_id": id.to_string()}),
+        ip_address: None,
+        user_agent: None,
+        created_at: chrono::Utc::now(),
+    };
+    let _ = AuditEventRepo.create(&mut conn, &audit).await;
+
+    let response = RotateKeyResponse {
+        id: new_key.id,
+        raw_key,
+        expires_at: new_key.expires_at,
+    };
+
+    Ok(Json(serde_json::to_value(response).unwrap()))
 }

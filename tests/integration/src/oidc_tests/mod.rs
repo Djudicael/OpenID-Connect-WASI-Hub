@@ -1,15 +1,7 @@
 //! OIDC end-to-end integration tests.
 //!
 //! Tests the full flow: authorize -> token -> userinfo -> revoke -> introspect -> logout.
-//! Requires a running PostgreSQL instance. Run with:
-//! ```bash
-//! podman run --rm -d -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=oidc_hub_test \
-//!   -p 5433:5432 --name oidc_test_pg postgres:16-alpine
-//! OIDC_DATABASE_URL=postgresql://postgres:postgres@localhost:5433/oidc_hub_test \
-//!   cargo run -p oidc-migrate
-//! TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5433/oidc_hub_test \
-//!   cargo test -p integration-tests oidc_tests -- --test-threads=1
-//! ```
+//! These are HTTP-level tests that do not require a database.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

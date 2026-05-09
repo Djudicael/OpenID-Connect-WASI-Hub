@@ -18,3 +18,6 @@ http-body-util = "0.1"
 wasi-pg-client = { workspace = true, features = ["tokio-transport", "uuid", "chrono", "serde-json"] }
 tracing = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
+
+# Test harness — container lifecycle via rustainers (testcontainers for Rust + Podman)
+rustainers = "0.15"

@@ -1,17 +1,17 @@
 //! Integration tests for the OpenID Connect WASI Hub.
 //!
-//! These tests require a running PostgreSQL instance. Set `TEST_DATABASE_URL`
-//! or use the default `postgresql://postgres:postgres@localhost:5433/oidc_hub_test`.
+//! ## Test harness
 //!
-//! To run with a fresh test container:
+//! The `harness` module spawns a single PostgreSQL container via `podman`
+//! before the first test and reuses it for the entire run.  Migrations are
+//! applied automatically.  No manual setup is required.
+//!
 //! ```bash
-//! podman run --rm -d -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=oidc_hub_test \
-//!   -p 5433:5432 --name oidc_test_pg postgres:16-alpine
-//! OIDC_DATABASE_URL=postgresql://postgres:postgres@localhost:5433/oidc_hub_test \
-//!   cargo run -p oidc-migrate
-//! TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5433/oidc_hub_test \
-//!   cargo test -p integration-tests -- --test-threads=1
+//! cargo test -p integration-tests -- --test-threads=1
 //! ```
+
+#[cfg(test)]
+pub mod harness;
 
 #[cfg(test)]
 pub mod db_tests;

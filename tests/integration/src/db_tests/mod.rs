@@ -1,22 +1,13 @@
 //! Database integration tests using a real PostgreSQL instance.
 //!
-//! Run with:
-//! ```bash
-//! podman run --rm -d -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=oidc_hub_test \
-//!   -p 5433:5432 --name oidc_test_pg postgres:16-alpine
-//! OIDC_DATABASE_URL=postgresql://postgres:postgres@localhost:5433/oidc_hub_test \
-//!   cargo run -p oidc-migrate
-//! TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5433/oidc_hub_test \
-//!   cargo test -p integration-tests -- --test-threads=1
-//! ```
+//! The test harness (see `crate::harness`) spawns a single `podman`
+//! container before the first test and reuses it for the entire run.
 
 use chrono::Utc;
-use oidc_core::OidcError;
 use oidc_core::models::audit_event::{ActorType, AuditEvent};
 use oidc_core::models::mls::{KeyPackageEntry, MlsGroup, MlsMember};
 use oidc_core::models::signing_key::{Algorithm, SigningKey};
 use oidc_core::models::{ApiKey, AuthCode, Client, ClientType, Realm, Session, User};
-use oidc_repository::connection::Connection;
 use oidc_repository::repositories::{
     api_key_repo::ApiKeyRepo, audit_event_repo::AuditEventRepo, auth_code_repo::AuthCodeRepo,
     client_repo::ClientRepo, mls_group_repo::MlsGroupRepo, mls_key_package_repo::MlsKeyPackageRepo,
@@ -27,41 +18,7 @@ use std::net::IpAddr;
 use std::str::FromStr;
 use uuid::Uuid;
 
-/// Get a database connection for tests.
-async fn test_conn() -> Connection {
-    let url = std::env::var("TEST_DATABASE_URL").unwrap_or_else(|_| {
-        "postgresql://postgres:postgres@localhost:5433/oidc_hub_test".to_string()
-    });
-    let config = wasi_pg_client::Config::from_uri(&url).expect("invalid TEST_DATABASE_URL");
-    let pg_conn = wasi_pg_client::Connection::connect(&config)
-        .await
-        .expect("failed to connect");
-    Connection::from_pg_client(pg_conn)
-}
-
-/// Clean all data tables (keep _migrations).
-async fn clean_database(conn: &mut Connection) -> Result<(), OidcError> {
-    let tables = [
-        "audit_events",
-        "mls_commits",
-        "mls_members",
-        "mls_key_packages",
-        "mls_groups",
-        "authorization_codes",
-        "sessions",
-        "api_keys",
-        "signing_keys",
-        "clients",
-        "users",
-        "realms",
-    ];
-    for table in &tables {
-        conn.execute(&format!("DELETE FROM {}", table))
-            .await
-            .map_err(|e| oidc_core::OidcError::Internal(e.to_string()))?;
-    }
-    Ok(())
-}
+use crate::harness::{clean_database, test_conn};
 
 // ===================================================================
 // Realm Repository Tests
@@ -353,6 +310,11 @@ async fn test_api_key_crud() {
         scopes: vec!["read".to_string(), "write".to_string()],
         revoked: false,
         request_count: 0,
+        expires_at: None,
+        last_used_at: None,
+        created_at: chrono::Utc::now(),
+        created_by: None,
+        rotated_at: None,
     };
 
     repo.create(&mut conn, &key).await.unwrap();
@@ -951,6 +913,11 @@ async fn test_api_key_prefix_index_performance() {
             scopes: vec!["read".to_string()],
             revoked: false,
             request_count: 0,
+            expires_at: None,
+            last_used_at: None,
+            created_at: chrono::Utc::now(),
+            created_by: None,
+            rotated_at: None,
         };
         repo.create(&mut conn, &key).await.unwrap();
     }
