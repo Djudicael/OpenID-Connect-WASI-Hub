@@ -22,7 +22,7 @@ Complete checklist for building the production-grade OpenID Connect WASI Hub. Ea
 | # | Task | Validation Test |
 |---|------|-----------------|
 | 1.1 | Define `User`, `Realm`, `Client`, `Session` models | `cargo test -p oidc-core` passes; models serialize roundtrip |
-| 1.2 | Define `ApiKey`, `MlsGroup`, `MlsMember`, `KeyPackageEntry` models | Same as 1.1 |
+| 1.2 | Define `ApiKey`, `SigningKey`, `AuditEvent` models | Same as 1.1 |
 | 1.3 | Implement `Clock` trait + `MockClock` | Deterministic: `MockClock::at(0).now()` returns fixed instant |
 | 1.4 | Implement `Hasher` trait + `Argon2idHasher` | Hash verifies in < 20ms; wrong password rejected |
 | 1.5 | Implement `Repository<T>` trait | `InMemoryRepository` passes all CRUD tests |
@@ -45,7 +45,7 @@ Complete checklist for building the production-grade OpenID Connect WASI Hub. Ea
 | 2.6 | Implement `ClientRepository` | Same pattern |
 | 2.7 | Implement `SessionRepository` | Token hash lookups use index; expiry cleanup query works |
 | 2.8 | Implement `ApiKeyRepository` | Prefix lookup uses index; revocation updates immediately |
-| 2.9 | Implement `MlsGroupRepository` | Epoch update atomic with group state |
+
 | 2.10 | Implement `SigningKeyRepository` | JWKS query returns only active public keys |
 | 2.11 | Add migration runner CLI (`oidc-migrate`) | `cargo run -p oidc-migrate -- migrate` applies all migrations |
 | 2.12 | **Gate**: Native integration tests pass | `cargo test -p oidc-repository --features tokio-transport` passes |
@@ -98,44 +98,23 @@ Complete checklist for building the production-grade OpenID Connect WASI Hub. Ea
 
 ---
 
-## Phase 5: MLS (`oidc-mls`)
+## Phase 5: Server Assembly (`openid-connect-wasi`)
 
 | # | Task | Validation Test |
 |---|------|-----------------|
-| 5.1 | Select MLS library (`openmls` or `mls-rs`) | `cargo build --target wasm32-wasip2 -p oidc-mls` succeeds |
-| 5.2 | Implement master key derivation (HKDF) | Same input always produces same key; different salts different keys |
-| 5.3 | Implement AES-256-GCM encryption for group state | Roundtrip: encrypt -> decrypt -> identical bytes |
-| 5.4 | Implement KeyPackage upload endpoint | `POST /api/mls/key-packages` stores encrypted KP |
-| 5.5 | Implement group creation | `POST /api/mls/groups` returns valid Welcome message |
-| 5.6 | Implement member join via Welcome | Client can process Welcome and join group |
-| 5.7 | Implement commit sending endpoint | `POST /api/mls/groups/{id}/commits` accepts valid commit |
-| 5.8 | Implement epoch validation | Commit with stale epoch rejected (409 Conflict) |
-| 5.9 | Implement epoch advancement | DB epoch updated atomically with group state |
-| 5.10 | Implement member removal | Admin can remove member; group state updates |
-| 5.11 | Implement roster hash | Hash changes when members added/removed |
-| 5.12 | **Gate**: Group lifecycle test | Create -> join 2 members -> send commit -> remove member -> group functional |
-| 5.13 | **Gate**: Replay attack test | Old commit rejected after epoch advancement |
-| 5.14 | **Gate**: WASM runtime test | MLS endpoints respond correctly under `wasmtime` |
-
----
-
-## Phase 6: Server Assembly (`openid-connect-wasi`)
-
-| # | Task | Validation Test |
-|---|------|-----------------|
-| 6.1 | Implement `AppState` | All services (DB, config, token, hasher) injectable |
-| 6.2 | Implement router assembly | `app_router()` returns `Router` with all sub-routers |
-| 6.3 | Implement native server starter | `cargo run` binds TCP and responds to `/health` |
-| 6.4 | Implement WASI server starter | `#[wstd_axum::http_server]` main function compiles |
-| 6.5 | Implement auth middleware (session + API key) | Both `Bearer` and `X-API-Key` auth work |
-| 6.6 | Implement CORS layer | Preflight requests return 200 with correct headers |
-| 6.7 | Implement logging middleware | Every request has `trace_id`; logs structured JSON |
-| 6.8 | Implement global error handler | All errors return JSON with correct HTTP status |
-| 6.9 | Implement health endpoints | `/health`, `/health/ready`, `/health/live` all respond |
-| 6.10 | Serve admin static files | `/admin/` serves `front/admin/dist/` |
-| 6.11 | **Gate**: Native build and test | `cargo test --workspace` passes |
-| 6.12 | **Gate**: WASM build | `cargo build --target wasm32-wasip2 --release` produces `.wasm` |
-| 6.13 | **Gate**: WASM runtime health | `wasmtime run` + `curl http://localhost:8080/health` returns 200 |
+| 5.1 | Implement `AppState` | All services (DB, config, token, hasher) injectable |
+| 5.2 | Implement router assembly | `app_router()` returns `Router` with all sub-routers |
+| 5.3 | Implement native server starter | `cargo run` binds TCP and responds to `/health` |
+| 5.4 | Implement WASI server starter | `#[wstd_axum::http_server]` main function compiles |
+| 5.5 | Implement auth middleware (session + API key) | Both `Bearer` and `X-API-Key` auth work |
+| 5.6 | Implement CORS layer | Preflight requests return 200 with correct headers |
+| 5.7 | Implement logging middleware | Every request has `trace_id`; logs structured JSON |
+| 5.8 | Implement global error handler | All errors return JSON with correct HTTP status |
+| 5.9 | Implement health endpoints | `/health`, `/health/ready`, `/health/live` all respond |
+| 5.10 | Serve admin static files | `/admin/` serves `front/admin/dist/` |
+| 5.11 | **Gate**: Native build and test | `cargo test --workspace` passes |
+| 5.12 | **Gate**: WASM build | `cargo build --target wasm32-wasip2 --release` produces `.wasm` |
+| 5.13 | **Gate**: WASM runtime health | `wasmtime run` + `curl http://localhost:8080/health` returns 200 |
 
 ---
 
@@ -155,12 +134,10 @@ Complete checklist for building the production-grade OpenID Connect WASI Hub. Ea
 | 7.10 | Implement clients page | Same pattern |
 | 7.11 | Implement realms page | Same pattern |
 | 7.12 | Implement API keys page | List with prefix; create modal shows raw key once; revoke action |
-| 7.13 | Implement MLS groups page | Group list; create modal; member list; epoch display |
-| 7.14 | Implement audit events page | Filterable table; pagination |
-| 7.15 | Implement login page | Username/password form; error display |
-| 7.16 | **Gate**: Build passes | `npm run build` exits 0 |
-| 7.17 | **Gate**: E2E login flow | Playwright: login -> dashboard visible |
-| 7.18 | **Gate**: E2E API key flow | Playwright: create key -> copy raw key -> revoke |
+| 7.14 | Implement login page | Username/password form; error display |
+| 7.15 | **Gate**: Build passes | `npm run build` exits 0 |
+| 7.16 | **Gate**: E2E login flow | Playwright: login -> dashboard visible |
+| 7.17 | **Gate**: E2E API key flow | Playwright: create key -> copy raw key -> revoke |
 
 ---
 

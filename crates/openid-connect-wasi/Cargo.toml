@@ -19,7 +19,7 @@ oidc-core = { path = "../oidc-core" }
 oidc-repository = { path = "../oidc-repository" }
 oidc-oidc = { path = "../oidc-oidc" }
 oidc-apikey = { path = "../oidc-apikey" }
-oidc-mls = { path = "../oidc-mls" }
+
 axum = { workspace = true }
 tower = { workspace = true }
 tower-http = { version = "0.6", features = ["cors"] }

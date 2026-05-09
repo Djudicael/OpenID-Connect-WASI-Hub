@@ -47,7 +47,6 @@ front/admin/
 │   │   ├── sessions-page.js
 │   │   ├── apikeys-page.js
 │   │   ├── apikey-create-page.js
-│   │   ├── mls-groups-page.js
 │   │   └── audit-page.js
 │   └── utils/
 │       ├── dom.js
@@ -129,7 +128,6 @@ const routes = [
   { path: '/sessions', component: 'sessions-page' },
   { path: '/api-keys', component: 'apikeys-page' },
   { path: '/api-keys/create', component: 'apikey-create-page' },
-  { path: '/mls-groups', component: 'mls-groups-page' },
   { path: '/audit', component: 'audit-page' },
 ];
 
@@ -265,7 +263,7 @@ export const authService = new AuthService();
 ## 6. Key Pages
 
 ### Dashboard
-- Stats cards: Users, Active Sessions, API Keys, MLS Groups
+- Stats cards: Users, Active Sessions, API Keys
 - Recent audit events table (last 10)
 - System health indicator
 
@@ -278,11 +276,6 @@ export const authService = new AuthService();
 - List with prefix, scopes, expiry, usage
 - "Create Key" button → modal with raw key display (copy button)
 - Revoke action with confirmation
-
-### MLS Groups Page
-- Group list with epoch, member count
-- Create group modal (select members)
-- Group detail: member list, latest epoch, download Welcome
 
 ---
 
@@ -377,14 +370,13 @@ Same pattern as reference:
 - [ ] `esbuild` bundles to `dist/js/index.js` without errors
 - [ ] No React, Vue, or Angular dependencies in `package.json`
 - [ ] All components extend `HTMLElement` or `BaseComponent`
-- [ ] Router handles `/login`, `/`, `/users`, `/api-keys`, `/mls-groups`
+- [ ] Router handles `/login`, `/`, `/users`, `/api-keys`, `/audit`
 - [ ] Auth service implements Authorization Code + PKCE
 - [ ] Token refresh automatic before 60s expiry
 - [ ] HTTP client adds `Authorization: Bearer` to all API calls
 - [ ] Dashboard displays real stats from `/api/stats`
 - [ ] Users page supports pagination and search
 - [ ] API Keys page shows raw key exactly once with copy button
-- [ ] MLS Groups page lists groups and members
 - [ ] Audit page shows recent events
 - [ ] CSS theming works via CSS Custom Properties
 - [ ] Dev server (`npm run dev`) serves at `localhost:3008`

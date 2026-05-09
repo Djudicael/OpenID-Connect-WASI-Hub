@@ -5,7 +5,6 @@ members = [
     "crates/oidc-repository",
     "crates/oidc-oidc",
     "crates/oidc-apikey",
-    "crates/oidc-mls",
     "crates/openid-connect-wasi",
     "crates/oidc-migrate",
     "tests/integration",
@@ -59,9 +58,6 @@ password-hash = "0.5"
 
 # JWT (manual RS256 implementation for WASM compatibility)
 base64 = "0.22"
-
-# MLS
-openmls = "0.6"
 
 # Dev
 tokio = { version = "1", features = ["rt", "macros", "time"] }

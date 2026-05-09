@@ -5,13 +5,12 @@
 
 use chrono::Utc;
 use oidc_core::models::audit_event::{ActorType, AuditEvent};
-use oidc_core::models::mls::{KeyPackageEntry, MlsGroup, MlsMember};
+
 use oidc_core::models::signing_key::{Algorithm, SigningKey};
 use oidc_core::models::{ApiKey, AuthCode, Client, ClientType, Realm, Session, User};
 use oidc_repository::repositories::{
     api_key_repo::ApiKeyRepo, audit_event_repo::AuditEventRepo, auth_code_repo::AuthCodeRepo,
-    client_repo::ClientRepo, mls_group_repo::MlsGroupRepo, mls_key_package_repo::MlsKeyPackageRepo,
-    mls_member_repo::MlsMemberRepo, realm_repo::RealmRepo, session_repo::SessionRepo,
+    client_repo::ClientRepo, realm_repo::RealmRepo, session_repo::SessionRepo,
     signing_key_repo::SigningKeyRepo, user_repo::UserRepo,
 };
 use std::net::IpAddr;
@@ -410,205 +409,6 @@ async fn test_auth_code_crud() {
     repo.mark_used(&mut conn, code.id).await.unwrap();
     let used = repo.find_by_code(&mut conn, "abc123").await.unwrap();
     assert!(used.is_none(), "Used code should not be found");
-}
-
-// ===================================================================
-// MLS Group Repository Tests
-// ===================================================================
-#[tokio::test]
-async fn test_mls_group_crud() {
-    let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
-
-    let realm_repo = RealmRepo;
-    let realm = Realm {
-        id: Uuid::new_v4(),
-        name: "mls-test-realm".to_string(),
-        display_name: "MLS Test".to_string(),
-        enabled: true,
-    };
-    realm_repo.create(&mut conn, &realm).await.unwrap();
-
-    let repo = MlsGroupRepo;
-    let group = MlsGroup {
-        id: Uuid::new_v4(),
-        group_id: vec![1, 2, 3, 4],
-        realm_id: realm.id,
-        epoch: 0,
-        roster_hash: None,
-        group_state_encrypted: vec![5, 6, 7, 8],
-        welcome_message: None,
-    };
-
-    repo.create(&mut conn, &group).await.unwrap();
-
-    let found = repo.find_by_id(&mut conn, group.id).await.unwrap();
-    assert!(found.is_some());
-    let found = found.unwrap();
-    assert_eq!(found.group_id, vec![1, 2, 3, 4]);
-    assert_eq!(found.epoch, 0);
-
-    let by_group_id = repo
-        .find_by_group_id(&mut conn, &[1, 2, 3, 4])
-        .await
-        .unwrap();
-    assert!(by_group_id.is_some());
-
-    let mut updated = group.clone();
-    updated.epoch = 5;
-    updated.roster_hash = Some(vec![9, 10]);
-    repo.update(&mut conn, &updated).await.unwrap();
-
-    let found = repo.find_by_id(&mut conn, group.id).await.unwrap().unwrap();
-    assert_eq!(found.epoch, 5);
-    assert_eq!(found.roster_hash, Some(vec![9, 10]));
-
-    repo.delete(&mut conn, group.id).await.unwrap();
-    assert!(
-        repo.find_by_id(&mut conn, group.id)
-            .await
-            .unwrap()
-            .is_none()
-    );
-}
-
-// ===================================================================
-// MLS Member Repository Tests
-// ===================================================================
-#[tokio::test]
-async fn test_mls_member_crud() {
-    let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
-
-    let realm_repo = RealmRepo;
-    let realm = Realm {
-        id: Uuid::new_v4(),
-        name: "mls-member-test-realm".to_string(),
-        display_name: "MLS Member Test".to_string(),
-        enabled: true,
-    };
-    realm_repo.create(&mut conn, &realm).await.unwrap();
-
-    let user_repo = UserRepo;
-    let user = User {
-        id: Uuid::new_v4(),
-        realm_id: realm.id,
-        email: "mls@example.com".to_string(),
-        email_verified: true,
-        username: None,
-        password_hash: None,
-        given_name: None,
-        family_name: None,
-        enabled: true,
-    };
-    user_repo.create(&mut conn, &user).await.unwrap();
-
-    let group_repo = MlsGroupRepo;
-    let group = MlsGroup {
-        id: Uuid::new_v4(),
-        group_id: vec![1, 2, 3],
-        realm_id: realm.id,
-        epoch: 0,
-        roster_hash: None,
-        group_state_encrypted: vec![4, 5, 6],
-        welcome_message: None,
-    };
-    group_repo.create(&mut conn, &group).await.unwrap();
-
-    let repo = MlsMemberRepo;
-    let member = MlsMember {
-        id: Uuid::new_v4(),
-        group_id: group.id,
-        user_id: user.id,
-        credential: vec![7, 8, 9],
-        leaf_index: 0,
-        added_at: Utc::now(),
-        removed_at: None,
-    };
-
-    repo.create(&mut conn, &member).await.unwrap();
-
-    let found = repo.find_by_id(&mut conn, member.id).await.unwrap();
-    assert!(found.is_some());
-
-    let active = repo
-        .find_active_by_group(&mut conn, group.id)
-        .await
-        .unwrap();
-    assert_eq!(active.len(), 1);
-
-    let by_gu = repo
-        .find_by_group_and_user(&mut conn, group.id, user.id)
-        .await
-        .unwrap();
-    assert!(by_gu.is_some());
-
-    repo.remove_member(&mut conn, group.id, user.id)
-        .await
-        .unwrap();
-    let active = repo
-        .find_active_by_group(&mut conn, group.id)
-        .await
-        .unwrap();
-    assert!(active.is_empty());
-}
-
-// ===================================================================
-// MLS KeyPackage Repository Tests
-// ===================================================================
-#[tokio::test]
-async fn test_mls_key_package_crud() {
-    let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
-
-    let realm_repo = RealmRepo;
-    let realm = Realm {
-        id: Uuid::new_v4(),
-        name: "mls-kp-test-realm".to_string(),
-        display_name: "MLS KP Test".to_string(),
-        enabled: true,
-    };
-    realm_repo.create(&mut conn, &realm).await.unwrap();
-
-    let user_repo = UserRepo;
-    let user = User {
-        id: Uuid::new_v4(),
-        realm_id: realm.id,
-        email: "kp@example.com".to_string(),
-        email_verified: true,
-        username: None,
-        password_hash: None,
-        given_name: None,
-        family_name: None,
-        enabled: true,
-    };
-    user_repo.create(&mut conn, &user).await.unwrap();
-
-    let repo = MlsKeyPackageRepo;
-    let kp = KeyPackageEntry {
-        id: Uuid::new_v4(),
-        user_id: user.id,
-        key_package_ref: vec![1, 2, 3],
-        key_package_encrypted: vec![4, 5, 6],
-        used: false,
-        created_at: Utc::now(),
-        expires_at: None,
-    };
-
-    repo.create(&mut conn, &kp).await.unwrap();
-
-    let found = repo.find_by_id(&mut conn, kp.id).await.unwrap();
-    assert!(found.is_some());
-
-    let by_ref = repo.find_by_ref(&mut conn, &[1, 2, 3]).await.unwrap();
-    assert!(by_ref.is_some());
-
-    let unused = repo.find_unused_by_user(&mut conn, user.id).await.unwrap();
-    assert_eq!(unused.len(), 1);
-
-    repo.mark_used(&mut conn, kp.id).await.unwrap();
-    let unused = repo.find_unused_by_user(&mut conn, user.id).await.unwrap();
-    assert!(unused.is_empty());
 }
 
 // ===================================================================
@@ -1026,9 +826,6 @@ async fn test_migration_idempotency() {
     assert!(table_names.contains(&"sessions".to_string()));
     assert!(table_names.contains(&"api_keys".to_string()));
     assert!(table_names.contains(&"signing_keys".to_string()));
-    assert!(table_names.contains(&"mls_groups".to_string()));
-    assert!(table_names.contains(&"mls_members".to_string()));
-    assert!(table_names.contains(&"mls_key_packages".to_string()));
     assert!(table_names.contains(&"audit_events".to_string()));
     assert!(table_names.contains(&"authorization_codes".to_string()));
     assert!(table_names.contains(&"_migrations".to_string()));

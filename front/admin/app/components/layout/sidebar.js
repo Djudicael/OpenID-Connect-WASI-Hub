@@ -10,7 +10,6 @@ class Sidebar extends BaseComponent {
           <li><a href="/clients">Clients</a></li>
           <li><a href="/realms">Realms</a></li>
           <li><a href="/api-keys">API Keys</a></li>
-          <li><a href="/mls-groups">MLS Groups</a></li>
           <li><a href="/audit">Audit</a></li>
         </ul>
       </nav>

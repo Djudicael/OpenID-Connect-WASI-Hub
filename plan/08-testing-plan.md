@@ -22,7 +22,7 @@ Production-grade quality gates for every layer: unit, integration, security, loa
 Target coverage:
 - **Unit**: >= 80% line coverage
 - **Integration**: All endpoints hit at least once
-- **E2E**: Critical user journeys (login, create key, create MLS group)
+- **E2E**: Critical user journeys (login, create key, rotate key)
 
 ---
 
@@ -89,7 +89,6 @@ tests/integration/
 │   │   └── fixtures.rs     # Pre-loaded test data
 │   ├── oidc_flows.rs
 │   ├── apikey_flows.rs
-│   ├── mls_flows.rs
 │   └── health.rs
 ```
 
@@ -189,7 +188,6 @@ async fn authorization_code_flow_with_pkce() {
 - [ ] `cargo test --test integration` passes against PostgreSQL 15
 - [ ] Each OIDC flow tested end-to-end
 - [ ] API key create -> verify -> revoke tested
-- [ ] MLS group create -> join -> commit tested
 - [ ] Tests run in < 60 seconds total
 - [ ] Parallel test execution safe (unique DB per test)
 
@@ -227,7 +225,6 @@ kill $WASM_PID
 - [ ] OIDC discovery returns valid JSON
 - [ ] Authorization code flow completes
 - [ ] API key middleware accepts valid key
-- [ ] MLS KeyPackage upload succeeds
 - [ ] Memory usage < 128MB after 100 requests
 
 ---
@@ -244,10 +241,8 @@ kill $WASM_PID
 ### Fuzzing
 ```
 crates/oidc-oidc/fuzz/
-crates/oidc-mls/fuzz/
 ```
 - Fuzz JWT parser with random bytes
-- Fuzz MLS commit deserialization
 - Fuzz OIDC query parameter parsing
 
 ### Penetration Test Scenarios
@@ -296,7 +291,6 @@ export default function () {
 | Token (auth code) | 500 | 150ms |
 | UserInfo | 2,000 | 50ms |
 | API Key Verify | 5,000 | 20ms |
-| MLS Commit | 100 | 200ms |
 
 ---
 
@@ -334,7 +328,7 @@ test('admin login flow', async ({ page }) => {
 ```
 
 **Validation Criteria**:
-- [ ] All critical paths covered: login, create API key, create MLS group
+- [ ] All critical paths covered: login, create API key, rotate API key
 - [ ] Cross-browser: Chromium, Firefox, WebKit
 - [ ] Mobile viewport test (admin UI responsive)
 
@@ -416,13 +410,12 @@ jobs:
 - [ ] Mock implementations for all external dependencies
 - [ ] Integration tests for all OIDC endpoints
 - [ ] Integration tests for API key CRUD and verification
-- [ ] Integration tests for MLS group lifecycle
 - [ ] WASM build produces valid `.wasm` artifact
 - [ ] WASM runtime tests pass under `wasmtime`
 - [ ] `cargo audit` passes with zero vulnerabilities
 - [ ] `cargo clippy` passes with zero warnings
 - [ ] `cargo deny` passes license check
-- [ ] Fuzz tests for JWT and MLS parsers
+- [ ] Fuzz tests for JWT parser
 - [ ] Penetration test scenarios documented and automated where possible
 - [ ] Load test meets RPS and latency targets
 - [ ] Frontend component tests pass

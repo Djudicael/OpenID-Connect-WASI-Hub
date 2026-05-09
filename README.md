@@ -1,6 +1,6 @@
 # OpenID Connect WASI Hub
 
-A production-grade OpenID Connect identity provider with first-class **WASI Preview 2** support, native execution capability, PostgreSQL persistence, API key management, and MLS (Messaging Layer Security) group messaging.
+A production-grade OpenID Connect identity provider with first-class **WASI Preview 2** support, native execution capability, PostgreSQL persistence, and API key management.
 
 ## Features
 
@@ -8,7 +8,6 @@ A production-grade OpenID Connect identity provider with first-class **WASI Prev
 - **Dual Runtime**: Same code runs natively (dev/tests) and in WASM (production).
 - **OIDC Core 1.0**: Authorization Code + PKCE, Client Credentials, Refresh Token flows.
 - **API Key Management**: Scoped, revocable, rotatable machine credentials.
-- **MLS Support**: End-to-end encrypted group messaging (RFC 9420).
 - **Zero Frontend Frameworks**: Pure native Web Components admin UI.
 
 ## Architecture
@@ -21,7 +20,6 @@ crates/
   oidc-repository/    PostgreSQL implementation (pg_client)
   oidc-oidc/          OpenID Connect & OAuth2 endpoints
   oidc-apikey/        API Key generation, validation, rotation
-  oidc-mls/           MLS group/key package/commit handling
   openid-connect-wasi/  WASI binary + native server starter
 front/
   admin/              Management UI (native Web Components)
@@ -71,7 +69,7 @@ Environment variables:
 | `OIDC_SERVER_BIND_ADDRESS` | Server bind address | `0.0.0.0` |
 | `OIDC_SERVER_PORT` | Server port | `8080` |
 | `OIDC_ENCRYPTION_KEY` | 32-byte base64 encryption key | (required) |
-| `OIDC_MLS_MASTER_KEY` | 32-byte base64 MLS master key | (required if MLS enabled) |
+
 
 ## License
 

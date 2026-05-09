@@ -20,11 +20,7 @@ crates/oidc-core/
     │   ├── realm.rs
     │   ├── client.rs
     │   ├── session.rs
-    │   ├── api_key.rs
-    │   └── mls/
-    │       ├── mod.rs
-    │       ├── group.rs
-    │       └── key_package.rs
+    │   └── api_key.rs
     ├── traits/
     │   ├── mod.rs
     │   ├── repository.rs
@@ -39,7 +35,7 @@ crates/oidc-core/
 ```
 
 **Key Types**:
-- `User`, `Realm`, `Client`, `Session`, `ApiKey`, `MlsGroup`
+- `User`, `Realm`, `Client`, `Session`, `ApiKey`
 - `Repository<T>` trait: async CRUD operations
 - `TokenService` trait: issue/verify JWTs and opaque tokens
 - `Hasher` trait: password hashing abstraction (Argon2id impl)
@@ -70,16 +66,14 @@ crates/oidc-repository/
     │   ├── realm_repo.rs
     │   ├── client_repo.rs
     │   ├── session_repo.rs
-    │   ├── api_key_repo.rs
-    │   └── mls_repo.rs
-    └── queries/
+    │   └── api_key_repo.rs
+        └── queries/
         ├── mod.rs
         ├── user.sql
         ├── realm.sql
         ├── client.sql
         ├── session.sql
-        ├── api_key.sql
-        └── mls.sql
+        └── api_key.sql
 ```
 
 **Key Design Points**:
@@ -205,44 +199,6 @@ crates/oidc-apikey/
 
 ---
 
-### `crates/oidc-mls/` — Messaging Layer Security
-**Responsibility**: MLS group management, KeyPackage handling, commit processing.
-
-```
-crates/oidc-mls/
-├── Cargo.toml
-└── src/
-    ├── lib.rs
-    ├── models.rs             # MlsGroup, MlsMember, KeyPackageRef
-    ├── group_service.rs      # Create, join, leave, remove
-    ├── commit_processor.rs   # Validate & apply commits
-    ├── key_package_store.rs  # Store / retrieve KeyPackages
-    ├── epoch_manager.rs      # Track epoch numbers, prevent replay
-    └── endpoints/
-        ├── mod.rs
-        ├── create_group.rs
-        ├── join_group.rs
-        ├── send_commit.rs
-        ├── welcome.rs
-        └── key_package_upload.rs
-```
-
-**Key Design**:
-- Uses `openmls` or `mls-rs` (pure Rust, verify WASM compat).
-- Credential type: `BasicCredential` with X.509 or raw public key.
-- KeyPackages stored encrypted at rest (AES-256-GCM with app-level key).
-- Epoch validation: Reject commits from outdated epochs; store latest epoch per group.
-
-**Validation Criteria**:
-- [ ] Group creation produces valid Welcome message
-- [ ] Member can join via Welcome + own KeyPackage
-- [ ] Commit application updates group state consistently
-- [ ] KeyPackage upload encrypted at rest
-- [ ] Epoch replay attacks rejected
-- [ ] WASM build succeeds (`cargo build --target wasm32-wasip2 -p oidc-mls`)
-
----
-
 ### `crates/openid-connect-wasi/` — Server Binary
 **Responsibility**: Axum router assembly, server startup, native + WASM entry points.
 
@@ -255,7 +211,6 @@ crates/openid-connect-wasi/
     │   ├── mod.rs            # Assemble all sub-routers
     │   ├── oidc_router.rs    # /oidc/*
     │   ├── apikey_router.rs  # /api/keys/*
-    │   ├── mls_router.rs     # /api/mls/*
     │   ├── admin_router.rs   # /admin/* (static file serving)
     │   └── health_router.rs  # /health, /metrics
     ├── server/
@@ -308,7 +263,6 @@ oidc-core = { path = "../oidc-core" }
 oidc-repository = { path = "../oidc-repository" }
 oidc-oidc = { path = "../oidc-oidc" }
 oidc-apikey = { path = "../oidc-apikey" }
-oidc-mls = { path = "../oidc-mls" }
 axum = { version = "0.8", default-features = false, features = ["json", "matched-path", "original-uri", "query", "tower-log", "tracing"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -347,7 +301,6 @@ members = [
     "crates/oidc-repository",
     "crates/oidc-oidc",
     "crates/oidc-apikey",
-    "crates/oidc-mls",
     "crates/openid-connect-wasi",
     "tests/integration",
 ]
@@ -418,7 +371,7 @@ axum-test = "0.8"
 
 ### Tracing
 - Every request gets a `trace_id` (UUID v7).
-- Spans: `request`, `db_query`, `token_issue`, `mls_commit`.
+- Spans: `request`, `db_query`, `token_issue`.
 - In WASM, logs go to stderr; runtime captures and forwards.
 
 ### Configuration
@@ -433,7 +386,6 @@ axum-test = "0.8"
 - [ ] `oidc-repository` crate created with pg_client integration
 - [ ] `oidc-oidc` crate created with all OIDC endpoints
 - [ ] `oidc-apikey` crate created with middleware
-- [ ] `oidc-mls` crate created with group service
 - [ ] `openid-connect-wasi` binary crate with dual entry points
 - [ ] Workspace `Cargo.toml` configured
 - [ ] Native tests pass (`cargo test`)

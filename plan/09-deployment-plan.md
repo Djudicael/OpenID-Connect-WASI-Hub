@@ -23,10 +23,10 @@ Target deployment directory: `D:\dev\Wasm-Cloud-Platform`
 │  │              wasmtime / WasmEdge / wamr                             ││
 │  │  ┌───────────────────────────────────────────────────────────────┐  ││
 │  │  │          openid_connect_wasi.wasm                              │  ││
-│  │  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ │  ││
-│  │  │  │  OIDC   │ │ API Key │ │  MLS    │ │  Admin  │ │ Health  │ │  ││
-│  │  │  │ Router  │ │ Router  │ │ Router  │ │ Static  │ │ Router  │ │  ││
-│  │  │  └─────────┘ └─────────┘ └─────────┘ └─────────┘ └─────────┘ │  ││
+│  │  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ │  ││
+│  │  │  │  OIDC   │ │ API Key │ │  Admin  │ │ Health  │ │  ││
+│  │  │  │ Router  │ │ Router  │ │ Static  │ │ Router  │ │  ││
+│  │  │  └─────────┘ └─────────┘ └─────────┘ └─────────┘ │  ││
 │  │  └───────────────────────────────────────────────────────────────┘  ││
 │  └─────────────────────────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────────────────────┘
@@ -107,10 +107,8 @@ $env:OIDC_SERVER_PORT = "8080"
 # Security
 $env:OIDC_ENCRYPTION_KEY = "base64-encoded-32-bytes"
 $env:OIDC_SIGNING_KEY_PEM = "-----BEGIN PRIVATE KEY-----..."
-$env:OIDC_MLS_MASTER_KEY = "base64-encoded-32-bytes"
 
 # Features
-$env:OIDC_MLS_ENABLED = "true"
 $env:OIDC_LOG_LEVEL = "info"
 ```
 
@@ -127,10 +125,6 @@ max_connections = 5
 [security]
 encryption_key = "${OIDC_ENCRYPTION_KEY}"
 signing_key_pem = "${OIDC_SIGNING_KEY_PEM}"
-
-[mls]
-enabled = true
-master_key = "${OIDC_MLS_MASTER_KEY}"
 
 [logging]
 format = "json"
@@ -161,7 +155,6 @@ wasmtime run `
   --env OIDC_SERVER_PORT=$env:OIDC_SERVER_PORT `
   --env OIDC_ENCRYPTION_KEY=$env:OIDC_ENCRYPTION_KEY `
   --env OIDC_SIGNING_KEY_PEM=$env:OIDC_SIGNING_KEY_PEM `
-  --env OIDC_MLS_MASTER_KEY=$env:OIDC_MLS_MASTER_KEY `
   --listenfd `
   $wasmPath
 ```

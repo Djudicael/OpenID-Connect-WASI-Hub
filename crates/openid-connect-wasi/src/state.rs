@@ -28,17 +28,9 @@ pub struct AppConfig {
     pub issuer: String,
     /// Encryption key for cookies/JWE (base64, 32 bytes).
     pub encryption_key: String,
-    /// Whether MLS is enabled.
-    pub mls_enabled: bool,
 }
 
 impl oidc_apikey::ApiKeyVerifierState for AppState {
-    fn db_config(&self) -> &wasi_pg_client::Config {
-        &self.db_config
-    }
-}
-
-impl oidc_mls::MlsState for AppState {
     fn db_config(&self) -> &wasi_pg_client::Config {
         &self.db_config
     }
@@ -58,9 +50,6 @@ impl AppState {
                 .unwrap_or(8080),
             issuer: std::env::var("OIDC_ISSUER").unwrap_or_else(|_| "http://localhost:8080".into()),
             encryption_key: std::env::var("OIDC_ENCRYPTION_KEY").unwrap_or_default(),
-            mls_enabled: std::env::var("OIDC_MLS_ENABLED")
-                .map(|s| s.eq_ignore_ascii_case("true"))
-                .unwrap_or(false),
         };
 
         let token_service =

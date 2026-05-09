@@ -7,7 +7,7 @@ Uses `pg_client` (https://github.com/Djudicael/pg_client) as the exclusive Postg
 ## 1. Schema Design (Production-Grade)
 
 ### Naming Conventions
-- Tables: plural, snake_case (`users`, `api_keys`, `mls_groups`)
+- Tables: plural, snake_case (`users`, `api_keys`, `signing_keys`)
 - Columns: snake_case (`created_at`, `hashed_secret`)
 - Primary keys: `id UUID` (UUID v7)
 - Foreign keys: `<table>_id`
@@ -130,50 +130,6 @@ CREATE TABLE signing_keys (
 );
 ```
 
-#### `mls_groups`
-```sql
-CREATE TABLE mls_groups (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    group_id BYTEA NOT NULL UNIQUE,  -- MLS group ID (opaque bytes)
-    realm_id UUID NOT NULL REFERENCES realms(id),
-    epoch BIGINT NOT NULL DEFAULT 0,
-    roster_hash BYTEA,               -- Hash of current roster for quick sync
-    group_state_encrypted BYTEA NOT NULL, -- Encrypted MLSGroupState
-    welcome_message BYTEA,           -- Latest Welcome (for late joiners)
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX idx_mls_groups_realm ON mls_groups(realm_id);
-```
-
-#### `mls_members`
-```sql
-CREATE TABLE mls_members (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    group_id UUID NOT NULL REFERENCES mls_groups(id),
-    user_id UUID NOT NULL REFERENCES users(id),
-    credential BYTEA NOT NULL,
-    leaf_index INTEGER NOT NULL,
-    added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    removed_at TIMESTAMPTZ,
-    UNIQUE(group_id, user_id)
-);
-```
-
-#### `mls_key_packages`
-```sql
-CREATE TABLE mls_key_packages (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID NOT NULL REFERENCES users(id),
-    key_package_ref BYTEA NOT NULL UNIQUE,
-    key_package_encrypted BYTEA NOT NULL, -- Encrypted KeyPackage
-    used BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    expires_at TIMESTAMPTZ
-);
-CREATE INDEX idx_kp_user ON mls_key_packages(user_id) WHERE NOT used;
-```
-
 ### Audit / Events Table
 ```sql
 CREATE TABLE audit_events (
@@ -207,9 +163,8 @@ migrations/postgresql/
 ├── V1__init.sql
 ├── V2__oidc_tables.sql
 ├── V3__api_keys.sql
-├── V4__mls_tables.sql
-├── V5__audit_events.sql
-└── V6__indexes.sql
+├── V4__audit_events.sql
+└── V5__indexes.sql
 ```
 
 Each migration must be:
@@ -304,7 +259,7 @@ All indexes defined in `V6__indexes.sql`:
 - `sessions`: `(access_token_hash)`, `(refresh_token_hash)`, `(expires_at)`
 - `api_keys`: `(prefix)`, `(realm_id, revoked)`
 - `audit_events`: `(realm_id, created_at)`, `(actor_id, created_at)`
-- `mls_key_packages`: `(user_id, used)`
+
 
 ### Connection Tuning
 | Parameter | WASM | Native | Rationale |
@@ -344,7 +299,7 @@ All indexes defined in `V6__indexes.sql`:
 ## 7. Checklist
 
 - [ ] Schema SQL written and reviewed
-- [ ] Migration files created (`V1` through `V6`)
+- [ ] Migration files created (`V1` through `V5`)
 - [ ] `oidc-repository` crate connects with `pg_client` on WASM
 - [ ] `oidc-repository` crate connects with `tokio-postgres` on native
 - [ ] All queries parameterized; no string interpolation

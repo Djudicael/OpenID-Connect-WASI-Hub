@@ -11,7 +11,7 @@ pub fn build_router() -> Router {
     Router::new()
         .merge(router::oidc::router())
         .merge(router::apikey::router())
-        .merge(router::mls::router())
+
         .merge(router::health::router())
         .merge(router::admin::router())
         .with_state(state.clone())

@@ -4,7 +4,7 @@ pub mod api_key;
 pub mod audit_event;
 pub mod auth_code;
 pub mod client;
-pub mod mls;
+
 pub mod realm;
 pub mod session;
 pub mod signing_key;
@@ -14,7 +14,7 @@ pub use api_key::ApiKey;
 pub use audit_event::{ActorType, AuditEvent};
 pub use auth_code::AuthCode;
 pub use client::{Client, ClientType};
-pub use mls::{KeyPackageEntry, MlsCommit, MlsGroup, MlsMember};
+
 pub use realm::Realm;
 pub use session::Session;
 pub use signing_key::{Algorithm, SigningKey};
