@@ -8,11 +8,12 @@ const app = express();
 app.disable('x-powered-by');
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use('/style', express.static(join(__dirname, 'style')));
+app.use('/js', express.static(join(__dirname, 'dist/js')));
 app.use('/', express.static(join(__dirname, 'dist')));
-app.use('/ressource', express.static(join(__dirname, 'dist/ressource')));
 
 app.get('/*', function (req, res) {
-  res.sendFile(join(__dirname, 'dist/index.html'));
+  res.sendFile(join(__dirname, 'index.html'));
 });
 
 app.listen(3008, () => {

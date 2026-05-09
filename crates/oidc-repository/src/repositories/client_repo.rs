@@ -1,7 +1,7 @@
 use crate::connection::Connection;
 use crate::mapper;
-use oidc_core::models::{Client, ClientType};
 use oidc_core::OidcError;
+use oidc_core::models::{Client, ClientType};
 use uuid::Uuid;
 
 /// PostgreSQL implementation of the Client repository.
@@ -21,7 +21,10 @@ impl ClientRepo {
             FROM clients
             WHERE id = $1
         "#;
-        let row = conn.query_one_params(sql, &[&id]).await.map_err(mapper::pg_err)?;
+        let row = conn
+            .query_one_params(sql, &[&id])
+            .await
+            .map_err(mapper::pg_err)?;
         row.map(|r| Self::map_row(&r)).transpose()
     }
 
@@ -126,6 +129,113 @@ impl ClientRepo {
             .await
             .map_err(mapper::pg_err)?;
         Ok(())
+    }
+
+    /// List clients with optional realm filter, search, and pagination.
+    pub async fn list(
+        &self,
+        conn: &mut Connection,
+        realm_id: Option<Uuid>,
+        search: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<Client>, OidcError> {
+        match (realm_id, search) {
+            (Some(rid), Some(s)) => {
+                let pattern = format!("%{}%", s);
+                let sql = r#"
+                    SELECT id, realm_id, client_id, client_type, client_secret_hash, name, redirect_uris, allowed_scopes, allowed_grant_types, pkce_required, enabled
+                    FROM clients
+                    WHERE realm_id = $1 AND (name ILIKE $2 OR client_id ILIKE $2)
+                    ORDER BY created_at DESC LIMIT $3 OFFSET $4
+                "#;
+                let result = conn
+                    .query_params(sql, &[&rid, &pattern, &limit, &offset])
+                    .await
+                    .map_err(mapper::pg_err)?;
+                result
+                    .into_rows()
+                    .iter()
+                    .map(|r| Self::map_row(r))
+                    .collect::<Result<Vec<_>, _>>()
+            }
+            (Some(rid), None) => {
+                let sql = r#"
+                    SELECT id, realm_id, client_id, client_type, client_secret_hash, name, redirect_uris, allowed_scopes, allowed_grant_types, pkce_required, enabled
+                    FROM clients
+                    WHERE realm_id = $1
+                    ORDER BY created_at DESC LIMIT $2 OFFSET $3
+                "#;
+                let result = conn
+                    .query_params(sql, &[&rid, &limit, &offset])
+                    .await
+                    .map_err(mapper::pg_err)?;
+                result
+                    .into_rows()
+                    .iter()
+                    .map(|r| Self::map_row(r))
+                    .collect::<Result<Vec<_>, _>>()
+            }
+            (None, Some(s)) => {
+                let pattern = format!("%{}%", s);
+                let sql = r#"
+                    SELECT id, realm_id, client_id, client_type, client_secret_hash, name, redirect_uris, allowed_scopes, allowed_grant_types, pkce_required, enabled
+                    FROM clients
+                    WHERE (name ILIKE $1 OR client_id ILIKE $1)
+                    ORDER BY created_at DESC LIMIT $2 OFFSET $3
+                "#;
+                let result = conn
+                    .query_params(sql, &[&pattern, &limit, &offset])
+                    .await
+                    .map_err(mapper::pg_err)?;
+                result
+                    .into_rows()
+                    .iter()
+                    .map(|r| Self::map_row(r))
+                    .collect::<Result<Vec<_>, _>>()
+            }
+            (None, None) => {
+                let sql = r#"
+                    SELECT id, realm_id, client_id, client_type, client_secret_hash, name, redirect_uris, allowed_scopes, allowed_grant_types, pkce_required, enabled
+                    FROM clients
+                    ORDER BY created_at DESC LIMIT $1 OFFSET $2
+                "#;
+                let result = conn
+                    .query_params(sql, &[&limit, &offset])
+                    .await
+                    .map_err(mapper::pg_err)?;
+                result
+                    .into_rows()
+                    .iter()
+                    .map(|r| Self::map_row(r))
+                    .collect::<Result<Vec<_>, _>>()
+            }
+        }
+    }
+
+    /// Count clients.
+    pub async fn count(
+        &self,
+        conn: &mut Connection,
+        realm_id: Option<Uuid>,
+    ) -> Result<i64, OidcError> {
+        let sql = match realm_id {
+            Some(_) => "SELECT COUNT(*) FROM clients WHERE realm_id = $1",
+            None => "SELECT COUNT(*) FROM clients",
+        };
+        let result = match realm_id {
+            Some(rid) => conn
+                .query_params(sql, &[&rid])
+                .await
+                .map_err(mapper::pg_err)?,
+            None => conn.query(sql).await.map_err(mapper::pg_err)?,
+        };
+        let row = result
+            .into_rows()
+            .into_iter()
+            .next()
+            .ok_or(OidcError::Internal("count returned no rows".into()))?;
+        mapper::i64_(&row, 0)
     }
 
     fn map_row(row: &wasi_pg_client::Row) -> Result<Client, OidcError> {

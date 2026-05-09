@@ -79,6 +79,30 @@ impl AuditEventRepo {
             .collect::<Result<Vec<_>, _>>()
     }
 
+    /// List recent audit events across all realms.
+    pub async fn list_recent(
+        &self,
+        conn: &mut Connection,
+        limit: i64,
+    ) -> Result<Vec<AuditEvent>, OidcError> {
+        let sql = r#"
+            SELECT id, realm_id, event_type, actor_id, actor_type,
+                   target_type, target_id, details, ip_address::TEXT, user_agent, created_at
+            FROM audit_events
+            ORDER BY created_at DESC
+            LIMIT $1
+        "#;
+        let result = conn
+            .query_params(sql, &[&limit])
+            .await
+            .map_err(mapper::pg_err)?;
+        result
+            .into_rows()
+            .iter()
+            .map(|r| Self::map_row(r))
+            .collect::<Result<Vec<_>, _>>()
+    }
+
     /// Insert a new audit event.
     pub async fn create(
         &self,
