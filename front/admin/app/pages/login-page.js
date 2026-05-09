@@ -178,7 +178,7 @@ class LoginPage extends BaseComponent {
               ${loading ? 'Signing in...' : 'Sign In'}
             </button>
           </form>
-          <p class="hint">Default: admin@localhost / admin</p>
+
         ` : html`
           <button class="login-btn" ?disabled=${loading} @click=${() => authService.login()}>
             ${loading ? 'Redirecting...' : 'Sign in with OIDC'}

@@ -18,17 +18,23 @@ async fn main() -> anyhow::Result<()> {
 
     let migrations_dir = Path::new("migrations/postgresql");
     if !migrations_dir.exists() {
-        anyhow::bail!("migrations directory not found: {}", migrations_dir.display());
+        anyhow::bail!(
+            "migrations directory not found: {}",
+            migrations_dir.display()
+        );
     }
 
     // Ensure migrations tracking table exists
-    conn.query(r#"
+    conn.query(
+        r#"
         CREATE TABLE IF NOT EXISTS _migrations (
             id SERIAL PRIMARY KEY,
             filename TEXT NOT NULL UNIQUE,
             applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
-    "#).await?;
+    "#,
+    )
+    .await?;
 
     let mut entries: Vec<_> = fs::read_dir(migrations_dir)?
         .filter_map(|e| e.ok())
@@ -39,7 +45,15 @@ async fn main() -> anyhow::Result<()> {
         })
         .collect();
 
-    entries.sort_by_key(|e| e.file_name());
+    // Sort by the numeric prefix (V1, V2, ..., V10, ...) not alphabetically
+    // (alphabetical would put V10 before V2).
+    entries.sort_by_key(|e| {
+        let name = e.file_name().to_string_lossy().to_string();
+        name.split_once('_')
+            .and_then(|(prefix, _)| prefix.strip_prefix('V'))
+            .and_then(|num| num.parse::<u32>().ok())
+            .unwrap_or(0)
+    });
 
     for entry in entries {
         let filename = entry.file_name().to_string_lossy().to_string();
@@ -60,14 +74,15 @@ async fn main() -> anyhow::Result<()> {
         let sql = fs::read_to_string(&path)?;
 
         tracing::info!("apply {filename}");
-        conn.query(&sql).await.map_err(|e| {
-            anyhow::anyhow!("failed to apply {}: {}", filename, e)
-        })?;
+        conn.query(&sql)
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to apply {}: {}", filename, e))?;
 
         conn.execute_params(
             "INSERT INTO _migrations (filename) VALUES ($1)",
             &[&filename],
-        ).await?;
+        )
+        .await?;
 
         tracing::info!("applied {filename} ok");
     }

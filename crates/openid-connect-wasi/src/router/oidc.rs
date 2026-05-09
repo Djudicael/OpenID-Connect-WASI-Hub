@@ -31,7 +31,6 @@ pub fn router() -> Router<AppState> {
         .route("/oidc/userinfo", get(|State(state): State<AppState>, headers: axum::http::HeaderMap| async move {
             let auth = headers.get(axum::http::header::AUTHORIZATION).cloned();
             oidc_oidc::endpoints::userinfo::userinfo_handler(State(state.oidc_state()), auth).await
-                .unwrap_or_else(|_| axum::Json(serde_json::json!({"error": "invalid_token"})))
         }))
         .route("/oidc/introspect", post(|State(state): State<AppState>, form: Form<HashMap<String, String>>| async move {
             oidc_oidc::endpoints::introspect::introspect_handler(State(state.oidc_state()), form).await

@@ -12,6 +12,8 @@ use uuid::Uuid;
 
 use oidc_core::models::ClientType;
 use oidc_core::models::audit_event::ActorType;
+
+use oidc_core::utils::{generate_opaque_token, generate_uuid_v7};
 use oidc_repository::Connection;
 use oidc_repository::repositories::audit_event_repo::AuditEventRepo;
 use oidc_repository::repositories::client_repo::ClientRepo;
@@ -33,16 +35,19 @@ pub fn router() -> Router<AppState> {
         .route("/api/stats", get(stats_handler))
         // Users
         .route("/api/users", get(list_users))
+        .route("/api/users", post(create_user))
         .route("/api/users/{id}", get(get_user))
         .route("/api/users/{id}", put(update_user))
         .route("/api/users/{id}", delete(delete_user))
         // Clients
         .route("/api/clients", get(list_clients))
+        .route("/api/clients", post(create_client))
         .route("/api/clients/{id}", get(get_client))
         .route("/api/clients/{id}", put(update_client))
         .route("/api/clients/{id}", delete(delete_client))
         // Realms
         .route("/api/realms", get(list_realms))
+        .route("/api/realms", post(create_realm))
         .route("/api/realms/{id}", get(get_realm))
         .route("/api/realms/{id}", put(update_realm))
         .route("/api/realms/{id}", delete(delete_realm))
@@ -61,10 +66,9 @@ async fn admin_index_handler(
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-fn admin_or_forbidden(auth: &AdminAuth) -> Option<Response> {
-    if !auth.is_admin() {
-        return Some((StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))).into_response());
-    }
+fn admin_or_forbidden(_auth: &AdminAuth) -> Option<Response> {
+    // Scope check is now performed during AdminAuth extraction.
+    // If extraction succeeded, the caller is already verified as admin.
     None
 }
 
@@ -860,6 +864,10 @@ async fn revoke_session(
 struct AuditListQuery {
     #[serde(default = "default_limit")]
     limit: i64,
+    #[serde(default = "default_offset")]
+    offset: i64,
+    event_type: Option<String>,
+    actor_id: Option<String>,
 }
 
 async fn list_audit_events(
@@ -876,7 +884,37 @@ async fn list_audit_events(
         Err(r) => return r,
     };
 
-    let events = match AuditEventRepo.list_recent(&mut conn, query.limit).await {
+    let event_type_filter = query.event_type.as_deref();
+    let actor_id_filter: Option<Uuid> = query.actor_id.as_deref().and_then(|s| s.parse().ok());
+    let actor_id_ref = actor_id_filter.as_ref();
+
+    let total = match AuditEventRepo
+        .count(&mut conn, None, event_type_filter, actor_id_ref, None, None)
+        .await
+    {
+        Ok(t) => t,
+        Err(err) => {
+            tracing::error!("count audit events error: {err}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    };
+
+    let events = match AuditEventRepo
+        .list_recent(
+            &mut conn,
+            query.limit,
+            query.offset,
+            event_type_filter,
+            actor_id_ref,
+            None,
+            None,
+        )
+        .await
+    {
         Ok(e) => e,
         Err(err) => {
             tracing::error!("list audit events error: {err}");
@@ -905,5 +943,376 @@ async fn list_audit_events(
         })
         .collect();
 
-    Json(json!({"items": rows, "total": rows.len() as i64})).into_response()
+    Json(json!({"items": rows, "total": total})).into_response()
+}
+
+// ─── Create Handlers ──────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct CreateUserRequest {
+    realm_id: Uuid,
+    email: String,
+    password: String,
+    username: Option<String>,
+    given_name: Option<String>,
+    family_name: Option<String>,
+    enabled: Option<bool>,
+}
+
+async fn create_user(State(state): State<AppState>, auth: AdminAuth, body: String) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+
+    let req: CreateUserRequest = match serde_json::from_str(&body) {
+        Ok(r) => r,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "bad_request"})),
+            )
+                .into_response();
+        }
+    };
+
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+
+    // Check for duplicate email in the realm
+    match UserRepo
+        .find_by_email(&mut conn, req.realm_id, &req.email)
+        .await
+    {
+        Ok(Some(_)) => {
+            return (StatusCode::CONFLICT, Json(json!({"error": "duplicate"}))).into_response();
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::error!("create user duplicate check error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    }
+
+    // Hash the password
+    let password_hash = match state.hasher.hash(&req.password) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!("create user hash error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    };
+
+    let user_id = generate_uuid_v7();
+    let user = oidc_core::models::User {
+        id: user_id,
+        realm_id: req.realm_id,
+        email: req.email,
+        email_verified: false,
+        username: req.username,
+        password_hash: Some(password_hash),
+        given_name: req.given_name,
+        family_name: req.family_name,
+        phone_number: None,
+        locale: None,
+        attributes: serde_json::Value::Object(serde_json::Map::new()),
+        enabled: req.enabled.unwrap_or(true),
+        deleted_at: None,
+    };
+
+    match UserRepo.create(&mut conn, &user).await {
+        Ok(()) => {}
+        Err(e) => {
+            tracing::error!("create user error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    }
+
+    // Audit event
+    let actor_type = if auth.is_api_key {
+        ActorType::ApiKey
+    } else {
+        ActorType::User
+    };
+    let actor_id = Uuid::parse_str(&auth.subject).ok();
+    let audit = oidc_core::models::audit_event::AuditEvent {
+        id: generate_uuid_v7(),
+        realm_id: Some(user.realm_id),
+        event_type: "user.created".to_string(),
+        actor_id,
+        actor_type,
+        target_type: Some("user".to_string()),
+        target_id: Some(user.id),
+        details: json!({"email": user.email}),
+        ip_address: None,
+        user_agent: None,
+        created_at: chrono::Utc::now(),
+    };
+    if let Err(e) = AuditEventRepo.create(&mut conn, &audit).await {
+        tracing::warn!("create user audit event error: {e}");
+    }
+
+    Json(json!({
+        "id": user.id.to_string(),
+        "realm_id": user.realm_id.to_string(),
+        "email": user.email,
+        "email_verified": user.email_verified,
+        "username": user.username,
+        "given_name": user.given_name,
+        "family_name": user.family_name,
+        "enabled": user.enabled,
+    }))
+    .into_response()
+}
+
+#[derive(Deserialize)]
+struct CreateClientRequest {
+    realm_id: Uuid,
+    client_id: String,
+    client_type: Option<String>,
+    client_secret: Option<String>,
+    name: String,
+    redirect_uris: Option<Vec<String>>,
+    allowed_scopes: Option<Vec<String>>,
+    allowed_grant_types: Option<Vec<String>>,
+    pkce_required: Option<bool>,
+    enabled: Option<bool>,
+}
+
+async fn create_client(State(state): State<AppState>, auth: AdminAuth, body: String) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+
+    let req: CreateClientRequest = match serde_json::from_str(&body) {
+        Ok(r) => r,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "bad_request"})),
+            )
+                .into_response();
+        }
+    };
+
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+
+    // Check for duplicate client_id
+    match ClientRepo
+        .find_by_client_id(&mut conn, &req.client_id)
+        .await
+    {
+        Ok(Some(_)) => {
+            return (StatusCode::CONFLICT, Json(json!({"error": "duplicate"}))).into_response();
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::error!("create client duplicate check error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    }
+
+    // Determine client type
+    let client_type = match req.client_type.as_deref() {
+        Some("public") => ClientType::Public,
+        _ => ClientType::Confidential, // default to confidential
+    };
+
+    // Handle client secret
+    let (client_secret_hash, plain_secret) = match client_type {
+        ClientType::Confidential => {
+            let plain = req
+                .client_secret
+                .unwrap_or_else(|| generate_opaque_token().unwrap_or_default());
+            let hash = match state.hasher.hash(&plain) {
+                Ok(h) => h,
+                Err(e) => {
+                    tracing::error!("create client hash error: {e}");
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({"error": "internal"})),
+                    )
+                        .into_response();
+                }
+            };
+            (Some(hash), Some(plain))
+        }
+        ClientType::Public => (None, None),
+    };
+
+    let id = generate_uuid_v7();
+    let redirect_uris = req.redirect_uris.unwrap_or_default();
+    let allowed_scopes = req
+        .allowed_scopes
+        .unwrap_or_else(|| vec!["openid".to_string()]);
+    let allowed_grant_types = req
+        .allowed_grant_types
+        .unwrap_or_else(|| vec!["authorization_code".to_string()]);
+    let pkce_required = req.pkce_required.unwrap_or(true);
+    let enabled = req.enabled.unwrap_or(true);
+
+    let client = oidc_core::models::Client {
+        id,
+        realm_id: req.realm_id,
+        client_id: req.client_id,
+        client_type,
+        client_secret_hash,
+        name: req.name,
+        redirect_uris,
+        allowed_scopes,
+        allowed_grant_types,
+        pkce_required,
+        enabled,
+        deleted_at: None,
+    };
+
+    match ClientRepo.create(&mut conn, &client).await {
+        Ok(()) => {}
+        Err(e) => {
+            tracing::error!("create client error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    }
+
+    // Build response — include client_secret only for confidential clients
+    let mut resp = json!({
+        "id": client.id.to_string(),
+        "realm_id": client.realm_id.to_string(),
+        "client_id": client.client_id,
+        "client_type": match client.client_type { ClientType::Confidential => "confidential", ClientType::Public => "public" },
+        "name": client.name,
+        "redirect_uris": client.redirect_uris,
+        "allowed_scopes": client.allowed_scopes,
+        "allowed_grant_types": client.allowed_grant_types,
+        "pkce_required": client.pkce_required,
+        "enabled": client.enabled,
+    });
+    if let Some(secret) = plain_secret {
+        resp["client_secret"] = json!(secret);
+    }
+
+    Json(resp).into_response()
+}
+
+#[derive(Deserialize)]
+struct CreateRealmRequest {
+    name: String,
+    display_name: String,
+    enabled: Option<bool>,
+}
+
+async fn create_realm(State(state): State<AppState>, auth: AdminAuth, body: String) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+
+    let req: CreateRealmRequest = match serde_json::from_str(&body) {
+        Ok(r) => r,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "bad_request"})),
+            )
+                .into_response();
+        }
+    };
+
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+
+    // Check for duplicate name
+    match RealmRepo.find_by_name(&mut conn, &req.name).await {
+        Ok(Some(_)) => {
+            return (StatusCode::CONFLICT, Json(json!({"error": "duplicate"}))).into_response();
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::error!("create realm duplicate check error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    }
+
+    let realm_id = generate_uuid_v7();
+    let realm = oidc_core::models::Realm {
+        id: realm_id,
+        name: req.name,
+        display_name: req.display_name,
+        enabled: req.enabled.unwrap_or(true),
+        config: serde_json::Value::Object(serde_json::Map::new()),
+        deleted_at: None,
+    };
+
+    match RealmRepo.create(&mut conn, &realm).await {
+        Ok(()) => {}
+        Err(e) => {
+            tracing::error!("create realm error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    }
+
+    // Audit event
+    let actor_type = if auth.is_api_key {
+        ActorType::ApiKey
+    } else {
+        ActorType::User
+    };
+    let actor_id = Uuid::parse_str(&auth.subject).ok();
+    let audit = oidc_core::models::audit_event::AuditEvent {
+        id: generate_uuid_v7(),
+        realm_id: Some(realm.id),
+        event_type: "realm.created".to_string(),
+        actor_id,
+        actor_type,
+        target_type: Some("realm".to_string()),
+        target_id: Some(realm.id),
+        details: json!({"name": realm.name}),
+        ip_address: None,
+        user_agent: None,
+        created_at: chrono::Utc::now(),
+    };
+    if let Err(e) = AuditEventRepo.create(&mut conn, &audit).await {
+        tracing::warn!("create realm audit event error: {e}");
+    }
+
+    Json(json!({
+        "id": realm.id.to_string(),
+        "name": realm.name,
+        "display_name": realm.display_name,
+        "enabled": realm.enabled,
+    }))
+    .into_response()
 }

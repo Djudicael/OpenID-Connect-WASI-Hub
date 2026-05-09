@@ -1,11 +1,14 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
-import { get, del } from '../core/http.js';
+import { get, post, del } from '../core/http.js';
+import { navigate } from '../core/router.js';
 import { showToast } from '../components/ui/toast.js';
+import { isRequired, minLength, isEmail } from '../utils/validators.js';
 
 class ClientsPage extends BaseComponent {
   constructor() {
     super();
+    this._searchTimer = null;
     this._state = {
       clients: [],
       loading: false,
@@ -13,6 +16,18 @@ class ClientsPage extends BaseComponent {
       page: 1,
       pageSize: 20,
       total: 0,
+      showCreateModal: false,
+      createRealmId: '',
+      createClientId: '',
+      createName: '',
+      createClientType: 'confidential',
+      createClientSecret: '',
+      createRedirectUris: '',
+      createAllowedScopes: 'openid',
+      createAllowedGrantTypes: 'authorization_code',
+      createPkceRequired: true,
+      createEnabled: true,
+      createLoading: false,
     };
   }
 
@@ -44,7 +59,10 @@ class ClientsPage extends BaseComponent {
   }
 
   _onSearch(e) {
-    this.setState({ search: e.target.value, page: 1 }, this._loadClients());
+    const value = e.target.value;
+    this.setState({ search: value, page: 1 });
+    clearTimeout(this._searchTimer);
+    this._searchTimer = setTimeout(() => this._loadClients(), 300);
   }
 
   _onPageChange(e) {
@@ -62,8 +80,123 @@ class ClientsPage extends BaseComponent {
     }
   }
 
+  _openCreateModal() {
+    this.setState({
+      showCreateModal: true,
+      createRealmId: '',
+      createClientId: '',
+      createName: '',
+      createClientType: 'confidential',
+      createClientSecret: '',
+      createRedirectUris: '',
+      createAllowedScopes: 'openid',
+      createAllowedGrantTypes: 'authorization_code',
+      createPkceRequired: true,
+      createEnabled: true,
+      createLoading: false,
+    });
+    requestAnimationFrame(() => {
+      const modal = this.shadowRoot.querySelector('c-modal');
+      if (modal) modal.open();
+    });
+  }
+
+  _closeCreateModal() {
+    this.shadowRoot.querySelector('c-modal').close();
+    this.setState({ showCreateModal: false });
+  }
+
+  async _createClient() {
+    const {
+      createRealmId, createClientId, createName, createClientType,
+      createClientSecret, createRedirectUris, createAllowedScopes,
+      createAllowedGrantTypes, createPkceRequired, createEnabled,
+    } = this._state;
+
+    // Input validation
+    if (!isRequired(createClientId)) {
+      showToast('Client ID is required', 'error');
+      return;
+    }
+    if (!minLength(createClientId, 3)) {
+      showToast('Client ID must be at least 3 characters', 'error');
+      return;
+    }
+    if (!isRequired(createName)) {
+      showToast('Name is required', 'error');
+      return;
+    }
+    if (!minLength(createName, 2)) {
+      showToast('Name must be at least 2 characters', 'error');
+      return;
+    }
+    if (createRedirectUris.trim()) {
+      const uris = createRedirectUris.split('\n').map(s => s.trim()).filter(Boolean);
+      for (const uri of uris) {
+        try {
+          new URL(uri);
+        } catch {
+          showToast(`Invalid redirect URI: ${uri}`, 'error');
+          return;
+        }
+      }
+    }
+
+    const body = {
+      realm_id: createRealmId.trim(),
+      client_id: createClientId.trim(),
+      name: createName.trim(),
+      client_type: createClientType,
+      redirect_uris: createRedirectUris.split('\n').map(s => s.trim()).filter(Boolean),
+      allowed_scopes: createAllowedScopes.split(',').map(s => s.trim()).filter(Boolean),
+      allowed_grant_types: createAllowedGrantTypes.split(',').map(s => s.trim()).filter(Boolean),
+      pkce_required: createPkceRequired,
+      enabled: createEnabled,
+    };
+
+    if (createClientType === 'confidential' && createClientSecret.trim()) {
+      body.client_secret = createClientSecret.trim();
+    }
+
+    this.setState({ createLoading: true });
+    try {
+      const data = await post('/api/clients', body);
+      this._closeCreateModal();
+      showToast('Client created successfully', 'success');
+      if (data.client_secret) {
+        showToast('Client created! Secret shown in dialog — copy it now.', 'success');
+        // Show secret in a prompt-like dialog with copy support
+        const secret = data.client_secret;
+        const copied = await navigator.clipboard.writeText(secret).catch(() => false);
+        if (copied) {
+          showToast('Secret copied to clipboard!', 'success');
+        } else {
+          // Fallback: use a temporary input for manual copy
+          const input = document.createElement('input');
+          input.value = secret;
+          input.style.cssText = 'position:fixed;left:-9999px';
+          document.body.appendChild(input);
+          input.select();
+          document.execCommand('copy');
+          document.body.removeChild(input);
+          showToast('Secret copied to clipboard!', 'success');
+        }
+      }
+      this._loadClients();
+    } catch (err) {
+      showToast(err.body?.error || 'Failed to create client', 'error');
+      this.setState({ createLoading: false });
+    }
+  }
+
   template() {
-    const { clients, loading, search, page, pageSize, total } = this._state;
+    const {
+      clients, loading, search, page, pageSize, total,
+      showCreateModal, createRealmId, createClientId, createName,
+      createClientType, createClientSecret, createRedirectUris,
+      createAllowedScopes, createAllowedGrantTypes, createPkceRequired,
+      createEnabled, createLoading,
+    } = this._state;
     const columns = [
       { key: 'client_id', label: 'Client ID' },
       { key: 'name', label: 'Name' },
@@ -75,6 +208,7 @@ class ClientsPage extends BaseComponent {
         label: 'Actions',
         render: (_, row) => html`
           <div style="display:flex;gap:0.5rem">
+            <c-button size="sm" variant="secondary" @click=${() => navigate(`/clients/${row.id}`)}>Edit</c-button>
             <c-button size="sm" variant="danger" @click=${() => this._deleteClient(row.id)}>Delete</c-button>
           </div>
         `,
@@ -103,10 +237,49 @@ class ClientsPage extends BaseComponent {
           outline: none;
           border-color: var(--color-primary);
         }
+        .form { max-width: 32rem; }
+        .field { margin-bottom: 1rem; }
+        .field-label {
+          display: block;
+          font-size: 0.875rem;
+          font-weight: 500;
+          margin-bottom: 0.25rem;
+        }
+        .field-input, .field-select, .field-textarea {
+          width: 100%;
+          padding: 0.5rem 0.75rem;
+          font-size: 0.875rem;
+          border: 1px solid #e2e8f0;
+          border-radius: var(--radius-sm);
+          font-family: inherit;
+          box-sizing: border-box;
+        }
+        .field-input:focus, .field-select:focus, .field-textarea:focus {
+          outline: none;
+          border-color: var(--color-primary);
+        }
+        .field-textarea {
+          resize: vertical;
+          min-height: 4rem;
+        }
+        .hint {
+          font-size: 0.75rem;
+          color: var(--color-text-muted);
+          margin-top: 0.25rem;
+        }
+        .field-checkbox {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+        .field-checkbox input {
+          width: 1rem;
+          height: 1rem;
+        }
       </style>
       <c-page-layout title="Clients">
         <div slot="actions">
-          <c-button variant="primary" @click=${() => showToast('Client creation not yet implemented', 'warning')}>
+          <c-button variant="primary" @click=${() => this._openCreateModal()}>
             + Add Client
           </c-button>
         </div>
@@ -129,6 +302,127 @@ class ClientsPage extends BaseComponent {
           @page-change=${(e) => this._onPageChange(e)}
         ></c-pagination>
       </c-page-layout>
+
+      <c-modal title="Create Client" @close=${() => this._closeCreateModal()}>
+        ${showCreateModal ? html`
+          <div class="form">
+            <div class="field">
+              <label class="field-label">Realm ID</label>
+              <input
+                class="field-input"
+                type="text"
+                placeholder="Enter realm UUID"
+                .value=${createRealmId}
+                @input=${(e) => this.setState({ createRealmId: e.target.value })}
+              />
+            </div>
+            <div class="field">
+              <label class="field-label">Client ID *</label>
+              <input
+                class="field-input"
+                type="text"
+                placeholder="e.g. my-web-app"
+                .value=${createClientId}
+                @input=${(e) => this.setState({ createClientId: e.target.value })}
+              />
+              <div class="hint">The OAuth2 client_id string</div>
+            </div>
+            <div class="field">
+              <label class="field-label">Name *</label>
+              <input
+                class="field-input"
+                type="text"
+                placeholder="e.g. My Web Application"
+                .value=${createName}
+                @input=${(e) => this.setState({ createName: e.target.value })}
+              />
+              <div class="hint">Human-readable name</div>
+            </div>
+            <div class="field">
+              <label class="field-label">Client Type</label>
+              <select
+                class="field-select"
+                .value=${createClientType}
+                @change=${(e) => this.setState({ createClientType: e.target.value })}
+              >
+                <option value="confidential">Confidential</option>
+                <option value="public">Public</option>
+              </select>
+            </div>
+            ${createClientType === 'confidential' ? html`
+              <div class="field">
+                <label class="field-label">Client Secret</label>
+                <input
+                  class="field-input"
+                  type="text"
+                  placeholder="Leave empty to auto-generate"
+                  .value=${createClientSecret}
+                  @input=${(e) => this.setState({ createClientSecret: e.target.value })}
+                />
+                <div class="hint">Leave empty to auto-generate</div>
+              </div>
+            ` : ''}
+            <div class="field">
+              <label class="field-label">Redirect URIs</label>
+              <textarea
+                class="field-textarea"
+                placeholder="https://example.com/callback"
+                .value=${createRedirectUris}
+                @input=${(e) => this.setState({ createRedirectUris: e.target.value })}
+              ></textarea>
+              <div class="hint">One URI per line</div>
+            </div>
+            <div class="field">
+              <label class="field-label">Allowed Scopes</label>
+              <input
+                class="field-input"
+                type="text"
+                placeholder="openid, profile, email"
+                .value=${createAllowedScopes}
+                @input=${(e) => this.setState({ createAllowedScopes: e.target.value })}
+              />
+              <div class="hint">Comma-separated list of scopes</div>
+            </div>
+            <div class="field">
+              <label class="field-label">Allowed Grant Types</label>
+              <input
+                class="field-input"
+                type="text"
+                placeholder="authorization_code, refresh_token"
+                .value=${createAllowedGrantTypes}
+                @input=${(e) => this.setState({ createAllowedGrantTypes: e.target.value })}
+              />
+              <div class="hint">Comma-separated list of grant types</div>
+            </div>
+            <div class="field">
+              <label class="field-checkbox">
+                <input
+                  type="checkbox"
+                  ?checked=${createPkceRequired}
+                  @change=${(e) => this.setState({ createPkceRequired: e.target.checked })}
+                />
+                PKCE Required
+              </label>
+            </div>
+            <div class="field">
+              <label class="field-checkbox">
+                <input
+                  type="checkbox"
+                  ?checked=${createEnabled}
+                  @change=${(e) => this.setState({ createEnabled: e.target.checked })}
+                />
+                Enabled
+              </label>
+            </div>
+          </div>
+        ` : ''}
+        <div slot="footer">
+          <c-button variant="secondary" @click=${() => this._closeCreateModal()}>Cancel</c-button>
+          <c-button variant="primary" ?disabled=${createLoading || !createClientId.trim() || !createName.trim()} @click=${() => this._createClient()}>
+            ${createLoading ? 'Creating...' : 'Create'}
+          </c-button>
+        </div>
+      </c-modal>
     `;
   }
 }

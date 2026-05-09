@@ -44,6 +44,10 @@ pub enum OidcError {
     #[error("unsupported grant type")]
     UnsupportedGrantType,
 
+    /// Unauthorized client.
+    #[error("unauthorized client")]
+    UnauthorizedClient,
+
     /// Invalid scope.
     #[error("invalid scope: {0}")]
     InvalidScope(String),

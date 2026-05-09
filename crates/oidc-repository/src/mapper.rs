@@ -5,9 +5,19 @@ use uuid::Uuid;
 use wasi_pg_client::PgError;
 use wasi_pg_client::Row;
 
-/// Convert a `PgError` into an `OidcError::Internal`.
+/// Convert a `PgError` into an `OidcError`.
+/// Detects unique constraint violations and maps them to `OidcError::Conflict`.
 pub fn pg_err(e: PgError) -> OidcError {
-    OidcError::Internal(e.to_string())
+    let msg = e.to_string();
+    // PostgreSQL unique constraint violation error code is 23505
+    if msg.contains("23505")
+        || msg.to_lowercase().contains("unique constraint")
+        || msg.to_lowercase().contains("duplicate key")
+    {
+        OidcError::Conflict(msg)
+    } else {
+        OidcError::Internal(msg)
+    }
 }
 
 /// Extract a `Vec<String>` from a JSONB column.

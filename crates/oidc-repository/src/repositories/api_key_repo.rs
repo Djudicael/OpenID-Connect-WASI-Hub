@@ -39,7 +39,7 @@ impl ApiKeyRepo {
                    scopes, revoked, request_count, expires_at,
                    last_used_at, created_at, created_by, rotated_at
             FROM api_keys
-            WHERE prefix = $1 AND NOT revoked
+            WHERE prefix = $1 AND NOT revoked AND (expires_at IS NULL OR expires_at > NOW())
         "#;
         let row = conn
             .query_one_params(sql, &[&prefix])

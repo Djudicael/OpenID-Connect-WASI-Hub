@@ -1,3 +1,5 @@
+//! Token service trait and related types.
+
 use crate::errors::OidcError;
 use async_trait::async_trait;
 
@@ -24,6 +26,23 @@ pub struct IdTokenExtraClaims {
     pub family_name: Option<String>,
 }
 
+/// Verified access token claims returned by the token service.
+#[derive(Debug, Clone)]
+pub struct VerifiedAccessToken {
+    /// Subject (user or client identifier).
+    pub sub: String,
+    /// Audience (client_id the token was issued to).
+    pub aud: String,
+    /// Issuer.
+    pub iss: String,
+    /// Expiration timestamp (seconds since epoch).
+    pub exp: i64,
+    /// Issued-at timestamp (seconds since epoch).
+    pub iat: i64,
+    /// Space-separated scope string.
+    pub scope: String,
+}
+
 /// Abstract token issuance and verification service.
 #[async_trait]
 pub trait TokenService: Send + Sync {
@@ -38,6 +57,12 @@ pub trait TokenService: Send + Sync {
     /// Verify an access token and return the subject.
     async fn verify_access_token(&self, token: &str) -> Result<String, OidcError>;
 
+    /// Verify an access token and return the full claims.
+    async fn verify_access_token_with_claims(
+        &self,
+        token: &str,
+    ) -> Result<VerifiedAccessToken, OidcError>;
+
     /// Issue an ID token.
     async fn issue_id_token(
         &self,
@@ -45,4 +70,7 @@ pub trait TokenService: Send + Sync {
         audience: &str,
         extra: Option<IdTokenExtraClaims>,
     ) -> Result<String, OidcError>;
+
+    /// Verify an ID token and return the subject.
+    async fn verify_id_token(&self, token: &str) -> Result<String, OidcError>;
 }

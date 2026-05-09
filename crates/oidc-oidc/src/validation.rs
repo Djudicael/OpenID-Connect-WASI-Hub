@@ -68,7 +68,7 @@ pub fn validate_code_challenge(challenge: &str) -> Result<(), OidcError> {
 /// Validate PKCE code challenge method.
 pub fn validate_code_challenge_method(method: &str) -> Result<(), OidcError> {
     match method {
-        "S256" | "plain" => Ok(()),
+        "S256" => Ok(()),
         _ => Err(OidcError::InvalidRequest),
     }
 }

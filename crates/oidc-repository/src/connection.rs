@@ -18,12 +18,14 @@ impl Connection {
     }
 
     /// Access the underlying connection.
-    pub fn inner(&self) -> &wasi_pg_client::Connection {
+    #[allow(dead_code)]
+    pub(crate) fn inner(&self) -> &wasi_pg_client::Connection {
         &self.inner
     }
 
     /// Access the underlying connection mutably.
-    pub fn inner_mut(&mut self) -> &mut wasi_pg_client::Connection {
+    #[allow(dead_code)]
+    pub(crate) fn inner_mut(&mut self) -> &mut wasi_pg_client::Connection {
         &mut self.inner
     }
 
@@ -59,6 +61,24 @@ impl Connection {
     /// Execute a statement (INSERT/UPDATE/DELETE) and return the command tag.
     pub async fn execute(&mut self, sql: &str) -> Result<wasi_pg_client::ExecuteResult, PgError> {
         self.inner.execute(sql).await
+    }
+
+    /// Begin a database transaction.
+    pub async fn begin(&mut self) -> Result<(), PgError> {
+        self.inner.execute("BEGIN").await?;
+        Ok(())
+    }
+
+    /// Commit the current transaction.
+    pub async fn commit(&mut self) -> Result<(), PgError> {
+        self.inner.execute("COMMIT").await?;
+        Ok(())
+    }
+
+    /// Rollback the current transaction.
+    pub async fn rollback(&mut self) -> Result<(), PgError> {
+        self.inner.execute("ROLLBACK").await?;
+        Ok(())
     }
 
     /// Execute a parameterized statement and return rows affected.

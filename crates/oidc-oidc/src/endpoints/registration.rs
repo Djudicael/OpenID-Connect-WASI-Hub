@@ -56,6 +56,7 @@ pub async fn register_handler(
         allowed_grant_types: req.grant_types,
         pkce_required: true,
         enabled: true,
+        deleted_at: None,
     };
 
     ClientRepo.create(&mut conn, &client).await?;

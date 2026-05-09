@@ -1,4 +1,4 @@
-import { render } from 'lit-html';
+import { html, render } from 'lit-html';
 
 export class BaseComponent extends HTMLElement {
   constructor() {
@@ -17,7 +17,44 @@ export class BaseComponent extends HTMLElement {
   }
 
   _render() {
-    render(this.template(), this.shadowRoot);
+    try {
+      render(this.template(), this.shadowRoot);
+    } catch (err) {
+      console.error(`Component render error in <${this.tagName.toLowerCase()}>:`, err);
+      render(
+        html`
+          <style>
+            :host { display: block; }
+            .error-boundary {
+              padding: 1rem;
+              background: #fef2f2;
+              border: 1px solid #fecaca;
+              border-radius: 0.375rem;
+              color: #991b1b;
+              font-size: 0.875rem;
+            }
+            .error-boundary summary {
+              font-weight: 600;
+              cursor: pointer;
+              margin-bottom: 0.25rem;
+            }
+            .error-boundary pre {
+              margin: 0.5rem 0 0;
+              white-space: pre-wrap;
+              font-size: 0.75rem;
+              opacity: 0.8;
+            }
+          </style>
+          <div class="error-boundary">
+            <details>
+              <summary>Component Error</summary>
+              <pre>${err.message}\n${err.stack || ''}</pre>
+            </details>
+          </div>
+        `,
+        this.shadowRoot
+      );
+    }
   }
 
   template() {

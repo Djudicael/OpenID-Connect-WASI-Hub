@@ -149,15 +149,6 @@ impl SigningKeyRepo {
         Ok(())
     }
 
-    /// Delete a signing key by ID.
-    pub async fn delete(&self, conn: &mut Connection, id: Uuid) -> Result<(), OidcError> {
-        let sql = "DELETE FROM signing_keys WHERE id = $1";
-        conn.execute_params(sql, &[&id])
-            .await
-            .map_err(mapper::pg_err)?;
-        Ok(())
-    }
-
     fn map_row(row: &wasi_pg_client::Row) -> Result<SigningKey, OidcError> {
         let algo_str: String = mapper::string(row, 3)?;
         let algorithm = match algo_str.as_str() {

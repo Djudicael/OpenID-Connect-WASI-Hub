@@ -6,6 +6,8 @@ use std::collections::HashMap;
 
 use oidc_core::OidcError;
 
+use oidc_repository::repositories::client_repo::ClientRepo;
+
 use crate::flows::authorization_code::AuthorizationCodeFlow;
 use crate::flows::client_credentials::ClientCredentialsFlow;
 use crate::flows::refresh_token::RefreshTokenFlow;
@@ -43,6 +45,32 @@ pub async fn token_handler(
         .get("grant_type")
         .ok_or(OidcError::InvalidRequest)?
         .as_str();
+
+    // Validate grant_type against client's allowed_grant_types
+    let client_id = params.get("client_id").ok_or(OidcError::InvalidClient)?;
+    let mut conn = state.connect().await?;
+    let client = ClientRepo
+        .find_by_client_id(&mut conn, client_id)
+        .await?
+        .ok_or(OidcError::InvalidClient)?;
+
+    if !client.enabled {
+        return Err(OidcError::InvalidClient);
+    }
+
+    // Validate client secret for confidential clients
+    if let Some(client_secret) = params.get("client_secret") {
+        if let Some(ref hash) = client.client_secret_hash {
+            if !state.hasher.verify(client_secret, hash)? {
+                return Err(OidcError::InvalidClient);
+            }
+        }
+    }
+
+    // Check grant type is allowed
+    if !client.allowed_grant_types.contains(&grant_type.to_string()) {
+        return Err(OidcError::UnauthorizedClient);
+    }
 
     let result = match grant_type {
         "authorization_code" => {

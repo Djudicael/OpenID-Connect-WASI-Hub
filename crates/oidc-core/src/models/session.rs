@@ -24,6 +24,14 @@ pub struct Session {
     pub scope: Vec<String>,
     /// Whether the session has been revoked.
     pub revoked: bool,
+    /// When the access token expires.
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+    /// When the refresh token expires.
+    pub refresh_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// When the session was created.
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    /// When the session was last used.
+    pub last_used_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Token family ID for refresh token rotation.
     pub token_family_id: Option<Uuid>,
     /// Previous session ID in the rotation chain.

@@ -7,5 +7,5 @@ pub mod token_service;
 
 pub use clock::Clock;
 pub use hasher::Hasher;
-pub use repository::Repository;
 pub use token_service::TokenService;
+pub use token_service::VerifiedAccessToken;

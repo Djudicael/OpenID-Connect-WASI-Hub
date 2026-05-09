@@ -18,7 +18,17 @@ class Header extends BaseComponent {
     const token = authService.tokens;
     if (token && token.id_token) {
       try {
-        const payload = JSON.parse(atob(token.id_token.split('.')[1]));
+        const parts = token.id_token.split('.');
+        if (parts.length !== 3) {
+          this.setState({ user: null });
+          return;
+        }
+        const payload = JSON.parse(atob(parts[1]));
+        // Validate expiration claim
+        if (payload.exp && payload.exp * 1000 < Date.now()) {
+          this.setState({ user: null });
+          return;
+        }
         this.setState({ user: payload });
       } catch {
         this.setState({ user: null });

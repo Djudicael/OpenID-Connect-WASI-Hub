@@ -1,7 +1,9 @@
 use crate::connection::Connection;
 use crate::mapper;
-use oidc_core::models::AuthCode;
 use oidc_core::OidcError;
+use oidc_core::models::AuthCode;
+use oidc_core::models::auth_code::CodeChallengeMethod;
+use std::str::FromStr;
 use uuid::Uuid;
 
 /// PostgreSQL implementation of the AuthCode repository.
@@ -14,14 +16,15 @@ impl AuthCodeRepo {
         conn: &mut Connection,
         code: &str,
     ) -> Result<Option<AuthCode>, OidcError> {
+        let code_hash = oidc_core::utils::sha2_256_hex(code);
         let sql = r#"
             SELECT id, code, client_id, user_id, realm_id, redirect_uri,
-                   scope, code_challenge, code_challenge_method, used, expires_at
+                   scope, code_challenge, code_challenge_method, nonce, used, expires_at
             FROM authorization_codes
-            WHERE code = $1 AND NOT used AND expires_at > NOW()
+            WHERE code = $1 AND NOT used AND expires_at > NOW() FOR UPDATE
         "#;
         let row = conn
-            .query_one_params(sql, &[&code])
+            .query_one_params(sql, &[&code_hash])
             .await
             .map_err(mapper::pg_err)?;
         row.map(|r| Self::map_row(&r)).transpose()
@@ -29,24 +32,26 @@ impl AuthCodeRepo {
 
     /// Insert a new authorization code.
     pub async fn create(&self, conn: &mut Connection, entity: &AuthCode) -> Result<(), OidcError> {
+        let code_hash = oidc_core::utils::sha2_256_hex(&entity.code);
         let sql = r#"
             INSERT INTO authorization_codes (
                 id, code, client_id, user_id, realm_id, redirect_uri,
-                scope, code_challenge, code_challenge_method, used, expires_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, to_timestamp($11))
+                scope, code_challenge, code_challenge_method, nonce, used, expires_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         "#;
         conn.execute_params(
             sql,
             &[
                 &entity.id,
-                &entity.code,
+                &code_hash,
                 &entity.client_id,
                 &entity.user_id,
                 &entity.realm_id,
                 &entity.redirect_uri,
                 &mapper::to_json_value_vec(&entity.scope),
                 &entity.code_challenge,
-                &entity.code_challenge_method,
+                &entity.code_challenge_method.to_string(),
+                &entity.nonce,
                 &entity.used,
                 &entity.expires_at,
             ],
@@ -65,7 +70,22 @@ impl AuthCodeRepo {
         Ok(())
     }
 
+    /// Delete expired authorization codes.
+    pub async fn cleanup_expired(&self, conn: &mut Connection) -> Result<u64, OidcError> {
+        let sql = "DELETE FROM authorization_codes WHERE expires_at < NOW()";
+        let affected = conn
+            .execute_params(sql, &[])
+            .await
+            .map_err(mapper::pg_err)?;
+        Ok(affected)
+    }
+
     fn map_row(row: &wasi_pg_client::Row) -> Result<AuthCode, OidcError> {
+        let method_str: String = mapper::string(row, 8)?;
+        let code_challenge_method = CodeChallengeMethod::from_str(&method_str).map_err(|_| {
+            OidcError::Internal(format!("Invalid code_challenge_method: {}", method_str))
+        })?;
+
         Ok(AuthCode {
             id: mapper::uuid(row, 0)?,
             code: mapper::string(row, 1)?,
@@ -75,9 +95,10 @@ impl AuthCodeRepo {
             redirect_uri: mapper::string(row, 5)?,
             scope: mapper::json_string_vec(row, 6)?,
             code_challenge: mapper::string(row, 7)?,
-            code_challenge_method: mapper::string(row, 8)?,
-            used: mapper::bool_(row, 9)?,
-            expires_at: mapper::i64_(row, 10)?,
+            code_challenge_method,
+            nonce: mapper::opt_string(row, 9)?,
+            used: mapper::bool_(row, 10)?,
+            expires_at: mapper::datetime(row, 11)?,
         })
     }
 }

@@ -1,13 +1,9 @@
 /**
  * API base URL resolution.
- * In dev mode with the proxy, all API calls use relative paths.
- * In production, the meta tag or global can override.
+ * Uses <meta> tag for configuration only — no global variable overrides.
  */
 
 function resolveBaseUrl() {
-  if (typeof globalThis !== 'undefined' && globalThis.__OIDC_API_BASE_URL__) {
-    return globalThis.__OIDC_API_BASE_URL__;
-  }
   const meta = document.querySelector('meta[name="oidc-api-base-url"]');
   if (meta && meta.content) {
     return meta.content;

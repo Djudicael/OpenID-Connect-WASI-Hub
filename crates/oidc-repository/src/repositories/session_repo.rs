@@ -7,6 +7,15 @@ use uuid::Uuid;
 /// PostgreSQL implementation of the Session repository.
 pub struct SessionRepo;
 
+/// Column list for session SELECT queries (order must match map_row indices).
+const SESSION_COLUMNS: &str = r#"
+    id, user_id, realm_id, client_id, grant_type,
+    access_token_hash, refresh_token_hash, id_token_jti,
+    scope, revoked, expires_at, refresh_expires_at,
+    created_at, last_used_at,
+    token_family_id, previous_session_id, rotated_at, reused_at, family_revoked
+"#;
+
 impl SessionRepo {
     /// Find a session by its primary key.
     pub async fn find_by_id(
@@ -14,14 +23,7 @@ impl SessionRepo {
         conn: &mut Connection,
         id: Uuid,
     ) -> Result<Option<Session>, OidcError> {
-        let sql = r#"
-            SELECT id, user_id, realm_id, client_id, grant_type,
-                   access_token_hash, refresh_token_hash, id_token_jti,
-                   scope, revoked,
-                   token_family_id, previous_session_id, rotated_at, reused_at, family_revoked
-            FROM sessions
-            WHERE id = $1
-        "#;
+        let sql = &format!("SELECT {SESSION_COLUMNS} FROM sessions WHERE id = $1");
         let row = conn
             .query_one_params(sql, &[&id])
             .await
@@ -29,20 +31,15 @@ impl SessionRepo {
         row.map(|r| Self::map_row(&r)).transpose()
     }
 
-    /// Find a non-revoked session by access token hash.
+    /// Find a non-revoked, non-expired session by access token hash.
     pub async fn find_by_access_token_hash(
         &self,
         conn: &mut Connection,
         hash: &str,
     ) -> Result<Option<Session>, OidcError> {
-        let sql = r#"
-            SELECT id, user_id, realm_id, client_id, grant_type,
-                   access_token_hash, refresh_token_hash, id_token_jti,
-                   scope, revoked,
-                   token_family_id, previous_session_id, rotated_at, reused_at, family_revoked
-            FROM sessions
-            WHERE access_token_hash = $1 AND NOT revoked
-        "#;
+        let sql = &format!(
+            "SELECT {SESSION_COLUMNS} FROM sessions WHERE access_token_hash = $1 AND NOT revoked AND expires_at > NOW()"
+        );
         let row = conn
             .query_one_params(sql, &[&hash])
             .await
@@ -58,8 +55,7 @@ impl SessionRepo {
                 access_token_hash, refresh_token_hash, id_token_jti,
                 scope, revoked, expires_at, refresh_expires_at,
                 token_family_id, previous_session_id, rotated_at, reused_at, family_revoked
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW() + INTERVAL '15 minutes', NOW() + INTERVAL '7 days',
-                      $11, $12, $13, $14, $15)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
         "#;
         conn.execute_params(
             sql,
@@ -74,6 +70,8 @@ impl SessionRepo {
                 &entity.id_token_jti,
                 &mapper::to_json_value_vec(&entity.scope),
                 &entity.revoked,
+                &entity.expires_at,
+                &entity.refresh_expires_at,
                 &entity.token_family_id,
                 &entity.previous_session_id,
                 &entity.rotated_at,
@@ -92,14 +90,9 @@ impl SessionRepo {
         conn: &mut Connection,
         hash: &str,
     ) -> Result<Option<Session>, OidcError> {
-        let sql = r#"
-            SELECT id, user_id, realm_id, client_id, grant_type,
-                   access_token_hash, refresh_token_hash, id_token_jti,
-                   scope, revoked,
-                   token_family_id, previous_session_id, rotated_at, reused_at, family_revoked
-            FROM sessions
-            WHERE refresh_token_hash = $1 AND NOT revoked
-        "#;
+        let sql = &format!(
+            "SELECT {SESSION_COLUMNS} FROM sessions WHERE refresh_token_hash = $1 AND NOT revoked FOR UPDATE"
+        );
         let row = conn
             .query_one_params(sql, &[&hash])
             .await
@@ -113,14 +106,9 @@ impl SessionRepo {
         conn: &mut Connection,
         hash: &str,
     ) -> Result<Option<Session>, OidcError> {
-        let sql = r#"
-            SELECT id, user_id, realm_id, client_id, grant_type,
-                   access_token_hash, refresh_token_hash, id_token_jti,
-                   scope, revoked,
-                   token_family_id, previous_session_id, rotated_at, reused_at, family_revoked
-            FROM sessions
-            WHERE refresh_token_hash = $1 AND NOT revoked AND refresh_expires_at > NOW()
-        "#;
+        let sql = &format!(
+            "SELECT {SESSION_COLUMNS} FROM sessions WHERE refresh_token_hash = $1 AND NOT revoked AND refresh_expires_at > NOW() FOR UPDATE"
+        );
         let row = conn
             .query_one_params(sql, &[&hash])
             .await
@@ -146,6 +134,28 @@ impl SessionRepo {
         Ok(())
     }
 
+    /// Revoke all active sessions for a user.
+    pub async fn revoke_by_user_id(
+        &self,
+        conn: &mut Connection,
+        user_id: Uuid,
+    ) -> Result<(), OidcError> {
+        let sql = "UPDATE sessions SET revoked = TRUE WHERE user_id = $1 AND NOT revoked";
+        conn.execute_params(sql, &[&user_id])
+            .await
+            .map_err(mapper::pg_err)?;
+        Ok(())
+    }
+
+    /// Mark a session as rotated (sets rotated_at to NOW()).
+    pub async fn mark_rotated(&self, conn: &mut Connection, id: Uuid) -> Result<(), OidcError> {
+        let sql = "UPDATE sessions SET rotated_at = NOW() WHERE id = $1";
+        conn.execute_params(sql, &[&id])
+            .await
+            .map_err(mapper::pg_err)?;
+        Ok(())
+    }
+
     /// Revoke all sessions in a token family.
     pub async fn revoke_family(
         &self,
@@ -161,6 +171,7 @@ impl SessionRepo {
     }
 
     /// List sessions with optional filters and pagination.
+    /// Builds the WHERE clause dynamically to avoid combinatorial explosion.
     pub async fn list(
         &self,
         conn: &mut Connection,
@@ -170,146 +181,66 @@ impl SessionRepo {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<Session>, OidcError> {
-        match (user_id, realm_id, revoked) {
-            (Some(uid), Some(rid), Some(r)) => {
-                let sql = r#"
-                    SELECT id, user_id, realm_id, client_id, grant_type, access_token_hash, refresh_token_hash, id_token_jti, scope, revoked, token_family_id, previous_session_id, rotated_at, reused_at, family_revoked
-                    FROM sessions
-                    WHERE user_id = $1 AND realm_id = $2 AND revoked = $3
-                    ORDER BY created_at DESC LIMIT $4 OFFSET $5
-                "#;
-                let result = conn
-                    .query_params(sql, &[&uid, &rid, &r, &limit, &offset])
-                    .await
-                    .map_err(mapper::pg_err)?;
-                result
-                    .into_rows()
-                    .iter()
-                    .map(|row| Self::map_row(row))
-                    .collect::<Result<Vec<_>, _>>()
-            }
-            (Some(uid), Some(rid), None) => {
-                let sql = r#"
-                    SELECT id, user_id, realm_id, client_id, grant_type, access_token_hash, refresh_token_hash, id_token_jti, scope, revoked, token_family_id, previous_session_id, rotated_at, reused_at, family_revoked
-                    FROM sessions
-                    WHERE user_id = $1 AND realm_id = $2
-                    ORDER BY created_at DESC LIMIT $3 OFFSET $4
-                "#;
-                let result = conn
-                    .query_params(sql, &[&uid, &rid, &limit, &offset])
-                    .await
-                    .map_err(mapper::pg_err)?;
-                result
-                    .into_rows()
-                    .iter()
-                    .map(|row| Self::map_row(row))
-                    .collect::<Result<Vec<_>, _>>()
-            }
-            (Some(uid), None, Some(r)) => {
-                let sql = r#"
-                    SELECT id, user_id, realm_id, client_id, grant_type, access_token_hash, refresh_token_hash, id_token_jti, scope, revoked, token_family_id, previous_session_id, rotated_at, reused_at, family_revoked
-                    FROM sessions
-                    WHERE user_id = $1 AND revoked = $2
-                    ORDER BY created_at DESC LIMIT $3 OFFSET $4
-                "#;
-                let result = conn
-                    .query_params(sql, &[&uid, &r, &limit, &offset])
-                    .await
-                    .map_err(mapper::pg_err)?;
-                result
-                    .into_rows()
-                    .iter()
-                    .map(|row| Self::map_row(row))
-                    .collect::<Result<Vec<_>, _>>()
-            }
-            (Some(uid), None, None) => {
-                let sql = r#"
-                    SELECT id, user_id, realm_id, client_id, grant_type, access_token_hash, refresh_token_hash, id_token_jti, scope, revoked, token_family_id, previous_session_id, rotated_at, reused_at, family_revoked
-                    FROM sessions
-                    WHERE user_id = $1
-                    ORDER BY created_at DESC LIMIT $2 OFFSET $3
-                "#;
-                let result = conn
-                    .query_params(sql, &[&uid, &limit, &offset])
-                    .await
-                    .map_err(mapper::pg_err)?;
-                result
-                    .into_rows()
-                    .iter()
-                    .map(|row| Self::map_row(row))
-                    .collect::<Result<Vec<_>, _>>()
-            }
-            (None, Some(rid), Some(r)) => {
-                let sql = r#"
-                    SELECT id, user_id, realm_id, client_id, grant_type, access_token_hash, refresh_token_hash, id_token_jti, scope, revoked, token_family_id, previous_session_id, rotated_at, reused_at, family_revoked
-                    FROM sessions
-                    WHERE realm_id = $1 AND revoked = $2
-                    ORDER BY created_at DESC LIMIT $3 OFFSET $4
-                "#;
-                let result = conn
-                    .query_params(sql, &[&rid, &r, &limit, &offset])
-                    .await
-                    .map_err(mapper::pg_err)?;
-                result
-                    .into_rows()
-                    .iter()
-                    .map(|row| Self::map_row(row))
-                    .collect::<Result<Vec<_>, _>>()
-            }
-            (None, Some(rid), None) => {
-                let sql = r#"
-                    SELECT id, user_id, realm_id, client_id, grant_type, access_token_hash, refresh_token_hash, id_token_jti, scope, revoked, token_family_id, previous_session_id, rotated_at, reused_at, family_revoked
-                    FROM sessions
-                    WHERE realm_id = $1
-                    ORDER BY created_at DESC LIMIT $2 OFFSET $3
-                "#;
-                let result = conn
-                    .query_params(sql, &[&rid, &limit, &offset])
-                    .await
-                    .map_err(mapper::pg_err)?;
-                result
-                    .into_rows()
-                    .iter()
-                    .map(|row| Self::map_row(row))
-                    .collect::<Result<Vec<_>, _>>()
-            }
-            (None, None, Some(r)) => {
-                let sql = r#"
-                    SELECT id, user_id, realm_id, client_id, grant_type, access_token_hash, refresh_token_hash, id_token_jti, scope, revoked, token_family_id, previous_session_id, rotated_at, reused_at, family_revoked
-                    FROM sessions
-                    WHERE revoked = $1
-                    ORDER BY created_at DESC LIMIT $2 OFFSET $3
-                "#;
-                let result = conn
-                    .query_params(sql, &[&r, &limit, &offset])
-                    .await
-                    .map_err(mapper::pg_err)?;
-                result
-                    .into_rows()
-                    .iter()
-                    .map(|row| Self::map_row(row))
-                    .collect::<Result<Vec<_>, _>>()
-            }
-            (None, None, None) => {
-                let sql = r#"
-                    SELECT id, user_id, realm_id, client_id, grant_type, access_token_hash, refresh_token_hash, id_token_jti, scope, revoked, token_family_id, previous_session_id, rotated_at, reused_at, family_revoked
-                    FROM sessions
-                    ORDER BY created_at DESC LIMIT $1 OFFSET $2
-                "#;
-                let result = conn
-                    .query_params(sql, &[&limit, &offset])
-                    .await
-                    .map_err(mapper::pg_err)?;
-                result
-                    .into_rows()
-                    .iter()
-                    .map(|row| Self::map_row(row))
-                    .collect::<Result<Vec<_>, _>>()
-            }
+        let mut where_clauses: Vec<String> = Vec::new();
+        let mut param_idx = 1usize;
+
+        if user_id.is_some() {
+            where_clauses.push(format!("user_id = ${}", param_idx));
+            param_idx += 1;
         }
+        if realm_id.is_some() {
+            where_clauses.push(format!("realm_id = ${}", param_idx));
+            param_idx += 1;
+        }
+        if revoked.is_some() {
+            where_clauses.push(format!("revoked = ${}", param_idx));
+            param_idx += 1;
+        }
+
+        let where_sql = if where_clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", where_clauses.join(" AND "))
+        };
+
+        let limit_idx = param_idx;
+        let offset_idx = param_idx + 1;
+
+        let sql = format!(
+            "SELECT {SESSION_COLUMNS} FROM sessions {where_sql} ORDER BY created_at DESC LIMIT ${limit_idx} OFFSET ${offset_idx}"
+        );
+
+        // Build params in order
+        let user_id_ref = user_id.as_ref();
+        let realm_id_ref = realm_id.as_ref();
+        let revoked_ref = revoked.as_ref();
+
+        let mut params: Vec<&dyn wasi_pg_client::pg_types::ToSql> = Vec::new();
+        if let Some(uid) = user_id_ref {
+            params.push(uid);
+        }
+        if let Some(rid) = realm_id_ref {
+            params.push(rid);
+        }
+        if let Some(r) = revoked_ref {
+            params.push(r);
+        }
+        params.push(&limit);
+        params.push(&offset);
+
+        let result = conn
+            .query_params(&sql, &params)
+            .await
+            .map_err(mapper::pg_err)?;
+        result
+            .into_rows()
+            .iter()
+            .map(|row| Self::map_row(row))
+            .collect::<Result<Vec<_>, _>>()
     }
 
     /// Count sessions with optional filters.
+    /// Builds the WHERE clause dynamically to avoid combinatorial explosion.
     pub async fn count(
         &self,
         conn: &mut Connection,
@@ -317,109 +248,67 @@ impl SessionRepo {
         realm_id: Option<Uuid>,
         revoked: Option<bool>,
     ) -> Result<i64, OidcError> {
-        match (user_id, realm_id, revoked) {
-            (Some(uid), Some(rid), Some(r)) => {
-                let sql = "SELECT COUNT(*) FROM sessions WHERE user_id = $1 AND realm_id = $2 AND revoked = $3";
-                let result = conn
-                    .query_params(sql, &[&uid, &rid, &r])
-                    .await
-                    .map_err(mapper::pg_err)?;
-                let row = result
-                    .into_rows()
-                    .into_iter()
-                    .next()
-                    .ok_or(OidcError::Internal("count returned no rows".into()))?;
-                mapper::i64_(&row, 0)
-            }
-            (Some(uid), Some(rid), None) => {
-                let sql = "SELECT COUNT(*) FROM sessions WHERE user_id = $1 AND realm_id = $2";
-                let result = conn
-                    .query_params(sql, &[&uid, &rid])
-                    .await
-                    .map_err(mapper::pg_err)?;
-                let row = result
-                    .into_rows()
-                    .into_iter()
-                    .next()
-                    .ok_or(OidcError::Internal("count returned no rows".into()))?;
-                mapper::i64_(&row, 0)
-            }
-            (Some(uid), None, Some(r)) => {
-                let sql = "SELECT COUNT(*) FROM sessions WHERE user_id = $1 AND revoked = $2";
-                let result = conn
-                    .query_params(sql, &[&uid, &r])
-                    .await
-                    .map_err(mapper::pg_err)?;
-                let row = result
-                    .into_rows()
-                    .into_iter()
-                    .next()
-                    .ok_or(OidcError::Internal("count returned no rows".into()))?;
-                mapper::i64_(&row, 0)
-            }
-            (Some(uid), None, None) => {
-                let sql = "SELECT COUNT(*) FROM sessions WHERE user_id = $1";
-                let result = conn
-                    .query_params(sql, &[&uid])
-                    .await
-                    .map_err(mapper::pg_err)?;
-                let row = result
-                    .into_rows()
-                    .into_iter()
-                    .next()
-                    .ok_or(OidcError::Internal("count returned no rows".into()))?;
-                mapper::i64_(&row, 0)
-            }
-            (None, Some(rid), Some(r)) => {
-                let sql = "SELECT COUNT(*) FROM sessions WHERE realm_id = $1 AND revoked = $2";
-                let result = conn
-                    .query_params(sql, &[&rid, &r])
-                    .await
-                    .map_err(mapper::pg_err)?;
-                let row = result
-                    .into_rows()
-                    .into_iter()
-                    .next()
-                    .ok_or(OidcError::Internal("count returned no rows".into()))?;
-                mapper::i64_(&row, 0)
-            }
-            (None, Some(rid), None) => {
-                let sql = "SELECT COUNT(*) FROM sessions WHERE realm_id = $1";
-                let result = conn
-                    .query_params(sql, &[&rid])
-                    .await
-                    .map_err(mapper::pg_err)?;
-                let row = result
-                    .into_rows()
-                    .into_iter()
-                    .next()
-                    .ok_or(OidcError::Internal("count returned no rows".into()))?;
-                mapper::i64_(&row, 0)
-            }
-            (None, None, Some(r)) => {
-                let sql = "SELECT COUNT(*) FROM sessions WHERE revoked = $1";
-                let result = conn
-                    .query_params(sql, &[&r])
-                    .await
-                    .map_err(mapper::pg_err)?;
-                let row = result
-                    .into_rows()
-                    .into_iter()
-                    .next()
-                    .ok_or(OidcError::Internal("count returned no rows".into()))?;
-                mapper::i64_(&row, 0)
-            }
-            (None, None, None) => {
-                let sql = "SELECT COUNT(*) FROM sessions";
-                let result = conn.query(sql).await.map_err(mapper::pg_err)?;
-                let row = result
-                    .into_rows()
-                    .into_iter()
-                    .next()
-                    .ok_or(OidcError::Internal("count returned no rows".into()))?;
-                mapper::i64_(&row, 0)
-            }
+        let mut where_clauses: Vec<String> = Vec::new();
+        let mut param_idx = 1usize;
+
+        if user_id.is_some() {
+            where_clauses.push(format!("user_id = ${}", param_idx));
+            param_idx += 1;
         }
+        if realm_id.is_some() {
+            where_clauses.push(format!("realm_id = ${}", param_idx));
+            param_idx += 1;
+        }
+        if revoked.is_some() {
+            where_clauses.push(format!("revoked = ${}", param_idx));
+        }
+
+        let where_sql = if where_clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", where_clauses.join(" AND "))
+        };
+
+        let sql = format!("SELECT COUNT(*) FROM sessions {where_sql}");
+
+        let user_id_ref = user_id.as_ref();
+        let realm_id_ref = realm_id.as_ref();
+        let revoked_ref = revoked.as_ref();
+
+        let mut params: Vec<&dyn wasi_pg_client::pg_types::ToSql> = Vec::new();
+        if let Some(uid) = user_id_ref {
+            params.push(uid);
+        }
+        if let Some(rid) = realm_id_ref {
+            params.push(rid);
+        }
+        if let Some(r) = revoked_ref {
+            params.push(r);
+        }
+
+        let result = if params.is_empty() {
+            conn.query(&sql).await.map_err(mapper::pg_err)?
+        } else {
+            conn.query_params(&sql, &params)
+                .await
+                .map_err(mapper::pg_err)?
+        };
+        let row = result
+            .into_rows()
+            .into_iter()
+            .next()
+            .ok_or(OidcError::Internal("count returned no rows".into()))?;
+        mapper::i64_(&row, 0)
+    }
+
+    /// Delete expired sessions.
+    pub async fn cleanup_expired(&self, conn: &mut Connection) -> Result<u64, OidcError> {
+        let sql = "DELETE FROM sessions WHERE expires_at < NOW()";
+        let affected = conn
+            .execute_params(sql, &[])
+            .await
+            .map_err(mapper::pg_err)?;
+        Ok(affected)
     }
 
     fn map_row(row: &wasi_pg_client::Row) -> Result<Session, OidcError> {
@@ -434,11 +323,15 @@ impl SessionRepo {
             id_token_jti: mapper::opt_string(row, 7)?,
             scope: mapper::json_string_vec(row, 8)?,
             revoked: mapper::bool_(row, 9)?,
-            token_family_id: mapper::opt_uuid(row, 10)?,
-            previous_session_id: mapper::opt_uuid(row, 11)?,
-            rotated_at: mapper::opt_datetime(row, 12)?,
-            reused_at: mapper::opt_datetime(row, 13)?,
-            family_revoked: mapper::bool_(row, 14)?,
+            expires_at: mapper::datetime(row, 10)?,
+            refresh_expires_at: mapper::opt_datetime(row, 11)?,
+            created_at: mapper::datetime(row, 12)?,
+            last_used_at: mapper::opt_datetime(row, 13)?,
+            token_family_id: mapper::opt_uuid(row, 14)?,
+            previous_session_id: mapper::opt_uuid(row, 15)?,
+            rotated_at: mapper::opt_datetime(row, 16)?,
+            reused_at: mapper::opt_datetime(row, 17)?,
+            family_revoked: mapper::bool_(row, 18)?,
         })
     }
 }

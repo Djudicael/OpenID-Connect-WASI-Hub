@@ -1,6 +1,6 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
-import { post } from '../core/http.js';
+import { get, post } from '../core/http.js';
 import { navigate } from '../core/router.js';
 import { showToast } from '../components/ui/toast.js';
 
@@ -11,10 +11,28 @@ class ApiKeyCreatePage extends BaseComponent {
       name: '',
       scopes: 'admin',
       expiresInDays: '',
-      realmId: '00000000-0000-0000-0000-000000000000',
+      realms: [],
+      realmId: '',
       loading: false,
       createdKey: null,
     };
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    this._loadRealms();
+  }
+
+  async _loadRealms() {
+    try {
+      const data = await get('/api/realms?limit=100');
+      const realms = data.items || [];
+      const defaultRealmId = realms.length > 0 ? realms[0].id : '00000000-0000-0000-0000-000000000000';
+      this.setState({ realms, realmId: defaultRealmId });
+    } catch (err) {
+      showToast('Failed to load realms', 'error');
+      this.setState({ realms: [], realmId: '00000000-0000-0000-0000-000000000000' });
+    }
   }
 
   async _createKey() {
@@ -49,7 +67,7 @@ class ApiKeyCreatePage extends BaseComponent {
   }
 
   template() {
-    const { name, scopes, expiresInDays, realmId, loading, createdKey } = this._state;
+    const { name, scopes, expiresInDays, realms, realmId, loading, createdKey } = this._state;
 
     if (createdKey) {
       return html`
@@ -122,6 +140,26 @@ class ApiKeyCreatePage extends BaseComponent {
           outline: none;
           border-color: var(--color-primary);
         }
+        .field-select {
+          width: 100%;
+          padding: 0.5rem 0.75rem;
+          font-size: 0.875rem;
+          border: 1px solid #e2e8f0;
+          border-radius: var(--radius-sm);
+          font-family: inherit;
+          box-sizing: border-box;
+          background: var(--color-surface, #fff);
+          color: var(--color-text, #1e293b);
+          appearance: none;
+          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748b' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+          background-repeat: no-repeat;
+          background-position: right 0.75rem center;
+          padding-right: 2rem;
+        }
+        .field-select:focus {
+          outline: none;
+          border-color: var(--color-primary);
+        }
         .hint {
           font-size: 0.75rem;
           color: var(--color-text-muted);
@@ -142,6 +180,16 @@ class ApiKeyCreatePage extends BaseComponent {
             />
           </div>
           <div class="field">
+            <label class="field-label">Realm *</label>
+            <select
+              class="field-select"
+              .value=${realmId}
+              @change=${(e) => this.setState({ realmId: e.target.value })}
+            >
+              ${realms.map(r => html`<option value=${r.id} ?selected=${realmId === r.id}>${r.display_name || r.name}</option>`)}
+            </select>
+          </div>
+          <div class="field">
             <label class="field-label">Scopes *</label>
             <input
               class="field-input"
@@ -160,15 +208,6 @@ class ApiKeyCreatePage extends BaseComponent {
               placeholder="Leave empty for no expiration"
               .value=${expiresInDays}
               @input=${(e) => this.setState({ expiresInDays: e.target.value })}
-            />
-          </div>
-          <div class="field">
-            <label class="field-label">Realm ID</label>
-            <input
-              class="field-input"
-              type="text"
-              .value=${realmId}
-              @input=${(e) => this.setState({ realmId: e.target.value })}
             />
           </div>
           <div class="actions">

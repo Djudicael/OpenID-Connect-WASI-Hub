@@ -7,6 +7,11 @@ use uuid::Uuid;
 /// PostgreSQL implementation of the Realm repository.
 pub struct RealmRepo;
 
+/// Column list for realm SELECT queries (order must match map_row indices).
+const REALM_COLUMNS: &str = r#"
+    id, name, display_name, enabled, config, deleted_at
+"#;
+
 impl RealmRepo {
     /// Find a realm by its primary key.
     pub async fn find_by_id(
@@ -14,7 +19,8 @@ impl RealmRepo {
         conn: &mut Connection,
         id: Uuid,
     ) -> Result<Option<Realm>, OidcError> {
-        let sql = "SELECT id, name, display_name, enabled FROM realms WHERE id = $1";
+        let sql =
+            &format!("SELECT {REALM_COLUMNS} FROM realms WHERE id = $1 AND deleted_at IS NULL");
         let row = conn
             .query_one_params(sql, &[&id])
             .await
@@ -28,7 +34,8 @@ impl RealmRepo {
         conn: &mut Connection,
         name: &str,
     ) -> Result<Option<Realm>, OidcError> {
-        let sql = "SELECT id, name, display_name, enabled FROM realms WHERE name = $1";
+        let sql =
+            &format!("SELECT {REALM_COLUMNS} FROM realms WHERE name = $1 AND deleted_at IS NULL");
         let row = conn
             .query_one_params(sql, &[&name])
             .await
@@ -38,7 +45,7 @@ impl RealmRepo {
 
     /// Insert a new realm.
     pub async fn create(&self, conn: &mut Connection, entity: &Realm) -> Result<(), OidcError> {
-        let sql = "INSERT INTO realms (id, name, display_name, enabled) VALUES ($1, $2, $3, $4)";
+        let sql = "INSERT INTO realms (id, name, display_name, enabled, config) VALUES ($1, $2, $3, $4, $5)";
         conn.execute_params(
             sql,
             &[
@@ -46,6 +53,7 @@ impl RealmRepo {
                 &entity.name,
                 &entity.display_name,
                 &entity.enabled,
+                &entity.config,
             ],
         )
         .await
@@ -55,13 +63,14 @@ impl RealmRepo {
 
     /// Update an existing realm.
     pub async fn update(&self, conn: &mut Connection, entity: &Realm) -> Result<(), OidcError> {
-        let sql = "UPDATE realms SET name = $1, display_name = $2, enabled = $3, updated_at = NOW() WHERE id = $4";
+        let sql = "UPDATE realms SET name = $1, display_name = $2, enabled = $3, config = $4, updated_at = NOW() WHERE id = $5 AND deleted_at IS NULL";
         conn.execute_params(
             sql,
             &[
                 &entity.name,
                 &entity.display_name,
                 &entity.enabled,
+                &entity.config,
                 &entity.id,
             ],
         )
@@ -70,9 +79,9 @@ impl RealmRepo {
         Ok(())
     }
 
-    /// Hard-delete a realm by ID.
+    /// Soft-delete a realm by ID.
     pub async fn delete(&self, conn: &mut Connection, id: Uuid) -> Result<(), OidcError> {
-        let sql = "DELETE FROM realms WHERE id = $1";
+        let sql = "UPDATE realms SET deleted_at = NOW() WHERE id = $1";
         conn.execute_params(sql, &[&id])
             .await
             .map_err(mapper::pg_err)?;
@@ -86,12 +95,9 @@ impl RealmRepo {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<Realm>, OidcError> {
-        let sql = r#"
-            SELECT id, name, display_name, enabled
-            FROM realms
-            ORDER BY created_at DESC
-            LIMIT $1 OFFSET $2
-        "#;
+        let sql = &format!(
+            "SELECT {REALM_COLUMNS} FROM realms WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT $1 OFFSET $2"
+        );
         let result = conn
             .query_params(sql, &[&limit, &offset])
             .await
@@ -105,7 +111,7 @@ impl RealmRepo {
 
     /// Count all realms.
     pub async fn count(&self, conn: &mut Connection) -> Result<i64, OidcError> {
-        let sql = "SELECT COUNT(*) FROM realms";
+        let sql = "SELECT COUNT(*) FROM realms WHERE deleted_at IS NULL";
         let result = conn.query(sql).await.map_err(mapper::pg_err)?;
         let row = result
             .into_rows()
@@ -121,6 +127,8 @@ impl RealmRepo {
             name: mapper::string(row, 1)?,
             display_name: mapper::string(row, 2)?,
             enabled: mapper::bool_(row, 3)?,
+            config: row.get::<serde_json::Value>(4).map_err(mapper::pg_err)?,
+            deleted_at: mapper::opt_datetime(row, 5)?,
         })
     }
 }

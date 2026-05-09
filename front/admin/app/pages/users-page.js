@@ -1,6 +1,6 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
-import { get, del } from '../core/http.js';
+import { get, post, del } from '../core/http.js';
 import { navigate } from '../core/router.js';
 import { formatDate } from '../utils/format.js';
 import { showToast } from '../components/ui/toast.js';
@@ -8,6 +8,7 @@ import { showToast } from '../components/ui/toast.js';
 class UsersPage extends BaseComponent {
   constructor() {
     super();
+    this._searchTimer = null;
     this._state = {
       users: [],
       loading: false,
@@ -15,6 +16,15 @@ class UsersPage extends BaseComponent {
       page: 1,
       pageSize: 20,
       total: 0,
+      showCreateModal: false,
+      createRealmId: '',
+      createEmail: '',
+      createPassword: '',
+      createUsername: '',
+      createFirstName: '',
+      createLastName: '',
+      createEnabled: true,
+      createLoading: false,
     };
   }
 
@@ -46,7 +56,10 @@ class UsersPage extends BaseComponent {
   }
 
   _onSearch(e) {
-    this.setState({ search: e.target.value, page: 1 }, this._loadUsers());
+    const value = e.target.value;
+    this.setState({ search: value, page: 1 });
+    clearTimeout(this._searchTimer);
+    this._searchTimer = setTimeout(() => this._loadUsers(), 300);
   }
 
   _onPageChange(e) {
@@ -64,8 +77,55 @@ class UsersPage extends BaseComponent {
     }
   }
 
+  _openCreateModal() {
+    this.setState({
+      showCreateModal: true,
+      createRealmId: '',
+      createEmail: '',
+      createPassword: '',
+      createUsername: '',
+      createFirstName: '',
+      createLastName: '',
+      createEnabled: true,
+      createLoading: false,
+    });
+    requestAnimationFrame(() => {
+      const modal = this.shadowRoot.querySelector('c-modal');
+      if (modal) modal.open();
+    });
+  }
+
+  _closeCreateModal() {
+    this.shadowRoot.querySelector('c-modal').close();
+    this.setState({ showCreateModal: false });
+  }
+
+  async _createUser() {
+    const { createRealmId, createEmail, createPassword, createUsername, createFirstName, createLastName, createEnabled } = this._state;
+    if (!createRealmId.trim() || !createEmail.trim() || !createPassword.trim()) return;
+
+    this.setState({ createLoading: true });
+    try {
+      await post('/api/users', {
+        realm_id: createRealmId.trim(),
+        email: createEmail.trim(),
+        password: createPassword,
+        username: createUsername.trim() || undefined,
+        given_name: createFirstName.trim() || undefined,
+        family_name: createLastName.trim() || undefined,
+        enabled: createEnabled,
+      });
+      this._closeCreateModal();
+      showToast('User created successfully', 'success');
+      this._loadUsers();
+    } catch (err) {
+      showToast(err.body?.error || 'Failed to create user', 'error');
+      this.setState({ createLoading: false });
+    }
+  }
+
   template() {
-    const { users, loading, search, page, pageSize, total } = this._state;
+    const { users, loading, search, page, pageSize, total, showCreateModal, createRealmId, createEmail, createPassword, createUsername, createFirstName, createLastName, createEnabled, createLoading } = this._state;
     const columns = [
       { key: 'email', label: 'Email' },
       { key: 'username', label: 'Username' },
@@ -106,10 +166,45 @@ class UsersPage extends BaseComponent {
           outline: none;
           border-color: var(--color-primary);
         }
+        .form { max-width: 32rem; }
+        .field { margin-bottom: 1rem; }
+        .field-label {
+          display: block;
+          font-size: 0.875rem;
+          font-weight: 500;
+          margin-bottom: 0.25rem;
+        }
+        .field-input {
+          width: 100%;
+          padding: 0.5rem 0.75rem;
+          font-size: 0.875rem;
+          border: 1px solid #e2e8f0;
+          border-radius: var(--radius-sm);
+          font-family: inherit;
+          box-sizing: border-box;
+        }
+        .field-input:focus {
+          outline: none;
+          border-color: var(--color-primary);
+        }
+        .hint {
+          font-size: 0.75rem;
+          color: var(--color-text-muted);
+          margin-top: 0.25rem;
+        }
+        .field-checkbox {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+        .field-checkbox input {
+          width: 1rem;
+          height: 1rem;
+        }
       </style>
       <c-page-layout title="Users">
         <div slot="actions">
-          <c-button variant="primary" @click=${() => showToast('User creation not yet implemented', 'warning')}>
+          <c-button variant="primary" @click=${() => this._openCreateModal()}>
             + Add User
           </c-button>
         </div>
@@ -132,6 +227,89 @@ class UsersPage extends BaseComponent {
           @page-change=${(e) => this._onPageChange(e)}
         ></c-pagination>
       </c-page-layout>
+
+      <c-modal title="Create User" @close=${() => this._closeCreateModal()}>
+        ${showCreateModal ? html`
+          <div class="form">
+            <div class="field">
+              <label class="field-label">Realm ID *</label>
+              <input
+                class="field-input"
+                type="text"
+                placeholder="Enter realm UUID"
+                .value=${createRealmId}
+                @input=${(e) => this.setState({ createRealmId: e.target.value })}
+              />
+            </div>
+            <div class="field">
+              <label class="field-label">Email *</label>
+              <input
+                class="field-input"
+                type="email"
+                placeholder="user@example.com"
+                .value=${createEmail}
+                @input=${(e) => this.setState({ createEmail: e.target.value })}
+              />
+            </div>
+            <div class="field">
+              <label class="field-label">Password *</label>
+              <input
+                class="field-input"
+                type="password"
+                placeholder="Password"
+                .value=${createPassword}
+                @input=${(e) => this.setState({ createPassword: e.target.value })}
+              />
+            </div>
+            <div class="field">
+              <label class="field-label">Username</label>
+              <input
+                class="field-input"
+                type="text"
+                placeholder="Optional"
+                .value=${createUsername}
+                @input=${(e) => this.setState({ createUsername: e.target.value })}
+              />
+            </div>
+            <div class="field">
+              <label class="field-label">First Name</label>
+              <input
+                class="field-input"
+                type="text"
+                placeholder="Optional"
+                .value=${createFirstName}
+                @input=${(e) => this.setState({ createFirstName: e.target.value })}
+              />
+            </div>
+            <div class="field">
+              <label class="field-label">Last Name</label>
+              <input
+                class="field-input"
+                type="text"
+                placeholder="Optional"
+                .value=${createLastName}
+                @input=${(e) => this.setState({ createLastName: e.target.value })}
+              />
+            </div>
+            <div class="field">
+              <label class="field-checkbox">
+                <input
+                  type="checkbox"
+                  ?checked=${createEnabled}
+                  @change=${(e) => this.setState({ createEnabled: e.target.checked })}
+                />
+                Enabled
+              </label>
+            </div>
+          </div>
+        ` : ''}
+        <div slot="footer">
+          <c-button variant="secondary" @click=${() => this._closeCreateModal()}>Cancel</c-button>
+          <c-button variant="primary" ?disabled=${createLoading || !createRealmId.trim() || !createEmail.trim() || !createPassword.trim()} @click=${() => this._createUser()}>
+            ${createLoading ? 'Creating...' : 'Create'}
+          </c-button>
+        </div>
+      </c-modal>
     `;
   }
 }

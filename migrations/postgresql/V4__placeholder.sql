@@ -1,0 +1,3 @@
+-- V4__placeholder.sql
+-- Placeholder migration to fill the gap between V3 and V5.
+-- No schema changes in this version.

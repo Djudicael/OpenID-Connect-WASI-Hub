@@ -2,12 +2,15 @@
 
 use sha2::{Digest, Sha256};
 
+use crate::OidcError;
+
 /// Generate a cryptographically random opaque token.
 /// Returns a 256-bit (32 byte) value base64url-encoded.
-pub fn generate_opaque_token() -> String {
+pub fn generate_opaque_token() -> Result<String, OidcError> {
     let mut buf = [0u8; 32];
-    getrandom::fill(&mut buf).expect("getrandom failed");
-    base64_encode_url_safe_no_pad(&buf)
+    getrandom::fill(&mut buf)
+        .map_err(|e| OidcError::Internal(format!("getrandom failed: {}", e)))?;
+    Ok(base64_encode_url_safe_no_pad(&buf))
 }
 
 /// Compute SHA-256 hash and return as hex string.
@@ -49,8 +52,8 @@ mod tests {
 
     #[test]
     fn test_generate_opaque_token() {
-        let t1 = generate_opaque_token();
-        let t2 = generate_opaque_token();
+        let t1 = generate_opaque_token().unwrap();
+        let t2 = generate_opaque_token().unwrap();
         assert_ne!(t1, t2);
         assert!(!t1.is_empty());
     }

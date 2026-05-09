@@ -49,7 +49,9 @@ impl AppState {
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(8080),
             issuer: std::env::var("OIDC_ISSUER").unwrap_or_else(|_| "http://localhost:8080".into()),
-            encryption_key: std::env::var("OIDC_ENCRYPTION_KEY").unwrap_or_default(),
+            encryption_key: std::env::var("OIDC_ENCRYPTION_KEY").expect(
+                "OIDC_ENCRYPTION_KEY environment variable must be set (32-byte base64 key)",
+            ),
         };
 
         let token_service =

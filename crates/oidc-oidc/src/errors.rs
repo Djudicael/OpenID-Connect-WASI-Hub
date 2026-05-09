@@ -118,6 +118,9 @@ pub fn from_oidc_error(e: &oidc_core::OidcError) -> OidcErrorResponse {
             OidcErrorResponse::invalid_client("Client authentication failed")
         }
         OidcError::UnsupportedGrantType => OidcErrorResponse::unsupported_grant_type(),
+        OidcError::UnauthorizedClient => {
+            OidcErrorResponse::unauthorized_client("Client is not authorized for this grant type")
+        }
         OidcError::InvalidScope(msg) => OidcErrorResponse::invalid_scope(msg),
         OidcError::AuthenticationFailed(msg) => {
             OidcErrorResponse::invalid_grant(format!("Authentication failed: {msg}"))
@@ -130,8 +133,9 @@ pub fn from_oidc_error(e: &oidc_core::OidcError) -> OidcErrorResponse {
         OidcError::InvalidInput(msg) => {
             OidcErrorResponse::invalid_request(format!("Invalid input: {msg}"))
         }
-        OidcError::Internal(msg) => {
-            OidcErrorResponse::server_error(format!("Internal error: {msg}"))
+        OidcError::Internal(_msg) => {
+            tracing::error!("Internal error: {}", _msg);
+            OidcErrorResponse::server_error("An internal error occurred")
         }
         _ => OidcErrorResponse::server_error("unknown error"),
     }

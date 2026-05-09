@@ -5,7 +5,7 @@
 
 use chrono::Utc;
 use oidc_core::models::audit_event::{ActorType, AuditEvent};
-
+use oidc_core::models::auth_code::CodeChallengeMethod;
 use oidc_core::models::signing_key::{Algorithm, SigningKey};
 use oidc_core::models::{ApiKey, AuthCode, Client, ClientType, Realm, Session, User};
 use oidc_repository::repositories::{
@@ -19,6 +19,55 @@ use uuid::Uuid;
 
 use crate::harness::{clean_database, test_conn};
 
+/// Helper to create a test realm with default config.
+fn test_realm(name: &str, display_name: &str) -> Realm {
+    Realm {
+        id: Uuid::new_v4(),
+        name: name.to_string(),
+        display_name: display_name.to_string(),
+        enabled: true,
+        config: serde_json::Value::Object(serde_json::Map::new()),
+        deleted_at: None,
+    }
+}
+
+/// Helper to create a test user with default fields.
+fn test_user(realm_id: Uuid, email: &str) -> User {
+    User {
+        id: Uuid::new_v4(),
+        realm_id,
+        email: email.to_string(),
+        email_verified: true,
+        username: None,
+        password_hash: None,
+        given_name: None,
+        family_name: None,
+        phone_number: None,
+        locale: None,
+        attributes: serde_json::Value::Object(serde_json::Map::new()),
+        enabled: true,
+        deleted_at: None,
+    }
+}
+
+/// Helper to create a test client with default fields.
+fn test_client(realm_id: Uuid, client_id: &str, name: &str) -> Client {
+    Client {
+        id: Uuid::new_v4(),
+        realm_id,
+        client_id: client_id.to_string(),
+        client_type: ClientType::Public,
+        client_secret_hash: None,
+        name: name.to_string(),
+        redirect_uris: vec![],
+        allowed_scopes: vec!["openid".to_string()],
+        allowed_grant_types: vec!["authorization_code".to_string()],
+        pkce_required: true,
+        enabled: true,
+        deleted_at: None,
+    }
+}
+
 // ===================================================================
 // Realm Repository Tests
 // ===================================================================
@@ -28,12 +77,7 @@ async fn test_realm_crud() {
     clean_database(&mut conn).await.unwrap();
 
     let repo = RealmRepo;
-    let realm = Realm {
-        id: Uuid::new_v4(),
-        name: "test-realm".to_string(),
-        display_name: "Test Realm".to_string(),
-        enabled: true,
-    };
+    let realm = test_realm("test-realm", "Test Realm");
 
     repo.create(&mut conn, &realm).await.unwrap();
 
@@ -71,12 +115,7 @@ async fn test_user_crud_and_soft_delete() {
     clean_database(&mut conn).await.unwrap();
 
     let realm_repo = RealmRepo;
-    let realm = Realm {
-        id: Uuid::new_v4(),
-        name: "user-test-realm".to_string(),
-        display_name: "User Test Realm".to_string(),
-        enabled: true,
-    };
+    let realm = test_realm("user-test-realm", "User Test Realm");
     realm_repo.create(&mut conn, &realm).await.unwrap();
 
     let repo = UserRepo;
@@ -89,7 +128,11 @@ async fn test_user_crud_and_soft_delete() {
         password_hash: Some("$argon2id$...".to_string()),
         given_name: Some("Test".to_string()),
         family_name: Some("User".to_string()),
+        phone_number: None,
+        locale: None,
+        attributes: serde_json::Value::Object(serde_json::Map::new()),
         enabled: true,
+        deleted_at: None,
     };
 
     repo.create(&mut conn, &user).await.unwrap();
@@ -126,12 +169,7 @@ async fn test_client_crud() {
     clean_database(&mut conn).await.unwrap();
 
     let realm_repo = RealmRepo;
-    let realm = Realm {
-        id: Uuid::new_v4(),
-        name: "client-test-realm".to_string(),
-        display_name: "Client Test".to_string(),
-        enabled: true,
-    };
+    let realm = test_realm("client-test-realm", "Client Test");
     realm_repo.create(&mut conn, &realm).await.unwrap();
 
     let repo = ClientRepo;
@@ -147,6 +185,7 @@ async fn test_client_crud() {
         allowed_grant_types: vec!["authorization_code".to_string()],
         pkce_required: true,
         enabled: true,
+        deleted_at: None,
     };
 
     repo.create(&mut conn, &client).await.unwrap();
@@ -195,44 +234,18 @@ async fn test_session_crud() {
     clean_database(&mut conn).await.unwrap();
 
     let realm_repo = RealmRepo;
-    let realm = Realm {
-        id: Uuid::new_v4(),
-        name: "session-test-realm".to_string(),
-        display_name: "Session Test".to_string(),
-        enabled: true,
-    };
+    let realm = test_realm("session-test-realm", "Session Test");
     realm_repo.create(&mut conn, &realm).await.unwrap();
 
     let user_repo = UserRepo;
-    let user = User {
-        id: Uuid::new_v4(),
-        realm_id: realm.id,
-        email: "session@example.com".to_string(),
-        email_verified: true,
-        username: None,
-        password_hash: None,
-        given_name: None,
-        family_name: None,
-        enabled: true,
-    };
+    let user = test_user(realm.id, "session@example.com");
     user_repo.create(&mut conn, &user).await.unwrap();
 
     let client_repo = ClientRepo;
-    let client = Client {
-        id: Uuid::new_v4(),
-        realm_id: realm.id,
-        client_id: "session-client".to_string(),
-        client_type: ClientType::Public,
-        client_secret_hash: None,
-        name: "Session Client".to_string(),
-        redirect_uris: vec![],
-        allowed_scopes: vec!["openid".to_string()],
-        allowed_grant_types: vec!["authorization_code".to_string()],
-        pkce_required: true,
-        enabled: true,
-    };
+    let client = test_client(realm.id, "session-client", "Session Client");
     client_repo.create(&mut conn, &client).await.unwrap();
 
+    let now = chrono::Utc::now();
     let repo = SessionRepo;
     let session = Session {
         id: Uuid::new_v4(),
@@ -245,6 +258,10 @@ async fn test_session_crud() {
         id_token_jti: Some("jti123".to_string()),
         scope: vec!["openid".to_string(), "profile".to_string()],
         revoked: false,
+        expires_at: now + chrono::Duration::minutes(15),
+        refresh_expires_at: Some(now + chrono::Duration::days(7)),
+        created_at: now,
+        last_used_at: None,
         token_family_id: None,
         previous_session_id: None,
         rotated_at: None,
@@ -291,12 +308,7 @@ async fn test_api_key_crud() {
     clean_database(&mut conn).await.unwrap();
 
     let realm_repo = RealmRepo;
-    let realm = Realm {
-        id: Uuid::new_v4(),
-        name: "apikey-test-realm".to_string(),
-        display_name: "API Key Test".to_string(),
-        enabled: true,
-    };
+    let realm = test_realm("apikey-test-realm", "API Key Test");
     realm_repo.create(&mut conn, &realm).await.unwrap();
 
     let repo = ApiKeyRepo;
@@ -345,26 +357,11 @@ async fn test_auth_code_crud() {
     clean_database(&mut conn).await.unwrap();
 
     let realm_repo = RealmRepo;
-    let realm = Realm {
-        id: Uuid::new_v4(),
-        name: "authcode-test-realm".to_string(),
-        display_name: "AuthCode Test".to_string(),
-        enabled: true,
-    };
+    let realm = test_realm("authcode-test-realm", "AuthCode Test");
     realm_repo.create(&mut conn, &realm).await.unwrap();
 
     let user_repo = UserRepo;
-    let user = User {
-        id: Uuid::new_v4(),
-        realm_id: realm.id,
-        email: "auth@example.com".to_string(),
-        email_verified: true,
-        username: None,
-        password_hash: None,
-        given_name: None,
-        family_name: None,
-        enabled: true,
-    };
+    let user = test_user(realm.id, "auth@example.com");
     user_repo.create(&mut conn, &user).await.unwrap();
 
     let client_repo = ClientRepo;
@@ -380,6 +377,7 @@ async fn test_auth_code_crud() {
         allowed_grant_types: vec!["authorization_code".to_string()],
         pkce_required: true,
         enabled: true,
+        deleted_at: None,
     };
     client_repo.create(&mut conn, &client).await.unwrap();
 
@@ -393,9 +391,10 @@ async fn test_auth_code_crud() {
         redirect_uri: "https://app.example.com/callback".to_string(),
         scope: vec!["openid".to_string()],
         code_challenge: "challenge123".to_string(),
-        code_challenge_method: "S256".to_string(),
+        code_challenge_method: CodeChallengeMethod::S256,
+        nonce: Some("test-nonce".to_string()),
         used: false,
-        expires_at: (Utc::now() + chrono::Duration::minutes(10)).timestamp(),
+        expires_at: Utc::now() + chrono::Duration::minutes(10),
     };
 
     repo.create(&mut conn, &code).await.unwrap();
@@ -420,12 +419,7 @@ async fn test_signing_key_crud() {
     clean_database(&mut conn).await.unwrap();
 
     let realm_repo = RealmRepo;
-    let realm = Realm {
-        id: Uuid::new_v4(),
-        name: "signing-test-realm".to_string(),
-        display_name: "Signing Key Test".to_string(),
-        enabled: true,
-    };
+    let realm = test_realm("signing-test-realm", "Signing Key Test");
     realm_repo.create(&mut conn, &realm).await.unwrap();
 
     let repo = SigningKeyRepo;
@@ -477,26 +471,11 @@ async fn test_audit_event_crud() {
     clean_database(&mut conn).await.unwrap();
 
     let realm_repo = RealmRepo;
-    let realm = Realm {
-        id: Uuid::new_v4(),
-        name: "audit-test-realm".to_string(),
-        display_name: "Audit Test".to_string(),
-        enabled: true,
-    };
+    let realm = test_realm("audit-test-realm", "Audit Test");
     realm_repo.create(&mut conn, &realm).await.unwrap();
 
     let user_repo = UserRepo;
-    let user = User {
-        id: Uuid::new_v4(),
-        realm_id: realm.id,
-        email: "audit@example.com".to_string(),
-        email_verified: true,
-        username: None,
-        password_hash: None,
-        given_name: None,
-        family_name: None,
-        enabled: true,
-    };
+    let user = test_user(realm.id, "audit@example.com");
     user_repo.create(&mut conn, &user).await.unwrap();
 
     let repo = AuditEventRepo;
@@ -522,10 +501,13 @@ async fn test_audit_event_crud() {
     assert_eq!(found.event_type, "user.login");
     assert_eq!(found.actor_type, ActorType::User);
 
-    let by_realm = repo.find_by_realm(&mut conn, realm.id, 10).await.unwrap();
+    let by_realm = repo
+        .find_by_realm(&mut conn, realm.id, 10, 0, None, None, None)
+        .await
+        .unwrap();
     assert_eq!(by_realm.len(), 1);
 
-    let by_actor = repo.find_by_actor(&mut conn, user.id, 10).await.unwrap();
+    let by_actor = repo.find_by_actor(&mut conn, user.id, 10, 0).await.unwrap();
     assert_eq!(by_actor.len(), 1);
 }
 
@@ -538,12 +520,7 @@ async fn test_user_email_index_performance() {
     clean_database(&mut conn).await.unwrap();
 
     let realm_repo = RealmRepo;
-    let realm = Realm {
-        id: Uuid::new_v4(),
-        name: "perf-test-realm".to_string(),
-        display_name: "Perf Test".to_string(),
-        enabled: true,
-    };
+    let realm = test_realm("perf-test-realm", "Perf Test");
     realm_repo.create(&mut conn, &realm).await.unwrap();
 
     let user_repo = UserRepo;
@@ -558,7 +535,11 @@ async fn test_user_email_index_performance() {
             password_hash: Some("hash".to_string()),
             given_name: None,
             family_name: None,
+            phone_number: None,
+            locale: None,
+            attributes: serde_json::Value::Object(serde_json::Map::new()),
             enabled: true,
+            deleted_at: None,
         };
         user_repo.create(&mut conn, &user).await.unwrap();
     }
@@ -598,47 +579,21 @@ async fn test_session_token_hash_index_performance() {
     clean_database(&mut conn).await.unwrap();
 
     let realm_repo = RealmRepo;
-    let realm = Realm {
-        id: Uuid::new_v4(),
-        name: "session-perf-realm".to_string(),
-        display_name: "Session Perf".to_string(),
-        enabled: true,
-    };
+    let realm = test_realm("session-perf-realm", "Session Perf");
     realm_repo.create(&mut conn, &realm).await.unwrap();
 
     let user_repo = UserRepo;
-    let user = User {
-        id: Uuid::new_v4(),
-        realm_id: realm.id,
-        email: "session@example.com".to_string(),
-        email_verified: true,
-        username: None,
-        password_hash: None,
-        given_name: None,
-        family_name: None,
-        enabled: true,
-    };
+    let user = test_user(realm.id, "session@example.com");
     user_repo.create(&mut conn, &user).await.unwrap();
 
     let client_repo = ClientRepo;
-    let client = Client {
-        id: Uuid::new_v4(),
-        realm_id: realm.id,
-        client_id: "perf-client".to_string(),
-        client_type: ClientType::Public,
-        client_secret_hash: None,
-        name: "Perf Client".to_string(),
-        redirect_uris: vec![],
-        allowed_scopes: vec!["openid".to_string()],
-        allowed_grant_types: vec!["authorization_code".to_string()],
-        pkce_required: true,
-        enabled: true,
-    };
+    let client = test_client(realm.id, "perf-client", "Perf Client");
     client_repo.create(&mut conn, &client).await.unwrap();
 
     let session_repo = SessionRepo;
 
     for i in 0..1000 {
+        let now = chrono::Utc::now();
         let session = Session {
             id: Uuid::new_v4(),
             user_id: user.id,
@@ -650,6 +605,10 @@ async fn test_session_token_hash_index_performance() {
             id_token_jti: None,
             scope: vec!["openid".to_string()],
             revoked: false,
+            expires_at: now + chrono::Duration::minutes(15),
+            refresh_expires_at: Some(now + chrono::Duration::days(7)),
+            created_at: now,
+            last_used_at: None,
             token_family_id: None,
             previous_session_id: None,
             rotated_at: None,
@@ -693,12 +652,7 @@ async fn test_api_key_prefix_index_performance() {
     clean_database(&mut conn).await.unwrap();
 
     let realm_repo = RealmRepo;
-    let realm = Realm {
-        id: Uuid::new_v4(),
-        name: "apikey-perf-realm".to_string(),
-        display_name: "API Key Perf".to_string(),
-        enabled: true,
-    };
+    let realm = test_realm("apikey-perf-realm", "API Key Perf");
     realm_repo.create(&mut conn, &realm).await.unwrap();
 
     let repo = ApiKeyRepo;
@@ -753,12 +707,7 @@ async fn test_audit_event_insertion_performance() {
     clean_database(&mut conn).await.unwrap();
 
     let realm_repo = RealmRepo;
-    let realm = Realm {
-        id: Uuid::new_v4(),
-        name: "audit-perf-realm".to_string(),
-        display_name: "Audit Perf".to_string(),
-        enabled: true,
-    };
+    let realm = test_realm("audit-perf-realm", "Audit Perf");
     realm_repo.create(&mut conn, &realm).await.unwrap();
 
     let repo = AuditEventRepo;

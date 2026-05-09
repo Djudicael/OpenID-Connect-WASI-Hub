@@ -121,7 +121,15 @@ async fn run_migrations(url: &str) -> Result<(), Box<dyn std::error::Error>> {
         })
         .collect();
 
-    entries.sort_by_key(|e| e.file_name());
+    // Sort by the numeric prefix (V1, V2, ..., V10, ...) not alphabetically
+    // (alphabetical would put V10 before V2).
+    entries.sort_by_key(|e| {
+        let name = e.file_name().to_string_lossy().to_string();
+        name.split_once('_')
+            .and_then(|(prefix, _)| prefix.strip_prefix('V'))
+            .and_then(|num| num.parse::<u32>().ok())
+            .unwrap_or(0)
+    });
 
     for entry in entries {
         let filename = entry.file_name().to_string_lossy().to_string();

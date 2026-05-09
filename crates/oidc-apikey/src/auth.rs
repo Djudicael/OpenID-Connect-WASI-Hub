@@ -103,12 +103,12 @@ impl<S: ApiKeyVerifierState> FromRequestParts<S> for ApiKeyAuth {
     }
 }
 
-/// Extract the raw API key string from request headers.
+/// Extract the raw API key string from request parts.
 ///
 /// Supports:
 /// - `X-API-Key: <key>`
 /// - `Authorization: Bearer <key>`
-fn extract_raw_key(parts: &Parts) -> Option<String> {
+pub fn extract_raw_key(parts: &Parts) -> Option<String> {
     // Check X-API-Key first
     if let Some(header) = parts.headers.get("X-API-Key") {
         if let Ok(val) = header.to_str() {
@@ -129,6 +129,108 @@ fn extract_raw_key(parts: &Parts) -> Option<String> {
     }
 
     None
+}
+
+/// Extract the raw API key string from a `HeaderMap`.
+///
+/// This is the shared version used by both the extractor and the router.
+/// It only treats Bearer tokens without dots as API keys (JWTs contain dots).
+///
+/// Supports:
+/// - `X-API-Key: <key>`
+/// - `Authorization: Bearer <key>` (only if the token does not contain dots)
+pub fn extract_raw_key_from_headers(headers: &axum::http::HeaderMap) -> Option<String> {
+    // Check X-API-Key first
+    if let Some(header) = headers.get("X-API-Key") {
+        if let Ok(val) = header.to_str() {
+            let trimmed = val.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+
+    // Check Authorization: Bearer <key>
+    // Only treat as API key if the token does NOT contain dots (JWTs have dots)
+    if let Some(header) = headers.get(axum::http::header::AUTHORIZATION) {
+        if let Ok(auth_str) = header.to_str() {
+            if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                let trimmed = token.trim();
+                if !trimmed.is_empty() && !trimmed.contains('.') {
+                    return Some(trimmed.to_string());
+                }
+            }
+            if let Some(token) = auth_str.strip_prefix("bearer ") {
+                let trimmed = token.trim();
+                if !trimmed.is_empty() && !trimmed.contains('.') {
+                    return Some(trimmed.to_string());
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Verify a request's authentication — either via API key or JWT Bearer token.
+///
+/// This is the shared logic used by the router to authenticate API key routes.
+/// Returns the authenticated identity as an `ApiRouteAuth` enum.
+///
+/// # Arguments
+/// * `headers` - The request headers
+/// * `db_config` - Database configuration for opening a connection
+/// * `token_service` - The JWT token service for verifying Bearer tokens
+pub async fn verify_request_auth<S: oidc_core::traits::TokenService + Sync>(
+    headers: &axum::http::HeaderMap,
+    db_config: &wasi_pg_client::Config,
+    token_service: &S,
+) -> Result<ApiRouteAuth, StatusCode> {
+    // Try API key first
+    if let Some(raw_key) = extract_raw_key_from_headers(headers) {
+        let conn = wasi_pg_client::Connection::connect(db_config)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let mut conn = Connection::from_pg_client(conn);
+
+        let api_key = ApiKeyService::verify_key(&mut conn, &raw_key)
+            .await
+            .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+        // Best-effort usage tracking
+        let _ = ApiKeyService::increment_usage(&mut conn, api_key.id).await;
+
+        return Ok(ApiRouteAuth::ApiKey(ApiKeyAuth { api_key }));
+    }
+
+    // Try JWT Bearer token
+    if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION) {
+        if let Ok(auth_str) = auth_header.to_str() {
+            if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                match token_service.verify_access_token(token).await {
+                    Ok(subject) => {
+                        return Ok(ApiRouteAuth::JwtBearer { subject });
+                    }
+                    Err(e) => {
+                        tracing::debug!("JWT verification failed for API route: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
+    Err(StatusCode::UNAUTHORIZED)
+}
+
+/// Authentication result for API key routes.
+///
+/// Represents either an API key or a JWT Bearer token authentication.
+#[derive(Debug)]
+pub enum ApiRouteAuth {
+    /// Authenticated via API key.
+    ApiKey(ApiKeyAuth),
+    /// Authenticated via JWT Bearer token.
+    JwtBearer { subject: String },
 }
 
 /// Check if an API key has the required scope.

@@ -2,8 +2,9 @@
 
 use axum::Json;
 use axum::extract::State;
-use axum::http::StatusCode;
-use serde_json::{Value, json};
+use axum::http::{HeaderValue, StatusCode, header};
+use axum::response::{IntoResponse, Response};
+use serde_json::json;
 
 use oidc_core::traits::TokenService;
 use oidc_repository::repositories::session_repo::SessionRepo;
@@ -13,38 +14,52 @@ use crate::state::OidcState;
 
 /// UserInfo endpoint handler.
 /// Returns claims scoped to the access token's granted scopes.
+/// Per RFC 6750, returns 401 with `WWW-Authenticate: Bearer error="invalid_token"`
+/// when the token is missing or invalid.
 pub async fn userinfo_handler(
     State(state): State<OidcState>,
     authorization: Option<axum::http::HeaderValue>,
-) -> Result<Json<Value>, StatusCode> {
-    let token = extract_bearer_token(authorization)?;
+) -> Response {
+    let token = match extract_bearer_token(authorization) {
+        Ok(t) => t,
+        Err(()) => return unauthorized_response(),
+    };
 
-    let subject = state
-        .token_service
-        .verify_access_token(&token)
-        .await
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let subject = match state.token_service.verify_access_token(&token).await {
+        Ok(sub) => sub,
+        Err(_) => return unauthorized_response(),
+    };
 
-    let user_id = subject.parse().map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let user_id = match subject.parse() {
+        Ok(id) => id,
+        Err(_) => return unauthorized_response(),
+    };
 
-    let mut conn = state
-        .connect()
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut conn = match state.connect().await {
+        Ok(c) => c,
+        Err(_) => return internal_error_response(),
+    };
 
     // Look up the session to get granted scopes
     let access_hash = oidc_core::utils::sha2_256_hex(&token);
-    let session = SessionRepo
+    let session = match SessionRepo
         .find_by_access_token_hash(&mut conn, &access_hash)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+    {
+        Ok(Some(s)) => s,
+        Ok(None) => return unauthorized_response(),
+        Err(_) => return internal_error_response(),
+    };
 
-    let user = UserRepo
-        .find_by_id(&mut conn, user_id)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+    if session.revoked {
+        return unauthorized_response();
+    }
+
+    let user = match UserRepo.find_by_id(&mut conn, user_id).await {
+        Ok(Some(u)) => u,
+        Ok(None) => return unauthorized_response(),
+        Err(_) => return internal_error_response(),
+    };
 
     let scopes: std::collections::HashSet<String> = session.scope.into_iter().collect();
 
@@ -73,15 +88,49 @@ pub async fn userinfo_handler(
         }
     }
 
-    Ok(Json(claims))
+    Json(claims).into_response()
 }
 
-fn extract_bearer_token(header: Option<axum::http::HeaderValue>) -> Result<String, StatusCode> {
-    let header = header.ok_or(StatusCode::UNAUTHORIZED)?;
-    let header_str = header.to_str().map_err(|_| StatusCode::UNAUTHORIZED)?;
+/// Build a 401 Unauthorized response with the required `WWW-Authenticate` header.
+///
+/// Per RFC 6750 §3, the error response MUST include:
+/// `WWW-Authenticate: Bearer error="invalid_token"`
+fn unauthorized_response() -> Response {
+    let mut response = (
+        StatusCode::UNAUTHORIZED,
+        axum::Json(json!({
+            "error": "invalid_token",
+            "error_description": "The access token is missing, invalid, or expired."
+        })),
+    )
+        .into_response();
+
+    response.headers_mut().insert(
+        header::WWW_AUTHENTICATE,
+        HeaderValue::from_static("Bearer error=\"invalid_token\""),
+    );
+
+    response
+}
+
+/// Build a 500 Internal Server Error response.
+fn internal_error_response() -> Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        axum::Json(json!({
+            "error": "server_error",
+            "error_description": "An internal error occurred."
+        })),
+    )
+        .into_response()
+}
+
+fn extract_bearer_token(header: Option<axum::http::HeaderValue>) -> Result<String, ()> {
+    let header = header.ok_or(())?;
+    let header_str = header.to_str().map_err(|_| ())?;
     let token = header_str
         .strip_prefix("Bearer ")
         .or_else(|| header_str.strip_prefix("bearer "))
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+        .ok_or(())?;
     Ok(token.to_string())
 }

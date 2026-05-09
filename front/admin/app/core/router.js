@@ -8,10 +8,13 @@ const routes = [
   { path: '/users', component: 'users-page' },
   { path: '/users/:id', component: 'user-detail-page' },
   { path: '/clients', component: 'clients-page' },
+  { path: '/clients/:id', component: 'client-detail-page' },
   { path: '/realms', component: 'realms-page' },
+  { path: '/realms/:id', component: 'realm-detail-page' },
   { path: '/sessions', component: 'sessions-page' },
   { path: '/api-keys', component: 'apikeys-page' },
   { path: '/api-keys/create', component: 'apikey-create-page' },
+  { path: '/api-keys/:id', component: 'apikey-detail-page' },
   { path: '/audit', component: 'audit-page' },
 ];
 
@@ -54,13 +57,41 @@ class RouterOutlet extends HTMLElement {
     }
 
     if (!route) {
-      this.innerHTML = '<h1>404 - Page Not Found</h1>';
+      this.innerHTML = '';
+      const el = document.createElement('not-found-page');
+      this.appendChild(el);
       return;
     }
 
     if (!route.public && !authService.isAuthenticated()) {
       this._navigate('/login');
       return;
+    }
+
+    // Check admin role for protected routes
+    if (!route.public && authService.isAuthenticated()) {
+      const token = authService.tokens;
+      if (token && token.id_token) {
+        try {
+          const payload = JSON.parse(atob(token.id_token.split('.')[1]));
+          if (payload.exp && payload.exp * 1000 < Date.now()) {
+            this._navigate('/login');
+            return;
+          }
+          // Check for admin scope in the access token
+          const accessToken = token.access_token;
+          if (accessToken) {
+            const accessPayload = JSON.parse(atob(accessToken.split('.')[1]));
+            const scopes = (accessPayload.scope || '').split(' ');
+            if (!scopes.includes('admin')) {
+              this.innerHTML = '<h1>403 - Forbidden</h1><p>You do not have admin access.</p>';
+              return;
+            }
+          }
+        } catch {
+          // If we can't parse the token, let it through — the backend will enforce
+        }
+      }
     }
 
     if (route.public && authService.isAuthenticated() && route.path === '/login') {

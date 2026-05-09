@@ -77,8 +77,9 @@ impl RefreshTokenFlow {
 
         // --- Store new session with rotation chain ---
         let new_access_hash = sha2_256_hex(&access_token);
-        let new_refresh_token_value = generate_opaque_token();
+        let new_refresh_token_value = generate_opaque_token()?;
         let new_refresh_hash = Some(sha2_256_hex(&new_refresh_token_value));
+        let now = chrono::Utc::now();
 
         let new_session = Session {
             id: generate_uuid_v7(),
@@ -91,6 +92,10 @@ impl RefreshTokenFlow {
             id_token_jti: None,
             scope: scopes.clone(),
             revoked: false,
+            expires_at: now + chrono::Duration::minutes(15),
+            refresh_expires_at: Some(now + chrono::Duration::days(7)),
+            created_at: now,
+            last_used_at: None,
             token_family_id: session.token_family_id,
             previous_session_id: Some(session.id),
             rotated_at: None,
@@ -100,11 +105,8 @@ impl RefreshTokenFlow {
 
         SessionRepo.create(&mut conn, &new_session).await?;
 
-        // Mark the old session as rotated
-        let sql = "UPDATE sessions SET rotated_at = NOW() WHERE id = $1";
-        conn.execute_params(sql, &[&session.id])
-            .await
-            .map_err(|e| oidc_core::OidcError::Internal(e.to_string()))?;
+        // Mark the old session as rotated via the repository
+        SessionRepo.mark_rotated(&mut conn, session.id).await?;
 
         Ok(json!({
             "access_token": access_token,

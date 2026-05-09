@@ -11,14 +11,29 @@ class ApiKeysPage extends BaseComponent {
     this._state = {
       keys: [],
       loading: true,
-      realmId: '00000000-0000-0000-0000-000000000000',
+      realms: [],
+      realmId: '',
       includeRevoked: false,
     };
   }
 
   connectedCallback() {
     super.connectedCallback();
-    this._loadKeys();
+    this._loadRealms();
+  }
+
+  async _loadRealms() {
+    try {
+      const data = await get('/api/realms?limit=100');
+      const realms = data.items || [];
+      const defaultRealmId = realms.length > 0 ? realms[0].id : '00000000-0000-0000-0000-000000000000';
+      this.setState({ realms, realmId: defaultRealmId });
+      this._loadKeys();
+    } catch (err) {
+      showToast('Failed to load realms', 'error');
+      this.setState({ realms: [], realmId: '00000000-0000-0000-0000-000000000000' });
+      this._loadKeys();
+    }
   }
 
   async _loadKeys() {
@@ -47,19 +62,33 @@ class ApiKeysPage extends BaseComponent {
     if (!confirm('Rotate this API key? The old key will stop working immediately.')) return;
     try {
       const data = await post(`/api/keys/${id}/rotate`);
-      showToast('API key rotated. New key displayed once.', 'success');
-      // Show the new raw key in a modal or alert
-      alert(`New API Key (copy now - shown once only):\n\n${data.raw_key}`);
+      showToast('API key rotated! New key copied to clipboard.', 'success');
+      const rawKey = data.raw_key;
+      const copied = await navigator.clipboard.writeText(rawKey).catch(() => false);
+      if (!copied) {
+        const input = document.createElement('input');
+        input.value = rawKey;
+        input.style.cssText = 'position:fixed;left:-9999px';
+        document.body.appendChild(input);
+        input.select();
+        document.execCommand('copy');
+        document.body.removeChild(input);
+      }
       this._loadKeys();
     } catch (err) {
       showToast('Failed to rotate API key', 'error');
     }
   }
 
+  _onRealmChange(e) {
+    this.setState({ realmId: e.target.value });
+    this._loadKeys();
+  }
+
   template() {
-    const { keys, loading, includeRevoked } = this._state;
+    const { keys, loading, realms, realmId, includeRevoked } = this._state;
     const columns = [
-      { key: 'name', label: 'Name' },
+      { key: 'name', label: 'Name', render: (v, row) => html`<a href="/api-keys/${row.id}" style="color:var(--color-primary);text-decoration:none;cursor:pointer" @click=${(e) => { e.preventDefault(); navigate(`/api-keys/${row.id}`); }}>${v}</a>` },
       { key: 'prefix', label: 'Prefix' },
       { key: 'scopes', label: 'Scopes', render: (v) => Array.isArray(v) ? v.join(', ') : v },
       { key: 'expires_at', label: 'Expires', render: (v) => v ? formatRelativeTime(v) : 'Never' },
@@ -93,12 +122,32 @@ class ApiKeysPage extends BaseComponent {
           font-size: 0.875rem;
           color: var(--color-text-muted);
         }
+        .realm-select {
+          padding: 0.375rem 0.75rem;
+          font-size: 0.875rem;
+          border: 1px solid #e2e8f0;
+          border-radius: var(--radius-sm, 0.25rem);
+          font-family: inherit;
+          background: var(--color-surface, #fff);
+          color: var(--color-text, #1e293b);
+          min-width: 12rem;
+        }
+        .realm-select:focus {
+          outline: none;
+          border-color: var(--color-primary, #3b82f6);
+        }
       </style>
       <c-page-layout title="API Keys">
         <div slot="actions">
           <c-button variant="primary" @click=${() => navigate('/api-keys/create')}>+ Create Key</c-button>
         </div>
         <div class="toolbar">
+          <label class="filter-label">
+            Realm:
+            <select class="realm-select" .value=${realmId} @change=${(e) => this._onRealmChange(e)}>
+              ${realms.map(r => html`<option value=${r.id} ?selected=${realmId === r.id}>${r.display_name || r.name}</option>`)}
+            </select>
+          </label>
           <label class="filter-label">
             <input
               type="checkbox"

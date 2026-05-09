@@ -12,7 +12,7 @@ pub mod user;
 
 pub use api_key::ApiKey;
 pub use audit_event::{ActorType, AuditEvent};
-pub use auth_code::AuthCode;
+pub use auth_code::{AuthCode, CodeChallengeMethod};
 pub use client::{Client, ClientType};
 
 pub use realm::Realm;

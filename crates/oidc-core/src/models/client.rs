@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::OidcError;
+
 /// An OAuth2/OIDC client registered within a realm.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Client {
@@ -26,6 +28,8 @@ pub struct Client {
     pub pkce_required: bool,
     /// Whether the client is enabled.
     pub enabled: bool,
+    /// When the client was soft-deleted.
+    pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// The type of OAuth2 client.
@@ -36,4 +40,24 @@ pub enum ClientType {
     Confidential,
     /// Cannot keep secrets (SPA, mobile).
     Public,
+}
+
+impl Client {
+    /// Validate the client fields.
+    pub fn validate(&self) -> Result<(), OidcError> {
+        if self.client_id.trim().is_empty() {
+            return Err(OidcError::InvalidInput(
+                "client_id must not be empty".into(),
+            ));
+        }
+        for uri in &self.redirect_uris {
+            if uri.parse::<url::Url>().is_err() {
+                return Err(OidcError::InvalidInput(format!(
+                    "Invalid redirect URI: {}",
+                    uri
+                )));
+            }
+        }
+        Ok(())
+    }
 }

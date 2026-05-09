@@ -55,15 +55,9 @@ impl AuthorizationCodeFlow {
         }
 
         // --- PKCE verification ---
-        if auth_code.code_challenge_method == "S256" {
-            if !verify_s256(code_verifier, &auth_code.code_challenge) {
-                return Err(OidcError::InvalidRequest);
-            }
-        } else {
-            // plain: direct comparison
-            if auth_code.code_challenge != code_verifier {
-                return Err(OidcError::InvalidRequest);
-            }
+        // Only S256 is supported — plain method is not allowed
+        if !verify_s256(code_verifier, &auth_code.code_challenge) {
+            return Err(OidcError::InvalidRequest);
         }
 
         // --- Mark code as used ---
@@ -89,7 +83,7 @@ impl AuthorizationCodeFlow {
         let c_hash = oidc_core::utils::compute_c_hash(code);
 
         let id_token_extra = IdTokenExtraClaims {
-            nonce: None, // TODO: propagate nonce from authorize request
+            nonce: auth_code.nonce.clone(),
             at_hash: Some(at_hash),
             c_hash: Some(c_hash),
             auth_time: Some(chrono::Utc::now().timestamp()),
@@ -107,9 +101,10 @@ impl AuthorizationCodeFlow {
 
         // --- Store session with token family ---
         let access_hash = sha2_256_hex(&access_token);
-        let refresh_token_value = generate_opaque_token();
+        let refresh_token_value = generate_opaque_token()?;
         let refresh_hash = Some(sha2_256_hex(&refresh_token_value));
         let token_family_id = generate_uuid_v7();
+        let now = chrono::Utc::now();
 
         let session = Session {
             id: generate_uuid_v7(),
@@ -122,6 +117,10 @@ impl AuthorizationCodeFlow {
             id_token_jti: None,
             scope: scopes.clone(),
             revoked: false,
+            expires_at: now + chrono::Duration::minutes(15),
+            refresh_expires_at: Some(now + chrono::Duration::days(7)),
+            created_at: now,
+            last_used_at: None,
             token_family_id: Some(token_family_id),
             previous_session_id: None,
             rotated_at: None,

@@ -8,17 +8,28 @@ use axum::Router;
 pub fn build_router() -> Router {
     let state = AppState::from_env();
 
+    // Rate limiter shared state (per-IP, in-memory)
+    let rate_limiter = std::sync::Arc::new(crate::middleware::rate_limit::RateLimiter::from_env());
+
     Router::new()
         .merge(router::oidc::router())
         .merge(router::apikey::router())
-
         .merge(router::health::router())
         .merge(router::admin::router())
         .with_state(state.clone())
+        .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
         .layer(crate::middleware::cors::cors_layer())
+        .layer(axum::middleware::from_fn(
+            crate::middleware::security_headers::security_headers_middleware,
+        ))
+        .layer(axum::middleware::from_fn(
+            crate::middleware::rate_limit::rate_limit_middleware,
+        ))
         .layer(axum::middleware::from_fn(
             crate::middleware::logging::logging_middleware,
         ))
+        // Make the RateLimiter available to the middleware via extensions
+        .layer(axum::Extension(rate_limiter))
 }
 
 /// Run the axum server on a TCP listener with graceful shutdown on SIGTERM.

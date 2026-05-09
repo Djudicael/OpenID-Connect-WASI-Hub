@@ -108,7 +108,10 @@ async fn cmd_start() -> Result<()> {
         s.db_url = db_url.clone();
     }
 
-    let _proxy_port = { let s = state.lock().await; s.proxy_port };
+    let _proxy_port = {
+        let s = state.lock().await;
+        s.proxy_port
+    };
     run_migrations(&db_url).await?;
     seed_data(&db_url, 3000).await?;
     build_frontend().await?;
@@ -556,7 +559,7 @@ async fn seed_data(db_url: &str, proxy_port: u16) -> Result<()> {
         if rows.is_empty() {
             let id = oidc_core::utils::generate_uuid_v7();
             let prefix = "oidc_adm";
-            let raw_secret = format!("{}_{}", prefix, oidc_core::utils::generate_opaque_token());
+            let raw_secret = format!("{}_{}", prefix, oidc_core::utils::generate_opaque_token().map_err(|e| anyhow::anyhow!("token gen failed: {e}"))?);
             let hasher = oidc_core::traits::hasher::Argon2idHasher::new();
             let hashed_secret = hasher.hash(&raw_secret).map_err(|e| anyhow::anyhow!("hash failed: {e}"))?;
             let scopes = serde_json::json!(["admin"]);

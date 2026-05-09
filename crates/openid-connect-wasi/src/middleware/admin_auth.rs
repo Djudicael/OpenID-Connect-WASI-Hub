@@ -2,6 +2,7 @@
 //!
 //! Supports both API key (`X-API-Key` or `Authorization: Bearer <api_key>`)
 //! and OIDC access token (`Authorization: Bearer <jwt>`) authentication.
+//! For OIDC tokens, the `admin` scope must be present.
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
@@ -22,15 +23,6 @@ pub struct AdminAuth {
     pub subject: String,
     /// Whether this is an API key authentication.
     pub is_api_key: bool,
-}
-
-impl AdminAuth {
-    /// Check if the authenticated identity has admin privileges.
-    pub fn is_admin(&self) -> bool {
-        // For API keys, the scope check is done during extraction.
-        // For OIDC tokens, we check the scope claim.
-        true // Scope validation happens in extraction
-    }
 }
 
 impl FromRequestParts<AppState> for AdminAuth {
@@ -56,12 +48,19 @@ impl FromRequestParts<AppState> for AdminAuth {
         if let Some(auth_header) = parts.headers.get(axum::http::header::AUTHORIZATION) {
             if let Ok(auth_str) = auth_header.to_str() {
                 if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                    match state.token_service.verify_access_token(token).await {
-                        Ok(subject) => {
-                            // TODO: parse token claims to verify "admin" scope
-                            // For now, accept all valid OIDC tokens in dev mode
+                    match state
+                        .token_service
+                        .verify_access_token_with_claims(token)
+                        .await
+                    {
+                        Ok(claims) => {
+                            // Verify the token has the "admin" scope
+                            let scopes: Vec<&str> = claims.scope.split_whitespace().collect();
+                            if !scopes.contains(&"admin") {
+                                return Err(ApiKeyError::InsufficientScope);
+                            }
                             return Ok(AdminAuth {
-                                subject,
+                                subject: claims.sub,
                                 is_api_key: false,
                             });
                         }

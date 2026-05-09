@@ -7,7 +7,8 @@ import { showToast } from '../components/ui/toast.js';
 class UserDetailPage extends BaseComponent {
   constructor() {
     super();
-    this._state = { user: null, loading: true, saving: false };
+    this._state = { user: null, savedUser: null, loading: true, saving: false, dirty: false };
+    this._onBeforeUnload = this._onBeforeUnload.bind(this);
   }
 
   connectedCallback() {
@@ -15,13 +16,38 @@ class UserDetailPage extends BaseComponent {
     if (this.params && this.params.id) {
       this._loadUser(this.params.id);
     }
+    window.addEventListener('beforeunload', this._onBeforeUnload);
+  }
+
+  disconnectedCallback() {
+    window.removeEventListener('beforeunload', this._onBeforeUnload);
+  }
+
+  _onBeforeUnload(e) {
+    if (this._state.dirty) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  }
+
+  get _isDirty() {
+    const { user, savedUser } = this._state;
+    if (!user || !savedUser) return false;
+    return (
+      user.email !== savedUser.email ||
+      user.email_verified !== savedUser.email_verified ||
+      user.username !== savedUser.username ||
+      user.given_name !== savedUser.given_name ||
+      user.family_name !== savedUser.family_name ||
+      user.enabled !== savedUser.enabled
+    );
   }
 
   async _loadUser(id) {
     this.setState({ loading: true });
     try {
       const user = await get(`/api/users/${id}`);
-      this.setState({ user, loading: false });
+      this.setState({ user, savedUser: { ...user }, loading: false, dirty: false });
     } catch (err) {
       showToast('Failed to load user', 'error');
       this.setState({ loading: false });
@@ -42,7 +68,7 @@ class UserDetailPage extends BaseComponent {
         enabled: user.enabled,
       });
       showToast('User updated', 'success');
-      this.setState({ saving: false });
+      this.setState({ saving: false, savedUser: { ...user }, dirty: false });
     } catch (err) {
       showToast('Failed to update user', 'error');
       this.setState({ saving: false });
@@ -50,11 +76,32 @@ class UserDetailPage extends BaseComponent {
   }
 
   _updateField(field, value) {
-    this.setState({ user: { ...this._state.user, [field]: value } });
+    const user = { ...this._state.user, [field]: value };
+    const savedUser = this._state.savedUser;
+    const dirty = (
+      user.email !== savedUser.email ||
+      user.email_verified !== savedUser.email_verified ||
+      user.username !== savedUser.username ||
+      user.given_name !== savedUser.given_name ||
+      user.family_name !== savedUser.family_name ||
+      user.enabled !== savedUser.enabled
+    );
+    this.setState({ user, dirty });
+  }
+
+  _navigateAway(path) {
+    if (this._state.dirty) {
+      if (!confirm('You have unsaved changes. Are you sure you want to leave?')) {
+        return;
+      }
+    }
+    // Remove beforeunload before navigating so it doesn't trigger
+    this.setState({ dirty: false });
+    navigate(path);
   }
 
   template() {
-    const { user, loading, saving } = this._state;
+    const { user, loading, saving, dirty } = this._state;
     return html`
       <style>
         :host { display: block; }
@@ -67,6 +114,15 @@ class UserDetailPage extends BaseComponent {
           font-size: 0.875rem;
           margin-bottom: 1rem;
           cursor: pointer;
+        }
+        .dirty-indicator {
+          display: inline-block;
+          width: 0.5rem;
+          height: 0.5rem;
+          border-radius: 50%;
+          background: var(--color-warning, #f59e0b);
+          margin-left: 0.5rem;
+          vertical-align: middle;
         }
         .form { max-width: 32rem; }
         .field { margin-bottom: 1rem; }
@@ -98,7 +154,7 @@ class UserDetailPage extends BaseComponent {
         .actions { display: flex; gap: 0.5rem; margin-top: 1.5rem; }
       </style>
       <c-page-layout title="User Details">
-        <span class="back-link" @click=${() => navigate('/users')}>
+        <span class="back-link" @click=${() => this._navigateAway('/users')}>
           &larr; Back to Users
         </span>
         ${loading
@@ -131,10 +187,10 @@ class UserDetailPage extends BaseComponent {
                     Enabled
                   </label>
                   <div class="actions">
-                    <c-button variant="primary" ?disabled=${saving} @click=${() => this._save()}>
-                      ${saving ? 'Saving...' : 'Save Changes'}
+                    <c-button variant="primary" ?disabled=${saving || !dirty} @click=${() => this._save()}>
+                      ${saving ? 'Saving...' : 'Save Changes'}${dirty ? html`<span class="dirty-indicator"></span>` : ''}
                     </c-button>
-                    <c-button variant="ghost" @click=${() => navigate('/users')}>Cancel</c-button>
+                    <c-button variant="ghost" @click=${() => this._navigateAway('/users')}>Cancel</c-button>
                   </div>
                 </div>
               `

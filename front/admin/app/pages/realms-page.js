@@ -1,6 +1,7 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
-import { get, del } from '../core/http.js';
+import { get, post, del } from '../core/http.js';
+import { navigate } from '../core/router.js';
 import { showToast } from '../components/ui/toast.js';
 
 class RealmsPage extends BaseComponent {
@@ -12,6 +13,11 @@ class RealmsPage extends BaseComponent {
       page: 1,
       pageSize: 20,
       total: 0,
+      showCreateModal: false,
+      createName: '',
+      createDisplayName: '',
+      createEnabled: true,
+      createLoading: false,
     };
   }
 
@@ -56,8 +62,45 @@ class RealmsPage extends BaseComponent {
     }
   }
 
+  _openCreateModal() {
+    this.setState({
+      showCreateModal: true,
+      createName: '',
+      createDisplayName: '',
+      createEnabled: true,
+      createLoading: false,
+    }, () => {
+      this.shadowRoot.querySelector('c-modal').open();
+    });
+  }
+
+  _closeCreateModal() {
+    this.shadowRoot.querySelector('c-modal').close();
+    this.setState({ showCreateModal: false });
+  }
+
+  async _createRealm() {
+    const { createName, createDisplayName, createEnabled } = this._state;
+    if (!createName.trim() || !createDisplayName.trim()) return;
+
+    this.setState({ createLoading: true });
+    try {
+      await post('/api/realms', {
+        name: createName.trim(),
+        display_name: createDisplayName.trim(),
+        enabled: createEnabled,
+      });
+      this._closeCreateModal();
+      showToast('Realm created successfully', 'success');
+      this._loadRealms();
+    } catch (err) {
+      showToast(err.body?.error || 'Failed to create realm', 'error');
+      this.setState({ createLoading: false });
+    }
+  }
+
   template() {
-    const { realms, loading, page, pageSize, total } = this._state;
+    const { realms, loading, page, pageSize, total, showCreateModal, createName, createDisplayName, createEnabled, createLoading } = this._state;
     const columns = [
       { key: 'name', label: 'Name' },
       { key: 'display_name', label: 'Display Name' },
@@ -67,6 +110,7 @@ class RealmsPage extends BaseComponent {
         label: 'Actions',
         render: (_, row) => html`
           <div style="display:flex;gap:0.5rem">
+            <c-button size="sm" variant="secondary" @click=${() => navigate(`/realms/${row.id}`)}>Edit</c-button>
             <c-button size="sm" variant="danger" @click=${() => this._deleteRealm(row.id)}>Delete</c-button>
           </div>
         `,
@@ -76,10 +120,45 @@ class RealmsPage extends BaseComponent {
     return html`
       <style>
         :host { display: block; }
+        .form { max-width: 32rem; }
+        .field { margin-bottom: 1rem; }
+        .field-label {
+          display: block;
+          font-size: 0.875rem;
+          font-weight: 500;
+          margin-bottom: 0.25rem;
+        }
+        .field-input {
+          width: 100%;
+          padding: 0.5rem 0.75rem;
+          font-size: 0.875rem;
+          border: 1px solid #e2e8f0;
+          border-radius: var(--radius-sm);
+          font-family: inherit;
+          box-sizing: border-box;
+        }
+        .field-input:focus {
+          outline: none;
+          border-color: var(--color-primary);
+        }
+        .hint {
+          font-size: 0.75rem;
+          color: var(--color-text-muted);
+          margin-top: 0.25rem;
+        }
+        .field-checkbox {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+        .field-checkbox input {
+          width: 1rem;
+          height: 1rem;
+        }
       </style>
       <c-page-layout title="Realms">
         <div slot="actions">
-          <c-button variant="primary" @click=${() => showToast('Realm creation not yet implemented', 'warning')}>
+          <c-button variant="primary" @click=${() => this._openCreateModal()}>
             + Add Realm
           </c-button>
         </div>
@@ -93,6 +172,51 @@ class RealmsPage extends BaseComponent {
           @page-change=${(e) => this._onPageChange(e)}
         ></c-pagination>
       </c-page-layout>
+
+      <c-modal title="Create Realm" @close=${() => this._closeCreateModal()}>
+        ${showCreateModal ? html`
+          <div class="form">
+            <div class="field">
+              <label class="field-label">Name *</label>
+              <input
+                class="field-input"
+                type="text"
+                placeholder="e.g. production"
+                .value=${createName}
+                @input=${(e) => this.setState({ createName: e.target.value })}
+              />
+              <div class="hint">Machine-readable identifier</div>
+            </div>
+            <div class="field">
+              <label class="field-label">Display Name *</label>
+              <input
+                class="field-input"
+                type="text"
+                placeholder="e.g. Production"
+                .value=${createDisplayName}
+                @input=${(e) => this.setState({ createDisplayName: e.target.value })}
+              />
+              <div class="hint">Human-readable name</div>
+            </div>
+            <div class="field">
+              <label class="field-checkbox">
+                <input
+                  type="checkbox"
+                  ?checked=${createEnabled}
+                  @change=${(e) => this.setState({ createEnabled: e.target.checked })}
+                />
+                Enabled
+              </label>
+            </div>
+          </div>
+        ` : ''}
+        <div slot="footer">
+          <c-button variant="secondary" @click=${() => this._closeCreateModal()}>Cancel</c-button>
+          <c-button variant="primary" ?disabled=${createLoading || !createName.trim() || !createDisplayName.trim()} @click=${() => this._createRealm()}>
+            ${createLoading ? 'Creating...' : 'Create'}
+          </c-button>
+        </div>
+      </c-modal>
     `;
   }
 }

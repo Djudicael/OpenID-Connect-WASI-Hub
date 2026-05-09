@@ -3,10 +3,11 @@
 use axum::Router;
 use axum::extract::{Query, State};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{get, post};
 use serde_json::Value;
 use uuid::Uuid;
 
+use oidc_apikey::auth::{ApiRouteAuth, verify_request_auth};
 use oidc_apikey::service::ApiKeyService;
 use oidc_core::models::audit_event::{ActorType, AuditEvent};
 use oidc_repository::Connection;
@@ -20,8 +21,30 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/keys", get(list_keys))
         .route("/api/keys", post(create_key))
-        .route("/api/keys/{id}", delete(revoke_key))
+        .route("/api/keys/{id}", get(get_key).delete(revoke_key))
         .route("/api/keys/{id}/rotate", post(rotate_key))
+}
+
+/// Check if the auth has admin access or the required scope.
+///
+/// JWT Bearer tokens from the admin login are treated as having admin access.
+/// API keys must have either the `admin` scope or the specific required scope.
+fn has_admin_or_scope(auth: &ApiRouteAuth, scope: &str) -> bool {
+    match auth {
+        ApiRouteAuth::ApiKey(api_key_auth) => {
+            oidc_apikey::auth::has_scope(&api_key_auth.api_key, "admin")
+                || oidc_apikey::auth::has_scope(&api_key_auth.api_key, scope)
+        }
+        ApiRouteAuth::JwtBearer { .. } => true, // JWT tokens from admin login have admin access
+    }
+}
+
+/// Extract the actor ID and type from the auth result.
+fn auth_actor(auth: &ApiRouteAuth) -> (Option<Uuid>, ActorType) {
+    match auth {
+        ApiRouteAuth::ApiKey(api_key_auth) => (Some(api_key_auth.api_key.id), ActorType::ApiKey),
+        ApiRouteAuth::JwtBearer { subject } => (subject.parse::<Uuid>().ok(), ActorType::User),
+    }
 }
 
 async fn list_keys(
@@ -29,7 +52,7 @@ async fn list_keys(
     Query(query): Query<oidc_apikey::models::ListKeysQuery>,
     headers: axum::http::HeaderMap,
 ) -> Response {
-    let auth = match verify_request_api_key(&headers, &state.db_config).await {
+    let auth = match verify_request_auth_local(&headers, &state).await {
         Ok(a) => a,
         Err(status) => {
             return (
@@ -39,9 +62,7 @@ async fn list_keys(
                 .into_response();
         }
     };
-    if !oidc_apikey::auth::has_scope(&auth.api_key, "admin")
-        && !oidc_apikey::auth::has_scope(&auth.api_key, "api_keys:read")
-    {
+    if !has_admin_or_scope(&auth, "api_keys:read") {
         return (
             axum::http::StatusCode::FORBIDDEN,
             axum::Json(serde_json::json!({"error": "forbidden"})),
@@ -116,7 +137,7 @@ async fn create_key(
         }
     };
 
-    let auth = match verify_request_api_key(&headers, &state.db_config).await {
+    let auth = match verify_request_auth_local(&headers, &state).await {
         Ok(a) => a,
         Err(status) => {
             return (
@@ -126,9 +147,7 @@ async fn create_key(
                 .into_response();
         }
     };
-    if !oidc_apikey::auth::has_scope(&auth.api_key, "admin")
-        && !oidc_apikey::auth::has_scope(&auth.api_key, "api_keys:write")
-    {
+    if !has_admin_or_scope(&auth, "api_keys:write") {
         return (
             axum::http::StatusCode::FORBIDDEN,
             axum::Json(serde_json::json!({"error": "forbidden"})),
@@ -148,7 +167,12 @@ async fn create_key(
         }
     };
 
-    let created_by = Some(auth.api_key.id);
+    let (actor_id, actor_type) = auth_actor(&auth);
+    let created_by = match &auth {
+        ApiRouteAuth::ApiKey(api_key_auth) => Some(api_key_auth.api_key.id),
+        ApiRouteAuth::JwtBearer { subject } => subject.parse::<Uuid>().ok(),
+    };
+
     let (api_key, raw_key) = match ApiKeyService::generate_key(
         &mut conn,
         req.realm_id,
@@ -175,8 +199,8 @@ async fn create_key(
         id: Uuid::new_v4(),
         realm_id: Some(api_key.realm_id),
         event_type: "api_key.created".into(),
-        actor_id: created_by,
-        actor_type: ActorType::ApiKey,
+        actor_id,
+        actor_type,
         target_type: Some("api_key".into()),
         target_id: Some(api_key.id),
         details: serde_json::json!({"name": &api_key.name, "scopes": &api_key.scopes}),
@@ -199,12 +223,12 @@ async fn create_key(
     .into_response()
 }
 
-async fn revoke_key(
+async fn get_key(
     State(state): State<AppState>,
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     headers: axum::http::HeaderMap,
 ) -> Response {
-    let auth = match verify_request_api_key(&headers, &state.db_config).await {
+    let auth = match verify_request_auth_local(&headers, &state).await {
         Ok(a) => a,
         Err(status) => {
             return (
@@ -214,9 +238,74 @@ async fn revoke_key(
                 .into_response();
         }
     };
-    if !oidc_apikey::auth::has_scope(&auth.api_key, "admin")
-        && !oidc_apikey::auth::has_scope(&auth.api_key, "api_keys:write")
-    {
+    if !has_admin_or_scope(&auth, "api_keys:read") {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            axum::Json(serde_json::json!({"error": "forbidden"})),
+        )
+            .into_response();
+    }
+
+    let mut conn = match wasi_pg_client::Connection::connect(&state.db_config).await {
+        Ok(c) => Connection::from_pg_client(c),
+        Err(e) => {
+            tracing::error!("db connect error: {e}");
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    };
+
+    match ApiKeyRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(key)) => axum::Json(serde_json::json!({
+            "id": key.id.to_string(),
+            "realm_id": key.realm_id.to_string(),
+            "name": key.name,
+            "prefix": key.prefix,
+            "scopes": key.scopes,
+            "revoked": key.revoked,
+            "request_count": key.request_count,
+            "expires_at": key.expires_at.map(|d| d.to_rfc3339()),
+            "last_used_at": key.last_used_at.map(|d| d.to_rfc3339()),
+            "created_at": key.created_at.to_rfc3339(),
+            "created_by": key.created_by.map(|u| u.to_string()),
+            "rotated_at": key.rotated_at.map(|d| d.to_rfc3339()),
+        }))
+        .into_response(),
+        Ok(None) => (
+            axum::http::StatusCode::NOT_FOUND,
+            axum::Json(serde_json::json!({"error": "not_found"})),
+        )
+            .into_response(),
+        Err(e) => {
+            tracing::error!("query error: {e}");
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({"error": "internal"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn revoke_key(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    headers: axum::http::HeaderMap,
+) -> Response {
+    let auth = match verify_request_auth_local(&headers, &state).await {
+        Ok(a) => a,
+        Err(status) => {
+            return (
+                status,
+                axum::Json(serde_json::json!({"error": "unauthorized"})),
+            )
+                .into_response();
+        }
+    };
+    if !has_admin_or_scope(&auth, "api_keys:write") {
         return (
             axum::http::StatusCode::FORBIDDEN,
             axum::Json(serde_json::json!({"error": "forbidden"})),
@@ -246,12 +335,13 @@ async fn revoke_key(
     }
 
     // Audit event
+    let (actor_id, actor_type) = auth_actor(&auth);
     let audit = AuditEvent {
         id: Uuid::new_v4(),
         realm_id: None,
         event_type: "api_key.revoked".into(),
-        actor_id: Some(auth.api_key.id),
-        actor_type: ActorType::ApiKey,
+        actor_id,
+        actor_type,
         target_type: Some("api_key".into()),
         target_id: Some(id),
         details: serde_json::json!({}),
@@ -269,7 +359,7 @@ async fn rotate_key(
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     headers: axum::http::HeaderMap,
 ) -> Response {
-    let auth = match verify_request_api_key(&headers, &state.db_config).await {
+    let auth = match verify_request_auth_local(&headers, &state).await {
         Ok(a) => a,
         Err(status) => {
             return (
@@ -279,9 +369,7 @@ async fn rotate_key(
                 .into_response();
         }
     };
-    if !oidc_apikey::auth::has_scope(&auth.api_key, "admin")
-        && !oidc_apikey::auth::has_scope(&auth.api_key, "api_keys:write")
-    {
+    if !has_admin_or_scope(&auth, "api_keys:write") {
         return (
             axum::http::StatusCode::FORBIDDEN,
             axum::Json(serde_json::json!({"error": "forbidden"})),
@@ -314,12 +402,13 @@ async fn rotate_key(
     };
 
     // Audit event
+    let (actor_id, actor_type) = auth_actor(&auth);
     let audit = AuditEvent {
         id: Uuid::new_v4(),
         realm_id: Some(new_key.realm_id),
         event_type: "api_key.rotated".into(),
-        actor_id: Some(auth.api_key.id),
-        actor_type: ActorType::ApiKey,
+        actor_id,
+        actor_type,
         target_type: Some("api_key".into()),
         target_id: Some(new_key.id),
         details: serde_json::json!({"previous_id": id.to_string()}),
@@ -337,44 +426,12 @@ async fn rotate_key(
     .into_response()
 }
 
-/// Extract raw API key from headers and verify it.
-async fn verify_request_api_key(
+/// Extract raw API key from headers and verify it, or fall back to JWT Bearer token.
+///
+/// Delegates to the shared `verify_request_auth` from `oidc-apikey`.
+async fn verify_request_auth_local(
     headers: &axum::http::HeaderMap,
-    db_config: &wasi_pg_client::Config,
-) -> Result<oidc_apikey::auth::ApiKeyAuth, axum::http::StatusCode> {
-    let raw_key = extract_raw_key(headers).ok_or(axum::http::StatusCode::UNAUTHORIZED)?;
-
-    let conn = wasi_pg_client::Connection::connect(db_config)
-        .await
-        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
-    let mut conn = Connection::from_pg_client(conn);
-
-    let api_key = ApiKeyService::verify_key(&mut conn, &raw_key)
-        .await
-        .map_err(|_| axum::http::StatusCode::UNAUTHORIZED)?;
-
-    // Best-effort usage tracking
-    let _ = ApiKeyService::increment_usage(&mut conn, api_key.id).await;
-
-    Ok(oidc_apikey::auth::ApiKeyAuth { api_key })
-}
-
-/// Extract raw key from X-API-Key or Authorization header.
-fn extract_raw_key(headers: &axum::http::HeaderMap) -> Option<String> {
-    if let Some(header) = headers.get("X-API-Key") {
-        if let Ok(val) = header.to_str() {
-            return Some(val.trim().to_string());
-        }
-    }
-    if let Some(header) = headers.get(axum::http::header::AUTHORIZATION) {
-        if let Ok(auth_str) = header.to_str() {
-            if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                return Some(token.trim().to_string());
-            }
-            if let Some(token) = auth_str.strip_prefix("bearer ") {
-                return Some(token.trim().to_string());
-            }
-        }
-    }
-    None
+    state: &AppState,
+) -> Result<ApiRouteAuth, axum::http::StatusCode> {
+    verify_request_auth(headers, &state.db_config, &*state.token_service).await
 }

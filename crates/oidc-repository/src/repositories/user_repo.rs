@@ -4,8 +4,29 @@ use oidc_core::OidcError;
 use oidc_core::models::User;
 use uuid::Uuid;
 
+/// Escape special LIKE pattern characters (`%`, `_`, `\`) in a search string.
+fn escape_like(s: &str) -> String {
+    let mut escaped = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '%' | '_' | '\\' => {
+                escaped.push('\\');
+                escaped.push(ch);
+            }
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
 /// PostgreSQL implementation of the User repository.
 pub struct UserRepo;
+
+/// Column list for user SELECT queries (order must match map_row indices).
+const USER_COLUMNS: &str = r#"
+    id, realm_id, email, email_verified, username, password_hash,
+    given_name, family_name, phone_number, locale, attributes, enabled, deleted_at
+"#;
 
 impl UserRepo {
     /// Find a user by its primary key.
@@ -14,12 +35,7 @@ impl UserRepo {
         conn: &mut Connection,
         id: Uuid,
     ) -> Result<Option<User>, OidcError> {
-        let sql = r#"
-            SELECT id, realm_id, email, email_verified, username, password_hash,
-                   given_name, family_name, enabled
-            FROM users
-            WHERE id = $1 AND deleted_at IS NULL
-        "#;
+        let sql = &format!("SELECT {USER_COLUMNS} FROM users WHERE id = $1 AND deleted_at IS NULL");
         let row = conn
             .query_one_params(sql, &[&id])
             .await
@@ -34,12 +50,9 @@ impl UserRepo {
         realm_id: Uuid,
         email: &str,
     ) -> Result<Option<User>, OidcError> {
-        let sql = r#"
-            SELECT id, realm_id, email, email_verified, username, password_hash,
-                   given_name, family_name, enabled
-            FROM users
-            WHERE realm_id = $1 AND email = $2 AND deleted_at IS NULL
-        "#;
+        let sql = &format!(
+            "SELECT {USER_COLUMNS} FROM users WHERE realm_id = $1 AND email = $2 AND deleted_at IS NULL"
+        );
         let row = conn
             .query_one_params(sql, &[&realm_id, &email])
             .await
@@ -52,8 +65,8 @@ impl UserRepo {
         let sql = r#"
             INSERT INTO users (
                 id, realm_id, email, email_verified, username, password_hash,
-                given_name, family_name, enabled
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                given_name, family_name, phone_number, locale, attributes, enabled
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         "#;
         conn.execute_params(
             sql,
@@ -66,6 +79,9 @@ impl UserRepo {
                 &entity.password_hash,
                 &entity.given_name,
                 &entity.family_name,
+                &entity.phone_number,
+                &entity.locale,
+                &entity.attributes,
                 &entity.enabled,
             ],
         )
@@ -84,9 +100,12 @@ impl UserRepo {
                 password_hash = $4,
                 given_name = $5,
                 family_name = $6,
-                enabled = $7,
+                phone_number = $7,
+                locale = $8,
+                attributes = $9,
+                enabled = $10,
                 updated_at = NOW()
-            WHERE id = $8 AND deleted_at IS NULL
+            WHERE id = $11 AND deleted_at IS NULL
         "#;
         conn.execute_params(
             sql,
@@ -97,6 +116,9 @@ impl UserRepo {
                 &entity.password_hash,
                 &entity.given_name,
                 &entity.family_name,
+                &entity.phone_number,
+                &entity.locale,
+                &entity.attributes,
                 &entity.enabled,
                 &entity.id,
             ],
@@ -124,78 +146,51 @@ impl UserRepo {
         limit: i64,
         offset: i64,
     ) -> Result<Vec<User>, OidcError> {
-        match (realm_id, search) {
-            (Some(rid), Some(s)) => {
-                let pattern = format!("%{}%", s);
-                let sql = r#"
-                    SELECT id, realm_id, email, email_verified, username, password_hash, given_name, family_name, enabled
-                    FROM users
-                    WHERE deleted_at IS NULL AND realm_id = $1 AND (email ILIKE $2 OR username ILIKE $2 OR given_name ILIKE $2 OR family_name ILIKE $2)
-                    ORDER BY created_at DESC LIMIT $3 OFFSET $4
-                "#;
-                let result = conn
-                    .query_params(sql, &[&rid, &pattern, &limit, &offset])
-                    .await
-                    .map_err(mapper::pg_err)?;
-                result
-                    .into_rows()
-                    .iter()
-                    .map(|r| Self::map_row(r))
-                    .collect::<Result<Vec<_>, _>>()
-            }
-            (Some(rid), None) => {
-                let sql = r#"
-                    SELECT id, realm_id, email, email_verified, username, password_hash, given_name, family_name, enabled
-                    FROM users
-                    WHERE deleted_at IS NULL AND realm_id = $1
-                    ORDER BY created_at DESC LIMIT $2 OFFSET $3
-                "#;
-                let result = conn
-                    .query_params(sql, &[&rid, &limit, &offset])
-                    .await
-                    .map_err(mapper::pg_err)?;
-                result
-                    .into_rows()
-                    .iter()
-                    .map(|r| Self::map_row(r))
-                    .collect::<Result<Vec<_>, _>>()
-            }
-            (None, Some(s)) => {
-                let pattern = format!("%{}%", s);
-                let sql = r#"
-                    SELECT id, realm_id, email, email_verified, username, password_hash, given_name, family_name, enabled
-                    FROM users
-                    WHERE deleted_at IS NULL AND (email ILIKE $1 OR username ILIKE $1 OR given_name ILIKE $1 OR family_name ILIKE $1)
-                    ORDER BY created_at DESC LIMIT $2 OFFSET $3
-                "#;
-                let result = conn
-                    .query_params(sql, &[&pattern, &limit, &offset])
-                    .await
-                    .map_err(mapper::pg_err)?;
-                result
-                    .into_rows()
-                    .iter()
-                    .map(|r| Self::map_row(r))
-                    .collect::<Result<Vec<_>, _>>()
-            }
-            (None, None) => {
-                let sql = r#"
-                    SELECT id, realm_id, email, email_verified, username, password_hash, given_name, family_name, enabled
-                    FROM users
-                    WHERE deleted_at IS NULL
-                    ORDER BY created_at DESC LIMIT $1 OFFSET $2
-                "#;
-                let result = conn
-                    .query_params(sql, &[&limit, &offset])
-                    .await
-                    .map_err(mapper::pg_err)?;
-                result
-                    .into_rows()
-                    .iter()
-                    .map(|r| Self::map_row(r))
-                    .collect::<Result<Vec<_>, _>>()
-            }
+        let mut where_clauses = vec!["deleted_at IS NULL".to_string()];
+        let mut param_idx = 1usize;
+
+        if realm_id.is_some() {
+            where_clauses.push(format!("realm_id = ${}", param_idx));
+            param_idx += 1;
         }
+        if search.is_some() {
+            where_clauses.push(format!(
+                "(email ILIKE ${} OR username ILIKE ${} OR given_name ILIKE ${} OR family_name ILIKE ${})",
+                param_idx, param_idx, param_idx, param_idx
+            ));
+            param_idx += 1;
+        }
+
+        let where_sql = where_clauses.join(" AND ");
+        let limit_idx = param_idx;
+        let offset_idx = param_idx + 1;
+
+        let sql = format!(
+            "SELECT {USER_COLUMNS} FROM users WHERE {where_sql} ORDER BY created_at DESC LIMIT ${limit_idx} OFFSET ${offset_idx}"
+        );
+
+        let realm_id_ref = realm_id.as_ref();
+        let pattern = search.map(|s| format!("%{}%", escape_like(s)));
+
+        let mut params: Vec<&dyn wasi_pg_client::pg_types::ToSql> = Vec::new();
+        if let Some(rid) = realm_id_ref {
+            params.push(rid);
+        }
+        if let Some(ref p) = pattern {
+            params.push(p);
+        }
+        params.push(&limit);
+        params.push(&offset);
+
+        let result = conn
+            .query_params(&sql, &params)
+            .await
+            .map_err(mapper::pg_err)?;
+        result
+            .into_rows()
+            .iter()
+            .map(|r| Self::map_row(r))
+            .collect::<Result<Vec<_>, _>>()
     }
 
     /// Count users in a realm.
@@ -204,16 +199,24 @@ impl UserRepo {
         conn: &mut Connection,
         realm_id: Option<Uuid>,
     ) -> Result<i64, OidcError> {
-        let sql = match realm_id {
-            Some(_) => "SELECT COUNT(*) FROM users WHERE deleted_at IS NULL AND realm_id = $1",
-            None => "SELECT COUNT(*) FROM users WHERE deleted_at IS NULL",
-        };
-        let result = match realm_id {
+        let mut where_clauses = vec!["deleted_at IS NULL".to_string()];
+        let param_idx = 1usize;
+
+        if realm_id.is_some() {
+            where_clauses.push(format!("realm_id = ${}", param_idx));
+        }
+
+        let where_sql = where_clauses.join(" AND ");
+        let sql = format!("SELECT COUNT(*) FROM users WHERE {where_sql}");
+
+        let realm_id_ref = realm_id.as_ref();
+
+        let result = match realm_id_ref {
             Some(rid) => conn
-                .query_params(sql, &[&rid])
+                .query_params(&sql, &[rid])
                 .await
                 .map_err(mapper::pg_err)?,
-            None => conn.query(sql).await.map_err(mapper::pg_err)?,
+            None => conn.query(&sql).await.map_err(mapper::pg_err)?,
         };
         let row = result
             .into_rows()
@@ -233,7 +236,11 @@ impl UserRepo {
             password_hash: mapper::opt_string(row, 5)?,
             given_name: mapper::opt_string(row, 6)?,
             family_name: mapper::opt_string(row, 7)?,
-            enabled: mapper::bool_(row, 8)?,
+            phone_number: mapper::opt_string(row, 8)?,
+            locale: mapper::opt_string(row, 9)?,
+            attributes: row.get::<serde_json::Value>(10).map_err(mapper::pg_err)?,
+            enabled: mapper::bool_(row, 11)?,
+            deleted_at: mapper::opt_datetime(row, 12)?,
         })
     }
 }
