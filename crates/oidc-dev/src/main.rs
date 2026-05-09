@@ -108,8 +108,9 @@ async fn cmd_start() -> Result<()> {
         s.db_url = db_url.clone();
     }
 
+    let _proxy_port = { let s = state.lock().await; s.proxy_port };
     run_migrations(&db_url).await?;
-    seed_data(&db_url).await?;
+    seed_data(&db_url, 3000).await?;
     build_frontend().await?;
     start_backend(&state, &db_url).await?;
     start_frontend_dev(&state).await?;
@@ -153,7 +154,7 @@ async fn cmd_db_only() -> Result<()> {
 
     let db_url = start_database(&state).await?;
     run_migrations(&db_url).await?;
-    seed_data(&db_url).await?;
+    seed_data(&db_url, 3000).await?;
 
     info!("═══════════════════════════════════════════════════════════════");
     info!("  Database ready: {}", db_url);
@@ -450,7 +451,7 @@ async fn run_migrations(db_url: &str) -> Result<()> {
 
 // ─── Seed Data ──────────────────────────────────────────────────────────────
 
-async fn seed_data(db_url: &str) -> Result<()> {
+async fn seed_data(db_url: &str, proxy_port: u16) -> Result<()> {
     info!("Seeding dev data...");
 
     let config = wasi_pg_client::Config::from_uri(db_url).context("invalid database URL")?;
@@ -530,10 +531,8 @@ async fn seed_data(db_url: &str) -> Result<()> {
         if rows.is_empty() {
             let id = oidc_core::utils::generate_uuid_v7();
             let redirect_uris = serde_json::json!([
-                "http://localhost:3000/callback",
-                "http://localhost:3000/admin/callback",
-                "http://localhost:3008/callback",
-                "http://localhost:3008/admin/callback"
+                format!("http://localhost:{}/callback", proxy_port),
+                format!("http://localhost:{}/admin/callback", proxy_port)
             ]);
             let scopes = serde_json::json!(["openid", "profile", "email"]);
             let grant_types = serde_json::json!(["authorization_code", "refresh_token"]);

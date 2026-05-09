@@ -22,6 +22,7 @@ async-trait = { workspace = true }
 rand = { version = "0.8", features = ["getrandom"] }
 getrandom = { workspace = true }
 urlencoding = "2"
+serde_urlencoded = "0.7"
 hex = "0.4"
 url = "2"
 wasi-pg-client = { workspace = true }

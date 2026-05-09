@@ -50,6 +50,30 @@ class AuthService {
     return this.tokens.access_token;
   }
 
+  async loginWithPassword(email, password) {
+    const response = await fetch(`${this.config.authority}/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, client_id: this.config.client_id }),
+    });
+
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error_description || body.error || `Login failed: ${response.status}`);
+    }
+
+    const data = await response.json();
+    this.tokens = {
+      access_token: data.access_token,
+      refresh_token: data.refresh_token,
+      id_token: data.id_token,
+      expires_in: data.expires_in,
+      expires_at: Date.now() + data.expires_in * 1000,
+    };
+    this._saveTokens();
+    return data;
+  }
+
   async login() {
     const state = this._randomString(32);
     const { verifier, challenge } = await this._generatePKCE();
