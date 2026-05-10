@@ -56,3 +56,37 @@ pub enum OidcError {
     #[error("internal error: {0}")]
     Internal(String),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_oidc_error_display() {
+        assert_eq!(
+            format!("{}", OidcError::AuthenticationFailed("bad creds".into())),
+            "authentication failed: bad creds"
+        );
+        assert_eq!(
+            format!("{}", OidcError::InvalidInput("missing field".into())),
+            "invalid input: missing field"
+        );
+        assert_eq!(
+            format!("{}", OidcError::NotFound("user".into())),
+            "not found: user"
+        );
+        assert_eq!(format!("{}", OidcError::TokenExpired), "token expired");
+        assert_eq!(
+            format!("{}", OidcError::Internal("oops".into())),
+            "internal error: oops"
+        );
+    }
+
+    #[test]
+    fn test_oidc_error_from_string() {
+        let msg = String::from("something broke");
+        // OidcError::Internal wraps a String, so we construct it directly
+        let err = OidcError::Internal(msg.clone());
+        assert!(format!("{}", err).contains(&msg));
+    }
+}

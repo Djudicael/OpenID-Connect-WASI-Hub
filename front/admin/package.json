@@ -6,14 +6,18 @@
   "scripts": {
     "dev": "node dev.js",
     "build": "node buildJs.js",
-    "build:watch": "nodemon --watch app --watch style buildJs.js"
+    "build:watch": "nodemon --watch app --watch style buildJs.js",
+    "e2e": "playwright test",
+    "e2e:headed": "playwright test --headed"
   },
   "dependencies": {
     "esbuild": "^0.25",
     "lit-html": "^3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.44",
     "express": "^4",
-    "nodemon": "^3"
+    "nodemon": "^3",
+    "playwright": "^1.44"
   }
 }

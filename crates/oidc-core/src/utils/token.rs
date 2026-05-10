@@ -75,4 +75,38 @@ mod tests {
         let h = compute_c_hash("test_code");
         assert!(!h.is_empty());
     }
+
+    #[test]
+    fn test_opaque_token_uniqueness() {
+        let mut tokens = std::collections::HashSet::new();
+        for _ in 0..100 {
+            let token = generate_opaque_token().unwrap();
+            assert!(tokens.insert(token), "duplicate token generated");
+        }
+        assert_eq!(tokens.len(), 100);
+    }
+
+    #[test]
+    fn test_sha2_256_hex_known_value() {
+        // SHA-256("hello") = 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+        let h = sha2_256_hex("hello");
+        assert_eq!(
+            h,
+            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+        );
+    }
+
+    #[test]
+    fn test_at_hash_deterministic() {
+        let h1 = compute_at_hash("access_token_123");
+        let h2 = compute_at_hash("access_token_123");
+        assert_eq!(h1, h2, "at_hash should be deterministic for same input");
+    }
+
+    #[test]
+    fn test_c_hash_deterministic() {
+        let h1 = compute_c_hash("auth_code_456");
+        let h2 = compute_c_hash("auth_code_456");
+        assert_eq!(h1, h2, "c_hash should be deterministic for same input");
+    }
 }

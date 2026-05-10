@@ -42,6 +42,7 @@ getrandom = { workspace = true }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "net", "signal"] }
 axum = { workspace = true, features = ["tokio", "http1"] }
+wasi-pg-client = { workspace = true, features = ["tokio-transport", "uuid", "chrono", "serde-json"] }
 
 [dev-dependencies]
 tokio = { workspace = true }

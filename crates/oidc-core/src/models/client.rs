@@ -42,6 +42,52 @@ pub enum ClientType {
     Public,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_client() -> Client {
+        Client {
+            id: Uuid::now_v7(),
+            realm_id: Uuid::now_v7(),
+            client_id: "my-app".into(),
+            client_type: ClientType::Confidential,
+            client_secret_hash: Some("$argon2id$...".into()),
+            name: "My App".into(),
+            redirect_uris: vec!["https://example.com/callback".into()],
+            allowed_scopes: vec!["openid".into()],
+            allowed_grant_types: vec!["authorization_code".into()],
+            pkce_required: true,
+            enabled: true,
+            deleted_at: None,
+        }
+    }
+
+    #[test]
+    fn test_client_validate_valid() {
+        let client = valid_client();
+        assert!(client.validate().is_ok());
+    }
+
+    #[test]
+    fn test_client_validate_empty_client_id() {
+        let mut client = valid_client();
+        client.client_id = "".into();
+        let err = client.validate().unwrap_err();
+        assert!(matches!(err, OidcError::InvalidInput(ref s) if s.contains("client_id")));
+    }
+
+    #[test]
+    fn test_client_validate_empty_name() {
+        // The current validate() only checks client_id and redirect_urIs,
+        // so an empty name should still pass validation.
+        let mut client = valid_client();
+        client.name = "".into();
+        // Name is not validated by validate(), so this should succeed
+        assert!(client.validate().is_ok());
+    }
+}
+
 impl Client {
     /// Validate the client fields.
     pub fn validate(&self) -> Result<(), OidcError> {

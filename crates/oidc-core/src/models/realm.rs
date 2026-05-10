@@ -3,6 +3,36 @@ use uuid::Uuid;
 
 use crate::OidcError;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_realm() -> Realm {
+        Realm {
+            id: Uuid::now_v7(),
+            name: "production".into(),
+            display_name: "Production".into(),
+            enabled: true,
+            config: serde_json::Value::Object(serde_json::Map::new()),
+            deleted_at: None,
+        }
+    }
+
+    #[test]
+    fn test_realm_validate_valid() {
+        let realm = valid_realm();
+        assert!(realm.validate().is_ok());
+    }
+
+    #[test]
+    fn test_realm_validate_empty_name() {
+        let mut realm = valid_realm();
+        realm.name = "".into();
+        let err = realm.validate().unwrap_err();
+        assert!(matches!(err, OidcError::InvalidInput(ref s) if s.contains("empty")));
+    }
+}
+
 /// A realm (tenant) in the OIDC hub.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Realm {

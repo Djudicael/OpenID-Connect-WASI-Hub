@@ -67,4 +67,40 @@ mod tests {
         assert!(!constant_time_eq(b"hello", b"hella"));
         assert!(!constant_time_eq(b"short", b"longer"));
     }
+
+    #[test]
+    fn test_pkce_verifier_length() {
+        let verifier = generate_code_verifier().unwrap();
+        assert_eq!(
+            verifier.len(),
+            128,
+            "code verifier should be 128 characters"
+        );
+    }
+
+    #[test]
+    fn test_pkce_challenge_length() {
+        let verifier = generate_code_verifier().unwrap();
+        let challenge = s256_challenge(&verifier);
+        // SHA-256 = 256 bits; base64url no-pad = ceil(256/6) = 43 chars
+        assert_eq!(
+            challenge.len(),
+            43,
+            "S256 challenge should be 43 base64url chars"
+        );
+    }
+
+    #[test]
+    fn test_pkce_wrong_verifier() {
+        let verifier = generate_code_verifier().unwrap();
+        let challenge = s256_challenge(&verifier);
+        assert!(!verify_s256("wrong_verifier", &challenge));
+    }
+
+    #[test]
+    fn test_pkce_empty_verifier() {
+        let verifier = generate_code_verifier().unwrap();
+        let challenge = s256_challenge(&verifier);
+        assert!(!verify_s256("", &challenge));
+    }
 }

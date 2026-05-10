@@ -3,6 +3,59 @@ use uuid::Uuid;
 
 use crate::OidcError;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_user() -> User {
+        User {
+            id: Uuid::now_v7(),
+            realm_id: Uuid::now_v7(),
+            email: "alice@example.com".into(),
+            email_verified: true,
+            username: Some("alice".into()),
+            password_hash: Some("$argon2id$...".into()),
+            given_name: Some("Alice".into()),
+            family_name: Some("Smith".into()),
+            phone_number: None,
+            locale: Some("en".into()),
+            attributes: serde_json::Value::Object(serde_json::Map::new()),
+            enabled: true,
+            deleted_at: None,
+        }
+    }
+
+    #[test]
+    fn test_user_validate_valid() {
+        let user = valid_user();
+        assert!(user.validate().is_ok());
+    }
+
+    #[test]
+    fn test_user_validate_empty_email() {
+        let mut user = valid_user();
+        user.email = "".into();
+        let err = user.validate().unwrap_err();
+        assert!(matches!(err, OidcError::InvalidInput(ref s) if s.contains("empty")));
+    }
+
+    #[test]
+    fn test_user_validate_no_at_sign() {
+        let mut user = valid_user();
+        user.email = "noemail".into();
+        let err = user.validate().unwrap_err();
+        assert!(matches!(err, OidcError::InvalidInput(_)));
+    }
+
+    #[test]
+    fn test_user_validate_no_dot() {
+        let mut user = valid_user();
+        user.email = "test@com".into();
+        let err = user.validate().unwrap_err();
+        assert!(matches!(err, OidcError::InvalidInput(_)));
+    }
+}
+
 /// A user within a realm.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct User {

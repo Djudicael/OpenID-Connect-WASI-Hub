@@ -510,14 +510,14 @@ async fn seed_data(db_url: &str, proxy_port: u16) -> Result<()> {
             let id = oidc_core::utils::generate_uuid_v7();
             let hasher = oidc_core::traits::hasher::Argon2idHasher::new();
             let password_hash = hasher
-                .hash("admin")
+                .hash("admin123")
                 .map_err(|e| anyhow::anyhow!("hash failed: {e}"))?;
             conn.execute_params(
                 r#"INSERT INTO users (id, realm_id, email, email_verified, username, password_hash, given_name, family_name, enabled)
                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
                 &[&id, &realm_id, &"admin@localhost", &true, &"admin", &Some(password_hash), &Some("Admin"), &Some("User"), &true],
             ).await?;
-            info!("Created admin user (admin@localhost / admin)");
+            info!("Created admin user (admin@localhost / admin123)");
             id
         } else {
             let row = rows.into_iter().next().unwrap();
@@ -672,6 +672,11 @@ async fn start_backend(state: &Arc<Mutex<DevState>>, db_url: &str) -> Result<()>
 
     info!("Starting backend server on port {port}...");
 
+    // Generate a deterministic 32-byte hex encryption key for dev
+    // Not for production — fixed seed, just for local development
+    let encryption_key =
+        "2a3131371e4b5559606b70777e858f969da4acb3babec5ccc3cdd5dddbe3e9f0".to_string();
+
     let mut cmd = Command::new("cargo");
     cmd.arg("run")
         .arg("-p")
@@ -682,13 +687,20 @@ async fn start_backend(state: &Arc<Mutex<DevState>>, db_url: &str) -> Result<()>
         .env("OIDC_SERVER_PORT", port.to_string())
         .env("OIDC_ISSUER", format!("http://localhost:{proxy_port}"))
         .env("OIDC_SERVER_BIND_ADDRESS", BIND_ADDRESS)
-        .stdout(Stdio::null())
+        .env("OIDC_ENCRYPTION_KEY", &encryption_key)
+        .env(
+            "OIDC_CORS_ORIGINS",
+            format!("http://localhost:{proxy_port}"),
+        )
+        .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
     let mut child = cmd.spawn().context("failed to start backend")?;
 
     let stderr = child.stderr.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
     tokio::spawn(stream_logs("backend", stderr));
+    tokio::spawn(stream_logs("backend-out", stdout));
 
     let health_url = format!("http://127.0.0.1:{port}/health");
     wait_for_http(&health_url, 30).await?;
@@ -789,11 +801,11 @@ const FRONTEND_PORT = {frontend_port};
 const BIND_ADDRESS = '{bind}';
 
 const server = http.createServer((req, res) => {{
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key');
-
     if (req.method === 'OPTIONS') {{
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key, X-CSRF-Token');
+        res.setHeader('Access-Control-Max-Age', '86400');
         res.writeHead(200);
         res.end();
         return;
@@ -801,12 +813,22 @@ const server = http.createServer((req, res) => {{
 
     const isApi = req.url.startsWith('/api/') || req.url.startsWith('/oidc/') || req.url.startsWith('/.well-known/') || req.url.startsWith('/health');
     const target = isApi ? `http://127.0.0.1:${{BACKEND_PORT}}` : `http://127.0.0.1:${{FRONTEND_PORT}}`;
+    console.log(`[proxy] ${{req.method}} ${{req.url}} -> ${{isApi ? 'BACKEND' : 'FRONTEND'}} (${{target}})`);
 
     proxy.web(req, res, {{ target }}, (err) => {{
         console.error('Proxy error:', err.message);
-        res.writeHead(502);
-        res.end('Bad Gateway');
+        if (!res.headersSent) {{
+            res.writeHead(502);
+            res.end('Bad Gateway');
+        }}
     }});
+}});
+
+// Add CORS headers to every proxied response (before headers are sent to client)
+proxy.on('proxyRes', (proxyRes, req, res) => {{
+    proxyRes.headers['access-control-allow-origin'] = '*';
+    proxyRes.headers['access-control-allow-methods'] = 'GET, POST, PUT, DELETE, OPTIONS';
+    proxyRes.headers['access-control-allow-headers'] = 'Content-Type, Authorization, X-API-Key, X-CSRF-Token';
 }});
 
 server.on('upgrade', (req, socket, head) => {{
@@ -846,8 +868,10 @@ server.listen(PROXY_PORT, BIND_ADDRESS, () => {{
 
     let mut child = cmd.spawn().context("failed to start proxy")?;
 
+    let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
     tokio::spawn(stream_logs("proxy", stderr));
+    tokio::spawn(stream_logs("proxy-out", stdout));
 
     let url = format!("http://127.0.0.1:{proxy_port}");
     wait_for_http(&url, 10).await?;
@@ -916,12 +940,12 @@ async fn wait_for_http(url: &str, timeout_secs: u64) -> Result<()> {
     }
 }
 
-async fn stream_logs(name: &str, stderr: tokio::process::ChildStderr) {
-    let reader = BufReader::new(stderr);
+async fn stream_logs(name: &str, output: impl tokio::io::AsyncRead + Unpin) {
+    let reader = BufReader::new(output);
     let mut lines = reader.lines();
 
     while let Ok(Some(line)) = lines.next_line().await {
-        debug!("[{name}] {line}");
+        info!("[{name}] {line}");
     }
 }
 

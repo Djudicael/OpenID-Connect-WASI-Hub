@@ -22,5 +22,8 @@ chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
 wasi-pg-client = { workspace = true }
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+wasi-pg-client = { workspace = true, features = ["tokio-transport", "uuid", "chrono", "serde-json"] }
+
 [dev-dependencies]
 tokio = { workspace = true }

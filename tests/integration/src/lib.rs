@@ -14,10 +14,19 @@
 pub mod harness;
 
 #[cfg(test)]
+pub mod helpers;
+
+#[cfg(test)]
+pub mod apikey_tests;
+
+#[cfg(test)]
 pub mod db_tests;
 
 #[cfg(test)]
 pub mod oidc_tests;
+
+#[cfg(test)]
+pub mod security_tests;
 
 #[cfg(test)]
 mod http_tests {
