@@ -779,3 +779,268 @@ async fn test_migration_idempotency() {
     assert!(table_names.contains(&"authorization_codes".to_string()));
     assert!(table_names.contains(&"_migrations".to_string()));
 }
+
+// ===================================================================
+// ON DELETE Cascade Tests
+// ===================================================================
+
+#[tokio::test]
+async fn test_cascade_delete_sessions_on_user_delete() {
+    let mut conn = test_conn().await;
+    clean_database(&mut conn).await.unwrap();
+
+    let realm_repo = RealmRepo;
+    let realm = test_realm("cascade-test-realm", "Cascade Test");
+    realm_repo.create(&mut conn, &realm).await.unwrap();
+
+    let user_repo = UserRepo;
+    let user = test_user(realm.id, "cascade@example.com");
+    user_repo.create(&mut conn, &user).await.unwrap();
+
+    let client_repo = ClientRepo;
+    let client = test_client(realm.id, "cascade-client", "Cascade Client");
+    client_repo.create(&mut conn, &client).await.unwrap();
+
+    let now = chrono::Utc::now();
+    let session_repo = SessionRepo;
+    let session = Session {
+        id: Uuid::new_v4(),
+        user_id: user.id,
+        realm_id: realm.id,
+        client_id: client.id,
+        grant_type: "authorization_code".to_string(),
+        access_token_hash: "cascade_hash".to_string(),
+        refresh_token_hash: Some("cascade_refresh_hash".to_string()),
+        id_token_jti: None,
+        scope: vec!["openid".to_string()],
+        revoked: false,
+        expires_at: now + chrono::Duration::minutes(15),
+        refresh_expires_at: Some(now + chrono::Duration::days(7)),
+        created_at: now,
+        last_used_at: None,
+        token_family_id: None,
+        previous_session_id: None,
+        rotated_at: None,
+        reused_at: None,
+        family_revoked: false,
+    };
+    session_repo.create(&mut conn, &session).await.unwrap();
+
+    // Verify the session exists
+    let found = session_repo
+        .find_by_id(&mut conn, session.id)
+        .await
+        .unwrap();
+    assert!(found.is_some(), "session should exist before user deletion");
+
+    // Delete the user (hard delete — bypass soft-delete to trigger cascade)
+    conn.execute_params("DELETE FROM users WHERE id = $1", &[&user.id])
+        .await
+        .expect("failed to delete user");
+
+    // Verify the session is also deleted (or revoked)
+    // With ON DELETE CASCADE, the session row should be gone entirely
+    let found_after = session_repo
+        .find_by_id(&mut conn, session.id)
+        .await
+        .unwrap();
+    assert!(
+        found_after.is_none(),
+        "session should be deleted (cascade) after user is deleted"
+    );
+}
+
+// ===================================================================
+// Unique Constraint Violation
+// ===================================================================
+
+#[tokio::test]
+async fn test_unique_constraint_violation_surface() {
+    let mut conn = test_conn().await;
+    clean_database(&mut conn).await.unwrap();
+
+    let realm_repo = RealmRepo;
+    let realm1 = test_realm("test-realm", "Test Realm");
+    realm_repo.create(&mut conn, &realm1).await.unwrap();
+
+    // Try to create another realm with the same name
+    let realm2 = test_realm("test-realm", "Another Test Realm");
+    let result = realm_repo.create(&mut conn, &realm2).await;
+
+    // The error should be OidcError::Conflict (not OidcError::Internal)
+    assert!(
+        result.is_err(),
+        "creating a realm with a duplicate name should fail"
+    );
+    let err = result.unwrap_err();
+    assert_eq!(
+        err,
+        oidc_core::OidcError::Conflict(err.to_string()),
+        "unique constraint violation should surface as OidcError::Conflict, got: {err:?}"
+    );
+}
+
+// ===================================================================
+// Expired Session Cleanup
+// ===================================================================
+
+#[tokio::test]
+async fn test_expired_session_cleanup() {
+    let mut conn = test_conn().await;
+    clean_database(&mut conn).await.unwrap();
+
+    let realm_repo = RealmRepo;
+    let realm = test_realm("session-cleanup-realm", "Session Cleanup");
+    realm_repo.create(&mut conn, &realm).await.unwrap();
+
+    let user_repo = UserRepo;
+    let user = test_user(realm.id, "cleanup-session@example.com");
+    user_repo.create(&mut conn, &user).await.unwrap();
+
+    let client_repo = ClientRepo;
+    let client = test_client(realm.id, "session-cleanup-client", "Session Cleanup Client");
+    client_repo.create(&mut conn, &client).await.unwrap();
+
+    let now = chrono::Utc::now();
+    let session_repo = SessionRepo;
+
+    // Create a session with expires_at in the past
+    let expired_session = Session {
+        id: Uuid::new_v4(),
+        user_id: user.id,
+        realm_id: realm.id,
+        client_id: client.id,
+        grant_type: "authorization_code".to_string(),
+        access_token_hash: "expired_session_hash".to_string(),
+        refresh_token_hash: Some("expired_refresh_hash".to_string()),
+        id_token_jti: None,
+        scope: vec!["openid".to_string()],
+        revoked: false,
+        expires_at: now - chrono::Duration::minutes(5), // expired 5 minutes ago
+        refresh_expires_at: Some(now - chrono::Duration::hours(1)),
+        created_at: now - chrono::Duration::hours(1),
+        last_used_at: None,
+        token_family_id: None,
+        previous_session_id: None,
+        rotated_at: None,
+        reused_at: None,
+        family_revoked: false,
+    };
+    session_repo
+        .create(&mut conn, &expired_session)
+        .await
+        .unwrap();
+
+    // Verify the expired session exists
+    let found = session_repo
+        .find_by_id(&mut conn, expired_session.id)
+        .await
+        .unwrap();
+    assert!(
+        found.is_some(),
+        "expired session should exist before cleanup"
+    );
+
+    // Call cleanup_expired
+    let deleted = session_repo.cleanup_expired(&mut conn).await.unwrap();
+    assert!(
+        deleted > 0,
+        "cleanup_expired should delete at least one session"
+    );
+
+    // Verify the expired session is deleted
+    let found_after = session_repo
+        .find_by_id(&mut conn, expired_session.id)
+        .await
+        .unwrap();
+    assert!(
+        found_after.is_none(),
+        "expired session should be deleted after cleanup"
+    );
+}
+
+// ===================================================================
+// Auth Code Cleanup
+// ===================================================================
+
+#[tokio::test]
+async fn test_expired_auth_code_cleanup() {
+    let mut conn = test_conn().await;
+    clean_database(&mut conn).await.unwrap();
+
+    let realm_repo = RealmRepo;
+    let realm = test_realm("authcode-cleanup-realm", "AuthCode Cleanup");
+    realm_repo.create(&mut conn, &realm).await.unwrap();
+
+    let user_repo = UserRepo;
+    let user = test_user(realm.id, "authcode-cleanup@example.com");
+    user_repo.create(&mut conn, &user).await.unwrap();
+
+    let client_repo = ClientRepo;
+    let client = test_client(
+        realm.id,
+        "authcode-cleanup-client",
+        "AuthCode Cleanup Client",
+    );
+    client_repo.create(&mut conn, &client).await.unwrap();
+
+    let auth_code_repo = AuthCodeRepo;
+
+    // Create an auth code with expires_at in the past
+    // Note: The code is hashed on insert, so we need to use the raw code for lookup
+    let raw_code = "expired_auth_code_123";
+    let expired_code = AuthCode {
+        id: Uuid::new_v4(),
+        code: raw_code.to_string(),
+        client_id: client.id,
+        user_id: user.id,
+        realm_id: realm.id,
+        redirect_uri: "https://app.example.com/callback".to_string(),
+        scope: vec!["openid".to_string()],
+        code_challenge: "challenge".to_string(),
+        code_challenge_method: CodeChallengeMethod::S256,
+        nonce: None,
+        used: false,
+        expires_at: Utc::now() - chrono::Duration::minutes(5), // expired 5 minutes ago
+    };
+    auth_code_repo
+        .create(&mut conn, &expired_code)
+        .await
+        .unwrap();
+
+    // Verify the expired auth code exists (it won't be found by find_by_code because it's expired)
+    // but we can check directly in the database
+    let raw = conn
+        .query_params(
+            "SELECT id FROM authorization_codes WHERE id = $1",
+            &[&expired_code.id],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        raw.len(),
+        1,
+        "expired auth code should exist before cleanup"
+    );
+
+    // Call cleanup_expired
+    let deleted = auth_code_repo.cleanup_expired(&mut conn).await.unwrap();
+    assert!(
+        deleted > 0,
+        "cleanup_expired should delete at least one auth code"
+    );
+
+    // Verify the expired auth code is deleted
+    let raw_after = conn
+        .query_params(
+            "SELECT id FROM authorization_codes WHERE id = $1",
+            &[&expired_code.id],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        raw_after.len(),
+        0,
+        "expired auth code should be deleted after cleanup"
+    );
+}

@@ -1,0 +1,226 @@
+# Google Cloud Build CI/CD pipeline for OpenID Connect WASI Hub
+#
+# Required substitutions:
+#   _BUCKET_NAME: GCS bucket for Cargo cache (e.g. "my-project-cloudbuild-cache")
+#
+# Usage:
+#   gcloud builds submit --config=cloudbuild.yaml \
+#     --substitutions=_BUCKET_NAME=my-project-cloudbuild-cache
+
+timeout: 1200s
+
+substitutions:
+  _BUCKET_NAME: openid-connect-wasi-cloudbuild-cache
+  _RUST_IMAGE: rust:1.85
+  _NODE_IMAGE: node:20-bookworm
+  _POSTGRES_IMAGE: postgres:16
+
+options:
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY
+
+# ---------------------------------------------------------------------------
+# Volume definitions shared across steps for Cargo cache
+# ---------------------------------------------------------------------------
+volumes:
+  - name: cargo-registry
+    path: /builder/home/.cargo/registry
+  - name: cargo-git
+    path: /builder/home/.cargo/git
+  - name: cargo-target
+    path: /workspace/target
+
+steps:
+  # =========================================================================
+  # Step 0: Restore cached Cargo registry, git, and target from GCS
+  # =========================================================================
+  - name: gcr.io/cloud-builders/gsutil
+    id: restore-cache
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        echo "==> Restoring Cargo cache from gs://${_BUCKET_NAME}/cargo-cache/ ..."
+        mkdir -p /builder/home/.cargo/registry /builder/home/.cargo/git /workspace/target
+
+        if gsutil -q stat "gs://${_BUCKET_NAME}/cargo-cache/registry.tar.gz"; then
+          echo "    Restoring cargo registry..."
+          (gsutil cat "gs://${_BUCKET_NAME}/cargo-cache/registry.tar.gz" | tar xzf - -C /builder/home/.cargo/registry) || echo "    Registry cache miss — continuing fresh"
+        else
+          echo "    No cached cargo registry found — starting fresh"
+        fi
+
+        if gsutil -q stat "gs://${_BUCKET_NAME}/cargo-cache/git.tar.gz"; then
+          echo "    Restoring cargo git cache..."
+          (gsutil cat "gs://${_BUCKET_NAME}/cargo-cache/git.tar.gz" | tar xzf - -C /builder/home/.cargo/git) || echo "    Git cache miss — continuing fresh"
+        else
+          echo "    No cached cargo git found — starting fresh"
+        fi
+
+        if gsutil -q stat "gs://${_BUCKET_NAME}/cargo-cache/target.tar.gz"; then
+          echo "    Restoring target directory..."
+          (gsutil cat "gs://${_BUCKET_NAME}/cargo-cache/target.tar.gz" | tar xzf - -C /workspace/target) || echo "    Target cache miss — continuing fresh"
+        else
+          echo "    No cached target directory found — starting fresh"
+        fi
+
+  # =========================================================================
+  # Step 1: Install WASI target + rustfmt + clippy (warm-up)
+  # =========================================================================
+  - name: ${_RUST_IMAGE}
+    id: setup-toolchain
+    waitFor: ["restore-cache"]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        echo "==> Installing WASI Preview 2 target..."
+        rustup target add wasm32-wasip2
+        echo "==> Ensuring rustfmt and clippy are installed..."
+        rustup component add rustfmt clippy
+        echo "==> Toolchain ready: $(rustc --version) / $(rustup target list --installed)"
+
+  # =========================================================================
+  # Step 2: Lint — cargo fmt + cargo clippy
+  # =========================================================================
+  - name: ${_RUST_IMAGE}
+    id: lint
+    waitFor: ["setup-toolchain"]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        echo "==> Running cargo fmt --check..."
+        cargo fmt --all -- --check
+        echo "==> Running cargo clippy..."
+        cargo clippy --workspace --all-targets -- -D warnings
+
+  # =========================================================================
+  # Step 3: Native tests (no Docker / PostgreSQL dependency)
+  # =========================================================================
+  - name: ${_RUST_IMAGE}
+    id: test-native
+    waitFor: ["lint"]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        echo "==> Running native workspace tests (excluding integration-tests & oidc-dev)..."
+        cargo test --workspace --exclude integration-tests --exclude oidc-dev
+
+  # =========================================================================
+  # Step 4a: Build WASM component (parallel)
+  # =========================================================================
+  - name: ${_RUST_IMAGE}
+    id: build-wasm
+    waitFor: ["test-native"]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        echo "==> Building WASM component (wasm32-wasip2, release)..."
+        cargo build -p openid-connect-wasi --target wasm32-wasip2 --release
+        echo "==> WASM artifact:"
+        ls -lh target/wasm32-wasip2/release/openid_connect_wasi.wasm
+
+  # =========================================================================
+  # Step 4b: Build frontend (parallel)
+  # =========================================================================
+  - name: ${_NODE_IMAGE}
+    id: build-frontend
+    waitFor: ["test-native"]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        echo "==> Installing frontend dependencies..."
+        cd front/admin
+        npm ci
+        echo "==> Building frontend..."
+        npm run build
+        echo "==> Frontend build complete:"
+        ls -lh dist/ || true
+
+  # =========================================================================
+  # Step 4c: Security audit (parallel)
+  # =========================================================================
+  - name: ${_RUST_IMAGE}
+    id: security-audit
+    waitFor: ["test-native"]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        echo "==> Installing cargo-audit..."
+        cargo install cargo-audit --locked
+        echo "==> Running cargo audit..."
+        cargo audit
+        echo "==> Installing cargo-deny..."
+        cargo install cargo-deny --locked
+        echo "==> Running cargo deny check..."
+        cargo deny check
+
+  # =========================================================================
+  # Step 5: Integration tests (requires PostgreSQL sidecar)
+  # =========================================================================
+  - name: ${_RUST_IMAGE}
+    id: integration-tests
+    waitFor: ["build-wasm", "build-frontend", "security-audit"]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        echo "==> Running integration tests (sequential, with PostgreSQL sidecar)..."
+        export DATABASE_URL="postgres://oidc_test:oidc_test@localhost:5432/oidc_test"
+        cargo test -p integration-tests -- --test-threads=1
+
+    # PostgreSQL sidecar for integration tests
+    sidecars:
+      - image: ${_POSTGRES_IMAGE}
+        env:
+          - "POSTGRES_USER=oidc_test"
+          - "POSTGRES_PASSWORD=oidc_test"
+          - "POSTGRES_DB=oidc_test"
+        readinessCheck:
+          command: ["pg_isready", "-U", "oidc_test", "-d", "oidc_test"]
+          intervalSeconds: 3
+          timeoutSeconds: 10
+          maxRetries: 20
+
+  # =========================================================================
+  # Step 6: Save Cargo cache back to GCS
+  # =========================================================================
+  - name: gcr.io/cloud-builders/gsutil
+    id: save-cache
+    waitFor: ["integration-tests"]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        echo "==> Saving Cargo cache to gs://${_BUCKET_NAME}/cargo-cache/ ..."
+        mkdir -p /tmp/cargo-cache
+
+        echo "    Packing cargo registry..."
+        tar czf /tmp/cargo-cache/registry.tar.gz -C /builder/home/.cargo/registry . || true
+
+        echo "    Packing cargo git cache..."
+        tar czf /tmp/cargo-cache/git.tar.gz -C /builder/home/.cargo/git . || true
+
+        echo "    Packing target directory (release only)..."
+        # Only cache release artifacts to keep the archive small
+        if [ -d /workspace/target/release ]; then
+          tar czf /tmp/cargo-cache/target.tar.gz -C /workspace/target release || true
+        fi
+
+        echo "    Uploading to GCS..."
+        gsutil -m cp /tmp/cargo-cache/*.tar.gz "gs://${_BUCKET_NAME}/cargo-cache/"
+        echo "==> Cache saved."

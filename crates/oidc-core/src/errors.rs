@@ -57,6 +57,30 @@ pub enum OidcError {
     Internal(String),
 }
 
+impl OidcError {
+    /// Return the HTTP status code for this error variant.
+    pub fn http_status(&self) -> u16 {
+        match self {
+            OidcError::AuthenticationFailed(_)
+            | OidcError::InvalidTokenSignature
+            | OidcError::TokenExpired
+            | OidcError::InvalidClient => 401,
+
+            OidcError::AuthorizationDenied(_) | OidcError::InvalidScope(_) => 403,
+
+            OidcError::InvalidInput(_)
+            | OidcError::InvalidRequest
+            | OidcError::UnsupportedGrantType
+            | OidcError::UnauthorizedClient => 400,
+
+            OidcError::NotFound(_) => 404,
+            OidcError::Conflict(_) => 409,
+
+            OidcError::Internal(_) => 500,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -88,5 +112,82 @@ mod tests {
         // OidcError::Internal wraps a String, so we construct it directly
         let err = OidcError::Internal(msg.clone());
         assert!(format!("{}", err).contains(&msg));
+    }
+
+    // ---- http_status tests ----
+
+    #[test]
+    fn test_http_status_401_variants() {
+        assert_eq!(
+            OidcError::AuthenticationFailed("bad".into()).http_status(),
+            401
+        );
+        assert_eq!(OidcError::InvalidTokenSignature.http_status(), 401);
+        assert_eq!(OidcError::TokenExpired.http_status(), 401);
+        assert_eq!(OidcError::InvalidClient.http_status(), 401);
+    }
+
+    #[test]
+    fn test_http_status_403_variants() {
+        assert_eq!(
+            OidcError::AuthorizationDenied("no".into()).http_status(),
+            403
+        );
+        assert_eq!(
+            OidcError::InvalidScope("bad scope".into()).http_status(),
+            403
+        );
+    }
+
+    #[test]
+    fn test_http_status_400_variants() {
+        assert_eq!(OidcError::InvalidInput("missing".into()).http_status(), 400);
+        assert_eq!(OidcError::InvalidRequest.http_status(), 400);
+        assert_eq!(OidcError::UnsupportedGrantType.http_status(), 400);
+        assert_eq!(OidcError::UnauthorizedClient.http_status(), 400);
+    }
+
+    #[test]
+    fn test_http_status_404_variants() {
+        assert_eq!(OidcError::NotFound("gone".into()).http_status(), 404);
+    }
+
+    #[test]
+    fn test_http_status_409_variants() {
+        assert_eq!(OidcError::Conflict("dup".into()).http_status(), 409);
+    }
+
+    #[test]
+    fn test_http_status_500_variants() {
+        assert_eq!(OidcError::Internal("boom".into()).http_status(), 500);
+    }
+
+    // ---- From conversion tests ----
+
+    #[test]
+    fn test_from_string_for_internal() {
+        let msg = String::from("db error");
+        let err = OidcError::Internal(msg.clone());
+        assert!(matches!(err, OidcError::Internal(ref s) if s == &msg));
+    }
+
+    #[test]
+    fn test_from_str_for_authentication_failed() {
+        let err = OidcError::AuthenticationFailed("bad password".into());
+        assert!(matches!(err, OidcError::AuthenticationFailed(ref s) if s == "bad password"));
+    }
+
+    #[test]
+    fn test_error_equality() {
+        assert_eq!(OidcError::TokenExpired, OidcError::TokenExpired);
+        assert_eq!(OidcError::InvalidRequest, OidcError::InvalidRequest);
+        assert_ne!(OidcError::TokenExpired, OidcError::InvalidTokenSignature);
+    }
+
+    #[test]
+    fn test_error_clone() {
+        let err = OidcError::AuthenticationFailed("test".into());
+        let cloned = err.clone();
+        assert_eq!(err, cloned);
     }
 }

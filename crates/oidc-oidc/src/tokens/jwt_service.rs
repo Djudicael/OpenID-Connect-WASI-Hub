@@ -97,8 +97,9 @@ impl JwtTokenService {
         let (private_key, kid) = match std::env::var("OIDC_SIGNING_KEY") {
             Ok(pem) => {
                 use rsa::pkcs1::DecodeRsaPrivateKey;
-                let key = RsaPrivateKey::from_pkcs1_pem(&pem)
-                    .map_err(|e| OidcError::Internal(format!("invalid OIDC_SIGNING_KEY PEM: {e}")))?;
+                let key = RsaPrivateKey::from_pkcs1_pem(&pem).map_err(|e| {
+                    OidcError::Internal(format!("invalid OIDC_SIGNING_KEY PEM: {e}"))
+                })?;
                 let kid = std::env::var("OIDC_SIGNING_KID").unwrap_or_else(|_| "key-1".to_string());
                 (key, kid)
             }
@@ -127,8 +128,9 @@ impl JwtTokenService {
         let (private_key, kid) = match std::env::var("OIDC_SIGNING_KEY") {
             Ok(pem) => {
                 use rsa::pkcs1::DecodeRsaPrivateKey;
-                let key = RsaPrivateKey::from_pkcs1_pem(&pem)
-                    .map_err(|e| OidcError::Internal(format!("invalid OIDC_SIGNING_KEY PEM: {e}")))?;
+                let key = RsaPrivateKey::from_pkcs1_pem(&pem).map_err(|e| {
+                    OidcError::Internal(format!("invalid OIDC_SIGNING_KEY PEM: {e}"))
+                })?;
                 let kid = std::env::var("OIDC_SIGNING_KID").unwrap_or_else(|_| "key-1".to_string());
                 (key, kid)
             }
@@ -435,5 +437,117 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(token.split('.').count(), 3);
+    }
+
+    // ---- Malformed JWT tests ----
+
+    #[tokio::test]
+    async fn test_jwt_rejects_corrupted_base64_header() {
+        // Header with invalid base64url characters
+        let fake_token = "!!!invalid!!!.eyJzdWIiOiJ1c2VyLTEyMyJ9.c2lnbmF0dXJl";
+        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let result = service.verify_access_token(fake_token).await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            OidcError::InvalidTokenSignature
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_jwt_rejects_corrupted_base64_claims() {
+        // Valid header base64 but corrupted claims
+        let header_b64 = b64_encode(r#"{"alg":"RS256","typ":"JWT","kid":"key-1"}"#.as_bytes());
+        let fake_token = format!("{}.!!!invalid!!!.c2lnbmF0dXJl", header_b64);
+        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let result = service.verify_access_token(&fake_token).await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            OidcError::InvalidTokenSignature
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_jwt_rejects_corrupted_base64_signature() {
+        // Valid header and claims base64 but corrupted signature
+        let header_b64 = b64_encode(r#"{"alg":"RS256","typ":"JWT","kid":"key-1"}"#.as_bytes());
+        let claims_b64 = b64_encode(r#"{"sub":"user-123","aud":"my-client","iss":"https://test.example.com","exp":9999999999,"iat":1000000,"scope":"openid"}"#.as_bytes());
+        let fake_token = format!("{}.{}.!!!invalid!!!", header_b64, claims_b64);
+        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let result = service.verify_access_token(&fake_token).await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            OidcError::InvalidTokenSignature
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_jwt_rejects_empty_signature() {
+        // Token with empty signature segment
+        let header_b64 = b64_encode(r#"{"alg":"RS256","typ":"JWT","kid":"key-1"}"#.as_bytes());
+        let claims_b64 = b64_encode(r#"{"sub":"user-123","aud":"my-client","iss":"https://test.example.com","exp":9999999999,"iat":1000000,"scope":"openid"}"#.as_bytes());
+        let fake_token = format!("{}.{}.{}", header_b64, claims_b64, "");
+        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let result = service.verify_access_token(&fake_token).await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            OidcError::InvalidTokenSignature
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_jwt_rejects_wrong_number_of_segments() {
+        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        // Only two segments
+        let result = service.verify_access_token("a.b").await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            OidcError::InvalidTokenSignature
+        ));
+
+        // Four segments
+        let result = service.verify_access_token("a.b.c.d").await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            OidcError::InvalidTokenSignature
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_jwt_rejects_non_utf8_header() {
+        // Valid base64 but decoded bytes are not valid JSON/UTF-8
+        // 0xFF 0xFE is not valid UTF-8
+        let non_utf8_bytes = vec![0xFF, 0xFE, 0xFD];
+        let header_b64 = b64_encode(&non_utf8_bytes);
+        let claims_b64 = b64_encode(r#"{"sub":"user-123"}"#.as_bytes());
+        let fake_token = format!("{}.{}.c2lnbmF0dXJl", header_b64, claims_b64);
+        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let result = service.verify_access_token(&fake_token).await;
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            OidcError::InvalidTokenSignature
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_jwt_rejects_wrong_kid() {
+        // Valid structure but kid doesn't match
+        let header_b64 = b64_encode(r#"{"alg":"RS256","typ":"JWT","kid":"wrong-key"}"#.as_bytes());
+        let claims_b64 = b64_encode(r#"{"sub":"user-123","aud":"my-client","iss":"https://test.example.com","exp":9999999999,"iat":1000000,"scope":"openid"}"#.as_bytes());
+        let fake_token = format!("{}.{}.c2lnbmF0dXJl", header_b64, claims_b64);
+        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let result = service.verify_access_token(&fake_token).await;
+        assert!(result.is_err());
+        // Wrong kid still results in signature failure since the key won't match
+        assert!(matches!(
+            result.unwrap_err(),
+            OidcError::InvalidTokenSignature
+        ));
     }
 }

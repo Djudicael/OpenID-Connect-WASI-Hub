@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use oidc_repository::repositories::client_repo::ClientRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 
+use crate::errors::OidcErrorResponse;
 use crate::state::OidcState;
 
 /// Token revocation endpoint handler.
@@ -13,42 +14,45 @@ use crate::state::OidcState;
 pub async fn revoke_handler(
     State(state): State<OidcState>,
     axum::extract::Form(params): axum::extract::Form<HashMap<String, String>>,
-) -> Json<Value> {
-    // --- Client authentication ---
-    let client_id = match params.get("client_id") {
-        Some(id) => id,
-        None => return Json(json!({})),
-    };
+) -> Result<Json<Value>, OidcErrorResponse> {
+    // --- Client authentication (required per RFC 7009 §2.1) ---
+    let client_id = params
+        .get("client_id")
+        .ok_or_else(|| OidcErrorResponse::invalid_client("Missing client_id"))?;
 
-    let client_secret = match params.get("client_secret") {
-        Some(s) => s,
-        None => return Json(json!({})),
-    };
+    let _client_secret = params
+        .get("client_secret")
+        .ok_or_else(|| OidcErrorResponse::invalid_client("Missing client_secret"))?;
 
-    let token = match params.get("token") {
-        Some(t) => t,
-        None => return Json(json!({})),
-    };
+    let token = params
+        .get("token")
+        .ok_or_else(|| OidcErrorResponse::invalid_request("Missing token"))?;
 
     let token_type_hint = params.get("token_type_hint").map(|s| s.as_str());
 
-    let mut conn = match state.connect().await {
-        Ok(c) => c,
-        Err(_) => return Json(json!({})),
-    };
+    let mut conn = state
+        .connect()
+        .await
+        .map_err(|e| OidcErrorResponse::from_internal(e))?;
 
     // Verify client credentials
     let client = match ClientRepo.find_by_client_id(&mut conn, client_id).await {
         Ok(Some(c)) if c.enabled => c,
-        _ => return Json(json!({})),
+        Ok(Some(_)) => return Err(OidcErrorResponse::invalid_client("Client is disabled")),
+        Ok(None) => return Err(OidcErrorResponse::invalid_client("Client not found")),
+        Err(e) => return Err(OidcErrorResponse::from_internal(e)),
     };
 
     if let Some(ref hash) = client.client_secret_hash {
-        if !state.hasher.verify(client_secret, hash).unwrap_or(false) {
-            return Json(json!({}));
+        if !state.hasher.verify(_client_secret, hash).unwrap_or(false) {
+            return Err(OidcErrorResponse::invalid_client(
+                "Invalid client credentials",
+            ));
         }
     } else {
-        return Json(json!({}));
+        return Err(OidcErrorResponse::invalid_client(
+            "Public clients cannot revoke tokens",
+        ));
     }
 
     let token_hash = oidc_core::utils::sha2_256_hex(token);
@@ -60,7 +64,7 @@ pub async fn revoke_handler(
             .await
         {
             let _ = SessionRepo.revoke(&mut conn, session.id).await;
-            return Json(json!({}));
+            return Ok(Json(json!({})));
         }
     }
 
@@ -70,7 +74,7 @@ pub async fn revoke_handler(
         .await
     {
         let _ = SessionRepo.revoke(&mut conn, session.id).await;
-        return Json(json!({}));
+        return Ok(Json(json!({})));
     }
 
     // Also try as refresh token if not already tried
@@ -80,10 +84,10 @@ pub async fn revoke_handler(
             .await
         {
             let _ = SessionRepo.revoke(&mut conn, session.id).await;
-            return Json(json!({}));
+            return Ok(Json(json!({})));
         }
     }
 
     // Per RFC 7009, return 200 even if token not found
-    Json(json!({}))
+    Ok(Json(json!({})))
 }

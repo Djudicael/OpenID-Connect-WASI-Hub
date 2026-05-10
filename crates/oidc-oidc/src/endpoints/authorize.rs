@@ -47,10 +47,21 @@ async fn authorize_inner(
     params: HashMap<String, String>,
 ) -> Result<String, (String, String, String)> {
     // --- Extract redirect_uri early for error responses ---
-    let redirect_uri = params
-        .get("redirect_uri")
-        .cloned()
-        .unwrap_or_else(|| "/oidc/error".to_string());
+    let redirect_uri_param = params.get("redirect_uri").cloned();
+    let redirect_uri = match redirect_uri_param.as_deref() {
+        Some(uri) if !uri.is_empty() => {
+            // Validate URI format before using it for error redirects
+            if url::Url::parse(uri).is_err() {
+                return Err((
+                    "/oidc/error".to_string(),
+                    "invalid_request".to_string(),
+                    "Invalid redirect_uri format".to_string(),
+                ));
+            }
+            uri.to_string()
+        }
+        _ => "/oidc/error".to_string(),
+    };
 
     // --- Parameter extraction ---
     let response_type = params.get("response_type").ok_or_else(|| {
@@ -106,31 +117,36 @@ async fn authorize_inner(
     let nonce = params.get("nonce").cloned();
 
     // --- Client validation ---
-    let mut conn = state.connect().await.map_err(|e| {
-        (
-            redirect_uri.clone(),
-            "server_error".to_string(),
-            e.to_string(),
-        )
-    })?;
-
-    let client = ClientRepo
-        .find_by_client_id(&mut conn, client_id_str)
-        .await
-        .map_err(|e| {
-            (
-                redirect_uri.clone(),
+    let mut conn = match state.connect().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("DB connection failed in authorize: {e}");
+            return Err((
+                "/oidc/error".to_string(),
                 "server_error".to_string(),
-                e.to_string(),
-            )
-        })?
-        .ok_or_else(|| {
-            (
+                "An internal error occurred".to_string(),
+            ));
+        }
+    };
+
+    let client = match ClientRepo.find_by_client_id(&mut conn, client_id_str).await {
+        Ok(Some(c)) => c,
+        Ok(None) => {
+            return Err((
                 redirect_uri.clone(),
                 "invalid_client".to_string(),
                 "Client not found".to_string(),
-            )
-        })?;
+            ));
+        }
+        Err(e) => {
+            tracing::error!("DB error finding client in authorize: {e}");
+            return Err((
+                redirect_uri.clone(),
+                "server_error".to_string(),
+                "An internal error occurred".to_string(),
+            ));
+        }
+    };
 
     if !client.enabled {
         return Err((
@@ -242,23 +258,27 @@ async fn authorize_inner(
     // TODO: Replace with proper session/cookie-based authentication.
     let login_hint = params.get("login_hint").cloned();
     let user = if let Some(email) = login_hint {
-        oidc_repository::repositories::user_repo::UserRepo
+        match oidc_repository::repositories::user_repo::UserRepo
             .find_by_email(&mut conn, client.realm_id, &email)
             .await
-            .map_err(|e| {
-                (
-                    redirect_uri.clone(),
-                    "server_error".to_string(),
-                    e.to_string(),
-                )
-            })?
-            .ok_or_else(|| {
-                (
+        {
+            Ok(Some(u)) => u,
+            Ok(None) => {
+                return Err((
                     redirect_uri.clone(),
                     "access_denied".to_string(),
                     "User not found".to_string(),
-                )
-            })?
+                ));
+            }
+            Err(e) => {
+                tracing::error!("DB error finding user in authorize: {e}");
+                return Err((
+                    redirect_uri.clone(),
+                    "server_error".to_string(),
+                    "An internal error occurred".to_string(),
+                ));
+            }
+        }
     } else {
         // No login_hint: redirect to login page with return URL
         let mut login_url = format!(
@@ -301,16 +321,20 @@ async fn authorize_inner(
         expires_at,
     };
 
-    oidc_repository::repositories::auth_code_repo::AuthCodeRepo
+    match oidc_repository::repositories::auth_code_repo::AuthCodeRepo
         .create(&mut conn, &auth_code)
         .await
-        .map_err(|e| {
-            (
+    {
+        Ok(()) => {}
+        Err(e) => {
+            tracing::error!("DB error creating auth code in authorize: {e}");
+            return Err((
                 redirect_uri.clone(),
                 "server_error".to_string(),
-                e.to_string(),
-            )
-        })?;
+                "An internal error occurred".to_string(),
+            ));
+        }
+    };
 
     // --- Build redirect URL ---
     let mut redirect = format!("{}?code={}", redirect_uri, urlencoding::encode(&code_value));

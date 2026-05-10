@@ -4,10 +4,10 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 
 use oidc_core::traits::TokenService;
-
 use oidc_repository::repositories::client_repo::ClientRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 
+use crate::errors::OidcErrorResponse;
 use crate::state::OidcState;
 
 /// Token introspection endpoint handler.
@@ -17,41 +17,44 @@ use crate::state::OidcState;
 pub async fn introspect_handler(
     State(state): State<OidcState>,
     axum::extract::Form(params): axum::extract::Form<HashMap<String, String>>,
-) -> Json<Value> {
-    // --- Client authentication ---
-    let client_id = match params.get("client_id") {
-        Some(id) => id,
-        None => return Json(json!({"active": false})),
-    };
+) -> Result<Json<Value>, OidcErrorResponse> {
+    // --- Client authentication (required per RFC 7662 §2.1) ---
+    let client_id = params
+        .get("client_id")
+        .ok_or_else(|| OidcErrorResponse::invalid_client("Missing client_id"))?;
 
-    let client_secret = match params.get("client_secret") {
-        Some(s) => s,
-        None => return Json(json!({"active": false})),
-    };
+    let _client_secret = params
+        .get("client_secret")
+        .ok_or_else(|| OidcErrorResponse::invalid_client("Missing client_secret"))?;
 
-    let token = match params.get("token") {
-        Some(t) => t,
-        None => return Json(json!({"active": false})),
-    };
+    let token = params
+        .get("token")
+        .ok_or_else(|| OidcErrorResponse::invalid_request("Missing token"))?;
 
-    let mut conn = match state.connect().await {
-        Ok(c) => c,
-        Err(_) => return Json(json!({"active": false})),
-    };
+    let mut conn = state
+        .connect()
+        .await
+        .map_err(|e| OidcErrorResponse::from_internal(e))?;
 
     // Verify client credentials
     let client = match ClientRepo.find_by_client_id(&mut conn, client_id).await {
         Ok(Some(c)) if c.enabled => c,
-        _ => return Json(json!({"active": false})),
+        Ok(Some(_)) => return Err(OidcErrorResponse::invalid_client("Client is disabled")),
+        Ok(None) => return Err(OidcErrorResponse::invalid_client("Client not found")),
+        Err(e) => return Err(OidcErrorResponse::from_internal(e)),
     };
 
     // Verify client secret for confidential clients
     if let Some(ref hash) = client.client_secret_hash {
-        if !state.hasher.verify(client_secret, hash).unwrap_or(false) {
-            return Json(json!({"active": false}));
+        if !state.hasher.verify(_client_secret, hash).unwrap_or(false) {
+            return Err(OidcErrorResponse::invalid_client(
+                "Invalid client credentials",
+            ));
         }
     } else {
-        return Json(json!({"active": false}));
+        return Err(OidcErrorResponse::invalid_client(
+            "Public clients cannot introspect",
+        ));
     }
 
     // Verify the token signature, expiry, and extract full claims
@@ -61,7 +64,7 @@ pub async fn introspect_handler(
         .await
     {
         Ok(c) => c,
-        Err(_) => return Json(json!({"active": false})),
+        Err(_) => return Ok(Json(json!({"active": false}))),
     };
 
     // Look up the session by access token hash to confirm it is not revoked
@@ -71,10 +74,12 @@ pub async fn introspect_handler(
         .await
     {
         Ok(Some(s)) if !s.revoked => s,
-        _ => return Json(json!({"active": false})),
+        Ok(Some(_)) => return Ok(Json(json!({"active": false}))),
+        Ok(None) => return Ok(Json(json!({"active": false}))),
+        Err(e) => return Err(OidcErrorResponse::from_internal(e)),
     };
 
-    Json(json!({
+    Ok(Json(json!({
         "active": true,
         "sub": claims.sub,
         "client_id": claims.aud,
@@ -82,5 +87,5 @@ pub async fn introspect_handler(
         "token_type": "Bearer",
         "exp": claims.exp,
         "iat": claims.iat,
-    }))
+    })))
 }

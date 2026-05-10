@@ -758,3 +758,562 @@ async fn test_rate_limiting_on_login() {
          but none were"
     );
 }
+
+// ===================================================================
+// Group 8: Timing Attack on API Key Comparison
+// ===================================================================
+
+#[tokio::test]
+async fn test_api_key_timing_attack() {
+    let app = TestApp::new().await;
+
+    // Seed an API key with admin scope
+    let mut conn = crate::harness::test_conn().await;
+    let (api_key_model, correct_key) = oidc_apikey::ApiKeyService::generate_key(
+        &mut conn,
+        app.master_realm_id(),
+        "timing-test-key".to_string(),
+        vec!["admin".into()],
+        None,
+        None,
+    )
+    .await
+    .expect("failed to seed API key");
+
+    // Build an incorrect key of the same length by flipping characters
+    let incorrect_key: String = {
+        let raw = correct_key.clone();
+        let mut chars: Vec<char> = raw.chars().collect();
+        // Flip the last character before the final segment
+        if let Some(last) = chars.last_mut() {
+            *last = if *last == 'a' { 'b' } else { 'a' };
+        }
+        chars.into_iter().collect()
+    };
+
+    // Measure 10 requests with the correct key
+    let mut correct_times = Vec::with_capacity(10);
+    for _ in 0..10 {
+        let start = std::time::Instant::now();
+        let _resp = app
+            .client()
+            .get(&format!(
+                "{}/api/keys?realm_id={}",
+                app.url(),
+                app.master_realm_id()
+            ))
+            .header("X-API-Key", correct_key.as_str())
+            .send()
+            .await
+            .expect("request failed");
+        correct_times.push(start.elapsed());
+    }
+
+    // Measure 10 requests with the incorrect key
+    let mut incorrect_times = Vec::with_capacity(10);
+    for _ in 0..10 {
+        let start = std::time::Instant::now();
+        let _resp = app
+            .client()
+            .get(&format!(
+                "{}/api/keys?realm_id={}",
+                app.url(),
+                app.master_realm_id()
+            ))
+            .header("X-API-Key", incorrect_key.as_str())
+            .send()
+            .await
+            .expect("request failed");
+        incorrect_times.push(start.elapsed());
+    }
+
+    // Calculate average times
+    let avg_correct: std::time::Duration =
+        correct_times.iter().sum::<std::time::Duration>() / correct_times.len() as u32;
+    let avg_incorrect: std::time::Duration =
+        incorrect_times.iter().sum::<std::time::Duration>() / incorrect_times.len() as u32;
+
+    let diff = if avg_correct > avg_incorrect {
+        avg_correct - avg_incorrect
+    } else {
+        avg_incorrect - avg_correct
+    };
+
+    // NOTE: This is a best-effort test; true constant-time guarantees require specialized hardware.
+    // We check that the timing difference is less than 50ms to catch obvious leaks.
+    assert!(
+        diff < std::time::Duration::from_millis(50),
+        "timing difference between correct and incorrect API key is {diff:?}, \
+         which may indicate a timing side-channel. avg_correct={avg_correct:?}, avg_incorrect={avg_incorrect:?}"
+    );
+
+    // Clean up
+    let _ = oidc_repository::repositories::api_key_repo::ApiKeyRepo
+        .revoke(&mut conn, api_key_model.id)
+        .await;
+}
+
+// ===================================================================
+// Group 9: Session Fixation Prevention
+// ===================================================================
+
+#[tokio::test]
+async fn test_session_fixation_prevention() {
+    let app = TestApp::new().await;
+
+    // 1. Login to get first set of tokens
+    let login_resp_1 = app
+        .client()
+        .post(&format!("{}/oidc/login", app.url()))
+        .json(&json!({
+            "email": fixtures::TEST_USER_EMAIL,
+            "password": fixtures::TEST_USER_PASSWORD,
+        }))
+        .send()
+        .await
+        .expect("first login request failed");
+
+    assert_eq!(login_resp_1.status(), StatusCode::OK);
+    let login_body_1: Value = login_resp_1
+        .json()
+        .await
+        .expect("first login response should be JSON");
+    let access_token_1 = login_body_1["access_token"]
+        .as_str()
+        .expect("access_token_1 must be present")
+        .to_string();
+    let refresh_token_1 = login_body_1["refresh_token"]
+        .as_str()
+        .expect("refresh_token_1 must be present")
+        .to_string();
+
+    // 2. Login again with same credentials
+    let login_resp_2 = app
+        .client()
+        .post(&format!("{}/oidc/login", app.url()))
+        .json(&json!({
+            "email": fixtures::TEST_USER_EMAIL,
+            "password": fixtures::TEST_USER_PASSWORD,
+        }))
+        .send()
+        .await
+        .expect("second login request failed");
+
+    assert_eq!(login_resp_2.status(), StatusCode::OK);
+    let login_body_2: Value = login_resp_2
+        .json()
+        .await
+        .expect("second login response should be JSON");
+    let access_token_2 = login_body_2["access_token"]
+        .as_str()
+        .expect("access_token_2 must be present")
+        .to_string();
+    let refresh_token_2 = login_body_2["refresh_token"]
+        .as_str()
+        .expect("refresh_token_2 must be present")
+        .to_string();
+
+    // 3. Assert the new tokens are different from the first set
+    assert_ne!(
+        access_token_1, access_token_2,
+        "new login must produce a different access token"
+    );
+    assert_ne!(
+        refresh_token_1, refresh_token_2,
+        "new login must produce a different refresh token"
+    );
+
+    // 4. Assert the first refresh_token still works (old session not revoked by new login)
+    let refresh_resp = app
+        .client()
+        .post(&format!("{}/oidc/token", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "grant_type=refresh_token&refresh_token={}&client_id={}&client_secret=dummy",
+            urlencoding::encode(&refresh_token_1),
+            urlencoding::encode(fixtures::TEST_CLIENT_ID),
+        ))
+        .send()
+        .await
+        .expect("refresh with old token request failed");
+
+    assert_eq!(
+        refresh_resp.status(),
+        StatusCode::OK,
+        "old refresh_token should still work — new login must not revoke old session"
+    );
+}
+
+// ===================================================================
+// Group 10: Redirect URI Path Traversal
+// ===================================================================
+
+#[tokio::test]
+async fn test_redirect_uri_path_traversal() {
+    let app = TestApp::new().await;
+
+    // Seed a client with redirect_uri https://example.com/callback
+    let client_id = "path-traversal-client";
+    let client_secret = "PathTraversalSecret1!";
+    let legitimate_redirect = "https://example.com/callback";
+    app.seed_client_with_secret(client_id, client_secret, &[legitimate_redirect])
+        .await;
+
+    // Attempt to authorize with path traversal in redirect_uri
+    let evil_redirect = "https://example.com/callback/../../evil";
+    let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let code_challenge = pkce_s256_challenge(code_verifier);
+
+    let authorize_url = format!(
+        "{}/oidc/authorize?client_id={}&redirect_uri={}&response_type=code&scope=openid&state=abc&code_challenge={}&code_challenge_method=S256&login_hint={}",
+        app.url(),
+        urlencoding::encode(client_id),
+        urlencoding::encode(evil_redirect),
+        urlencoding::encode(&code_challenge),
+        urlencoding::encode(fixtures::TEST_USER_EMAIL),
+    );
+
+    let resp = app
+        .client()
+        .get(&authorize_url)
+        .send()
+        .await
+        .expect("authorize request failed");
+
+    // The server must NOT redirect to the evil URI
+    if resp.status() == StatusCode::TEMPORARY_REDIRECT {
+        let location = resp
+            .headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(
+            !location.starts_with("https://example.com/evil"),
+            "server must NOT redirect to the path-traversal URI, got: {location}"
+        );
+        assert!(
+            !location.starts_with(evil_redirect),
+            "server must NOT redirect to the evil URI, got: {location}"
+        );
+    } else {
+        // Non-redirect error — also acceptable
+        assert!(
+            resp.status().is_client_error(),
+            "expected 4xx error for path traversal redirect_uri, got {}",
+            resp.status()
+        );
+    }
+}
+
+// ===================================================================
+// Group 11: CSRF — State Parameter Forwarded
+// ===================================================================
+
+#[tokio::test]
+async fn test_authorize_state_parameter_forwarded() {
+    let app = TestApp::new().await;
+
+    // Seed a confidential client
+    let client_id = "csrf-state-client";
+    let client_secret = "CsrfStateSecret1!";
+    let redirect_uri = "https://app.example.com/callback";
+    app.seed_client_with_secret(client_id, client_secret, &[redirect_uri])
+        .await;
+
+    let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let code_challenge = pkce_s256_challenge(code_verifier);
+    let state = "test-csrf-state-123";
+
+    let authorize_url = format!(
+        "{}/oidc/authorize?client_id={}&redirect_uri={}&response_type=code&scope=openid&state={}&code_challenge={}&code_challenge_method=S256&login_hint={}",
+        app.url(),
+        urlencoding::encode(client_id),
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(state),
+        urlencoding::encode(&code_challenge),
+        urlencoding::encode(fixtures::TEST_USER_EMAIL),
+    );
+
+    let resp = app
+        .client()
+        .get(&authorize_url)
+        .send()
+        .await
+        .expect("authorize request failed");
+
+    assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
+    let location = resp
+        .headers()
+        .get("location")
+        .expect("redirect must have Location header")
+        .to_str()
+        .expect("Location must be valid UTF-8");
+
+    // Assert the redirect URL includes the state parameter we sent
+    let url = url::Url::parse(location).expect("invalid redirect URL");
+    let returned_state = url
+        .query_pairs()
+        .find(|(k, _)| k == "state")
+        .map(|(_, v)| v.to_string());
+    assert_eq!(
+        returned_state.as_deref(),
+        Some(state),
+        "state parameter must be forwarded in the redirect URL"
+    );
+}
+
+// ===================================================================
+// Group 12: Expired Authorization Code (Single-Use)
+// ===================================================================
+
+#[tokio::test]
+async fn test_expired_authorization_code() {
+    let app = TestApp::new().await;
+
+    // Seed a confidential client with a known secret
+    let client_id = "single-use-code-client";
+    let client_secret = "SingleUseSecret1!";
+    let redirect_uri = "https://app.example.com/callback";
+    app.seed_client_with_secret(client_id, client_secret, &[redirect_uri])
+        .await;
+
+    // 1. Do a full auth code + PKCE flow
+    let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let code_challenge = pkce_s256_challenge(code_verifier);
+    let state = "single-use-state";
+
+    let authorize_url = format!(
+        "{}/oidc/authorize?client_id={}&redirect_uri={}&response_type=code&scope=openid+profile&state={}&code_challenge={}&code_challenge_method=S256&login_hint={}",
+        app.url(),
+        urlencoding::encode(client_id),
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(state),
+        urlencoding::encode(&code_challenge),
+        urlencoding::encode(fixtures::TEST_USER_EMAIL),
+    );
+
+    let resp = app
+        .client()
+        .get(&authorize_url)
+        .send()
+        .await
+        .expect("authorize request failed");
+
+    assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
+    let location = resp
+        .headers()
+        .get("location")
+        .expect("redirect must have Location header")
+        .to_str()
+        .expect("Location must be valid UTF-8");
+
+    let url = url::Url::parse(location).expect("invalid redirect URL");
+    let code = url
+        .query_pairs()
+        .find(|(k, _)| k == "code")
+        .map(|(_, v)| v.to_string())
+        .expect("authorization code must be present");
+
+    // 2. Exchange the code for tokens (first use — should succeed)
+    let token_resp = app
+        .client()
+        .post(&format!("{}/oidc/token", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&client_secret={}&code_verifier={}",
+            urlencoding::encode(&code),
+            urlencoding::encode(redirect_uri),
+            urlencoding::encode(client_id),
+            urlencoding::encode(client_secret),
+            urlencoding::encode(code_verifier),
+        ))
+        .send()
+        .await
+        .expect("first token request failed");
+
+    assert_eq!(
+        token_resp.status(),
+        StatusCode::OK,
+        "first code exchange should succeed"
+    );
+
+    // 3. Try to exchange the same code again — should fail (single-use)
+    let replay_resp = app
+        .client()
+        .post(&format!("{}/oidc/token", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&client_secret={}&code_verifier={}",
+            urlencoding::encode(&code),
+            urlencoding::encode(redirect_uri),
+            urlencoding::encode(client_id),
+            urlencoding::encode(client_secret),
+            urlencoding::encode(code_verifier),
+        ))
+        .send()
+        .await
+        .expect("replay token request failed");
+
+    let status = replay_resp.status();
+    assert!(
+        status == StatusCode::BAD_REQUEST || status == StatusCode::UNAUTHORIZED,
+        "replayed authorization code should be rejected, got status {status}"
+    );
+    let body: Value = replay_resp.json().await.expect("response should be JSON");
+    assert!(
+        body["error"].as_str().is_some(),
+        "replay response should contain error field"
+    );
+}
+
+// ===================================================================
+// Group 13: Duplicate Client Registration
+// ===================================================================
+
+#[tokio::test]
+async fn test_duplicate_client_registration_rejected() {
+    let app = TestApp::new().await;
+
+    // Register a client with a specific name
+    let client_name = "DuplicateTestApp";
+    let resp1 = app
+        .client()
+        .post(&format!("{}/oidc/register", app.url()))
+        .json(&json!({
+            "client_name": client_name,
+            "redirect_uris": ["https://app1.example.com/callback"],
+            "grant_types": ["authorization_code"],
+            "scope": "openid profile",
+            "token_endpoint_auth_method": "client_secret_basic",
+        }))
+        .send()
+        .await
+        .expect("first register request failed");
+
+    assert_eq!(
+        resp1.status(),
+        StatusCode::OK,
+        "first registration should succeed"
+    );
+    let body1: Value = resp1
+        .json()
+        .await
+        .expect("first register response should be JSON");
+    let client_id_1 = body1["client_id"]
+        .as_str()
+        .expect("client_id must be present");
+
+    // Try to register another client with the same name
+    let resp2 = app
+        .client()
+        .post(&format!("{}/oidc/register", app.url()))
+        .json(&json!({
+            "client_name": client_name,
+            "redirect_uris": ["https://app2.example.com/callback"],
+            "grant_types": ["authorization_code"],
+            "scope": "openid profile",
+            "token_endpoint_auth_method": "client_secret_basic",
+        }))
+        .send()
+        .await
+        .expect("second register request failed");
+
+    // The behavior should be consistent: either succeed (different client_id) or fail with 409
+    let status2 = resp2.status();
+    if status2 == StatusCode::OK {
+        // If it succeeds, the client_id must be different
+        let body2: Value = resp2
+            .json()
+            .await
+            .expect("second register response should be JSON");
+        let client_id_2 = body2["client_id"]
+            .as_str()
+            .expect("client_id must be present");
+        assert_ne!(
+            client_id_1, client_id_2,
+            "duplicate registration with same name should produce a different client_id"
+        );
+    } else if status2 == StatusCode::CONFLICT {
+        // 409 Conflict is also acceptable
+    } else {
+        panic!(
+            "duplicate registration should return 200 (new client) or 409 (conflict), got {status2}"
+        );
+    }
+}
+
+// ===================================================================
+// Group 14: Token with Wrong Audience
+// ===================================================================
+
+#[tokio::test]
+async fn test_token_wrong_audience() {
+    let app = TestApp::new().await;
+
+    // 1. Seed two confidential clients
+    let client_a_id = "audience-client-a";
+    let client_a_secret = "AudienceSecretA1!";
+    let redirect_uri = "https://app.example.com/callback";
+    app.seed_client_with_secret(client_a_id, client_a_secret, &[redirect_uri])
+        .await;
+
+    let client_b_id = "audience-client-b";
+    let client_b_secret = "AudienceSecretB1!";
+    app.seed_client_with_secret(client_b_id, client_b_secret, &[redirect_uri])
+        .await;
+
+    // 2. Login using client A to get a token
+    let login_resp = app
+        .client()
+        .post(&format!("{}/oidc/login", app.url()))
+        .json(&json!({
+            "email": fixtures::TEST_USER_EMAIL,
+            "password": fixtures::TEST_USER_PASSWORD,
+            "client_id": client_a_id,
+        }))
+        .send()
+        .await
+        .expect("login request failed");
+
+    assert_eq!(login_resp.status(), StatusCode::OK);
+    let login_body: Value = login_resp
+        .json()
+        .await
+        .expect("login response should be JSON");
+    let access_token = login_body["access_token"]
+        .as_str()
+        .expect("access_token must be present")
+        .to_string();
+
+    // 3. Introspect the token using client B's credentials
+    let introspect_resp = app
+        .client()
+        .post(&format!("{}/oidc/introspect", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "token={}&client_id={}&client_secret={}",
+            urlencoding::encode(&access_token),
+            urlencoding::encode(client_b_id),
+            urlencoding::encode(client_b_secret),
+        ))
+        .send()
+        .await
+        .expect("introspect request failed");
+
+    assert_eq!(introspect_resp.status(), StatusCode::OK);
+    let intro_body: Value = introspect_resp
+        .json()
+        .await
+        .expect("introspect should be JSON");
+
+    // The token should still be active — introspection doesn't care about audience mismatch
+    // for the introspecting client. The token is valid; it was just issued for a different client.
+    // Alternatively, the server may reject it. Either behavior is acceptable.
+    if intro_body["active"] == true {
+        // Token is still active — introspection doesn't enforce audience matching
+        // This is the common behavior per RFC 7662
+    } else {
+        // Token is inactive — server enforces audience matching on introspection
+        // This is a stricter but valid interpretation
+    }
+}

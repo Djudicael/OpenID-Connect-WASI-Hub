@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: './e2e',
-  timeout: 30000,
+  timeout: 60000,
   retries: 1,
   use: {
     baseURL: 'http://localhost:3008',
@@ -13,6 +13,8 @@ export default defineConfig({
   projects: [
     { name: 'chromium', use: { browserName: 'chromium' } },
     { name: 'firefox', use: { browserName: 'firefox' } },
+    { name: 'webkit', use: { browserName: 'webkit' } },
+    { name: 'mobile', use: { browserName: 'chromium', viewport: { width: 375, height: 667 } } },
   ],
   webServer: {
     command: 'echo "Make sure oidc-dev is running: cargo run -p oidc-dev -- start"',

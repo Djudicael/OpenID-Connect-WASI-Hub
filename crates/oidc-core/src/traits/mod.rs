@@ -5,6 +5,9 @@ pub mod hasher;
 pub mod repository;
 pub mod token_service;
 
+#[cfg(test)]
+pub mod mocks;
+
 pub use clock::Clock;
 pub use hasher::Hasher;
 pub use token_service::TokenService;

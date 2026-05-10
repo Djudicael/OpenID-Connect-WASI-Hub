@@ -960,3 +960,597 @@ async fn test_token_invalid_grant_type() {
     let body: Value = resp.json().await.expect("response should be JSON");
     assert!(body["error"].as_str().is_some(), "should have error field");
 }
+
+// ===================================================================
+// Group 10: Client Credentials Grant
+// ===================================================================
+
+#[tokio::test]
+async fn test_client_credentials_grant() {
+    let app = TestApp::new().await;
+
+    // 1. Seed a confidential client with a known secret and client_credentials grant
+    let client_id = "cc-client";
+    let client_secret = "CCSecret123!";
+    let redirect_uri = "https://app.example.com/callback";
+
+    // We need to add client_credentials to the allowed grant types.
+    // The seed_client_with_secret uses the default fixture which only has
+    // authorization_code + refresh_token. We'll update the client directly.
+    let _client_db_id = app
+        .seed_client_with_secret(client_id, client_secret, &[redirect_uri])
+        .await;
+
+    // Update the client to allow client_credentials grant type
+    {
+        let mut conn = crate::harness::test_conn().await;
+        let grant_types =
+            serde_json::json!(["authorization_code", "refresh_token", "client_credentials"]);
+        conn.execute_params(
+            "UPDATE clients SET allowed_grant_types = $1 WHERE client_id = $2",
+            &[&grant_types, &client_id],
+        )
+        .await
+        .expect("failed to update grant types");
+    }
+
+    // 2. POST /oidc/token with grant_type=client_credentials
+    let token_resp = app
+        .client()
+        .post(&format!("{}/oidc/token", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "grant_type=client_credentials&client_id={}&client_secret={}",
+            urlencoding::encode(client_id),
+            urlencoding::encode(client_secret),
+        ))
+        .send()
+        .await
+        .expect("token request failed");
+
+    // 3. Assert 200 + correct response shape
+    assert_eq!(
+        token_resp.status(),
+        StatusCode::OK,
+        "client credentials grant should return 200"
+    );
+    let token_body: Value = token_resp
+        .json()
+        .await
+        .expect("token response should be JSON");
+
+    let access_token = token_body["access_token"]
+        .as_str()
+        .expect("access_token must be present");
+    assert!(!access_token.is_empty(), "access_token must not be empty");
+    assert_eq!(token_body["token_type"], "Bearer");
+    assert!(
+        token_body["expires_in"].is_number(),
+        "expires_in must be present"
+    );
+    assert!(
+        token_body.get("refresh_token").is_none() || token_body["refresh_token"].is_null(),
+        "client_credentials grant must NOT return a refresh_token"
+    );
+
+    // 4. Verify the access token works on /oidc/userinfo — should fail since it's a client, not user
+    let userinfo_resp = app
+        .client()
+        .get(&format!("{}/oidc/userinfo", app.url()))
+        .header("authorization", format!("Bearer {access_token}"))
+        .send()
+        .await
+        .expect("userinfo request failed");
+
+    // Client credentials tokens don't have a user subject, so userinfo should fail
+    assert_eq!(
+        userinfo_resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "userinfo should reject client_credentials token (no user)"
+    );
+
+    // 5. Introspect the token — should be active
+    let introspect_resp = app
+        .client()
+        .post(&format!("{}/oidc/introspect", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "token={}&client_id={}&client_secret={}",
+            urlencoding::encode(access_token),
+            urlencoding::encode(client_id),
+            urlencoding::encode(client_secret),
+        ))
+        .send()
+        .await
+        .expect("introspect request failed");
+
+    assert_eq!(introspect_resp.status(), StatusCode::OK);
+    let intro_body: Value = introspect_resp
+        .json()
+        .await
+        .expect("introspect should be JSON");
+    assert_eq!(
+        intro_body["active"], true,
+        "client_credentials token should be active"
+    );
+}
+
+// ===================================================================
+// Group 11: Redirect URI Validation
+// ===================================================================
+
+#[tokio::test]
+async fn test_redirect_uri_exact_match_rejected() {
+    let app = TestApp::new().await;
+
+    // Seed a client with redirect_uri https://example.com/callback
+    let client_id = "exact-redirect-client";
+    let client_secret = "ExactRedirectSecret1!";
+    let legitimate_redirect = "https://example.com/callback";
+    app.seed_client_with_secret(client_id, client_secret, &[legitimate_redirect])
+        .await;
+
+    // Attempt to authorize with a slightly different redirect_uri (path traversal)
+    let evil_redirect = "https://example.com/callback/evil";
+    let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let code_challenge = pkce_s256_challenge(code_verifier);
+
+    let authorize_url = format!(
+        "{}/oidc/authorize?client_id={}&redirect_uri={}&response_type=code&scope=openid&state=abc&code_challenge={}&code_challenge_method=S256&login_hint={}",
+        app.url(),
+        urlencoding::encode(client_id),
+        urlencoding::encode(evil_redirect),
+        urlencoding::encode(&code_challenge),
+        urlencoding::encode(fixtures::TEST_USER_EMAIL),
+    );
+
+    let resp = app
+        .client()
+        .get(&authorize_url)
+        .send()
+        .await
+        .expect("authorize request failed");
+
+    // The server must NOT redirect to the evil URI
+    if resp.status() == StatusCode::TEMPORARY_REDIRECT {
+        let location = resp
+            .headers()
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(
+            !location.starts_with(evil_redirect),
+            "server must NOT redirect to the evil URI, got: {location}"
+        );
+        // Should redirect to error page or legitimate callback with error
+        assert!(
+            location.contains("error=") || location.contains("/oidc/error"),
+            "redirect should contain error parameter or point to error page, got: {location}"
+        );
+    } else {
+        // Non-redirect error — also acceptable
+        assert!(
+            resp.status().is_client_error(),
+            "expected 4xx error for redirect_uri mismatch, got {}",
+            resp.status()
+        );
+    }
+}
+
+// ===================================================================
+// Group 12: ID Token Claims
+// ===================================================================
+
+#[tokio::test]
+async fn test_id_token_contains_nonce() {
+    let app = TestApp::new().await;
+
+    // 1. Seed a confidential client with a known secret
+    let client_id = "nonce-test-client";
+    let client_secret = "NonceSecret123!";
+    let redirect_uri = "https://app.example.com/callback";
+    app.seed_client_with_secret(client_id, client_secret, &[redirect_uri])
+        .await;
+
+    // 2. Full auth code + PKCE flow with nonce
+    let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let code_challenge = pkce_s256_challenge(code_verifier);
+    let state = "nonce-test-state";
+    let nonce = "test-nonce-123";
+
+    let authorize_url = format!(
+        "{}/oidc/authorize?client_id={}&redirect_uri={}&response_type=code&scope=openid+profile&state={}&code_challenge={}&code_challenge_method=S256&login_hint={}&nonce={}",
+        app.url(),
+        urlencoding::encode(client_id),
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(state),
+        urlencoding::encode(&code_challenge),
+        urlencoding::encode(fixtures::TEST_USER_EMAIL),
+        urlencoding::encode(nonce),
+    );
+
+    let resp = app
+        .client()
+        .get(&authorize_url)
+        .send()
+        .await
+        .expect("authorize request failed");
+
+    assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
+    let location = resp
+        .headers()
+        .get("location")
+        .expect("redirect must have Location header")
+        .to_str()
+        .expect("Location must be valid UTF-8");
+
+    let (code, _) = parse_redirect_params(location);
+    assert!(!code.is_empty(), "authorization code must be present");
+
+    // 3. Exchange code for tokens
+    let token_resp = app
+        .client()
+        .post(&format!("{}/oidc/token", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&client_secret={}&code_verifier={}",
+            urlencoding::encode(&code),
+            urlencoding::encode(redirect_uri),
+            urlencoding::encode(client_id),
+            urlencoding::encode(client_secret),
+            urlencoding::encode(code_verifier),
+        ))
+        .send()
+        .await
+        .expect("token request failed");
+
+    assert_eq!(token_resp.status(), StatusCode::OK);
+    let token_body: Value = token_resp
+        .json()
+        .await
+        .expect("token response should be JSON");
+
+    let id_token = token_body["id_token"]
+        .as_str()
+        .expect("id_token must be present");
+
+    // 4. Decode the ID token payload (base64 decode the middle part)
+    let parts: Vec<&str> = id_token.split('.').collect();
+    assert_eq!(parts.len(), 3, "JWT must have 3 parts");
+    let payload_bytes = URL_SAFE_NO_PAD
+        .decode(parts[1])
+        .expect("failed to decode ID token payload");
+    let payload: Value =
+        serde_json::from_slice(&payload_bytes).expect("failed to parse ID token payload");
+
+    // 5. Assert nonce field equals the one we sent
+    assert_eq!(
+        payload["nonce"].as_str(),
+        Some(nonce),
+        "ID token must contain the nonce from the authorize request"
+    );
+}
+
+#[tokio::test]
+async fn test_id_token_contains_hashes() {
+    let app = TestApp::new().await;
+
+    // 1. Seed a confidential client with a known secret
+    let client_id = "hash-test-client";
+    let client_secret = "HashSecret123!";
+    let redirect_uri = "https://app.example.com/callback";
+    app.seed_client_with_secret(client_id, client_secret, &[redirect_uri])
+        .await;
+
+    // 2. Full auth code + PKCE flow
+    let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let code_challenge = pkce_s256_challenge(code_verifier);
+    let state = "hash-test-state";
+
+    let authorize_url = format!(
+        "{}/oidc/authorize?client_id={}&redirect_uri={}&response_type=code&scope=openid+profile&state={}&code_challenge={}&code_challenge_method=S256&login_hint={}",
+        app.url(),
+        urlencoding::encode(client_id),
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(state),
+        urlencoding::encode(&code_challenge),
+        urlencoding::encode(fixtures::TEST_USER_EMAIL),
+    );
+
+    let resp = app
+        .client()
+        .get(&authorize_url)
+        .send()
+        .await
+        .expect("authorize request failed");
+
+    assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
+    let location = resp
+        .headers()
+        .get("location")
+        .expect("redirect must have Location header")
+        .to_str()
+        .expect("Location must be valid UTF-8");
+
+    let (code, _) = parse_redirect_params(location);
+    assert!(!code.is_empty(), "authorization code must be present");
+
+    // 3. Exchange code for tokens
+    let token_resp = app
+        .client()
+        .post(&format!("{}/oidc/token", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&client_secret={}&code_verifier={}",
+            urlencoding::encode(&code),
+            urlencoding::encode(redirect_uri),
+            urlencoding::encode(client_id),
+            urlencoding::encode(client_secret),
+            urlencoding::encode(code_verifier),
+        ))
+        .send()
+        .await
+        .expect("token request failed");
+
+    assert_eq!(token_resp.status(), StatusCode::OK);
+    let token_body: Value = token_resp
+        .json()
+        .await
+        .expect("token response should be JSON");
+
+    let id_token = token_body["id_token"]
+        .as_str()
+        .expect("id_token must be present");
+
+    // 4. Decode the ID token payload
+    let parts: Vec<&str> = id_token.split('.').collect();
+    assert_eq!(parts.len(), 3, "JWT must have 3 parts");
+    let payload_bytes = URL_SAFE_NO_PAD
+        .decode(parts[1])
+        .expect("failed to decode ID token payload");
+    let payload: Value =
+        serde_json::from_slice(&payload_bytes).expect("failed to parse ID token payload");
+
+    // 5. Assert at_hash is present and non-empty
+    let at_hash = payload["at_hash"]
+        .as_str()
+        .expect("at_hash must be present in ID token");
+    assert!(!at_hash.is_empty(), "at_hash must not be empty");
+
+    // 6. Assert c_hash is present and non-empty
+    let c_hash = payload["c_hash"]
+        .as_str()
+        .expect("c_hash must be present in ID token");
+    assert!(!c_hash.is_empty(), "c_hash must not be empty");
+}
+
+// ===================================================================
+// Group 13: Token Endpoint Error Cases
+// ===================================================================
+
+#[tokio::test]
+async fn test_token_wrong_client_secret() {
+    let app = TestApp::new().await;
+
+    // Seed a confidential client with a known secret
+    let client_id = "wrong-secret-client";
+    let client_secret = "CorrectSecret123!";
+    let redirect_uri = "https://app.example.com/callback";
+    app.seed_client_with_secret(client_id, client_secret, &[redirect_uri])
+        .await;
+
+    // POST /oidc/token with wrong client_secret
+    let token_resp = app
+        .client()
+        .post(&format!("{}/oidc/token", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "grant_type=authorization_code&code=some_code&redirect_uri={}&client_id={}&client_secret={}&code_verifier=some_verifier",
+            urlencoding::encode(redirect_uri),
+            urlencoding::encode(client_id),
+            urlencoding::encode("WrongSecret999!"),
+        ))
+        .send()
+        .await
+        .expect("token request failed");
+
+    // Should return 401 or error with invalid_client
+    let status = token_resp.status();
+    let body: Value = token_resp.json().await.expect("response should be JSON");
+    assert!(
+        status == StatusCode::UNAUTHORIZED || status == StatusCode::BAD_REQUEST,
+        "wrong client_secret should return 401 or 400, got {status}"
+    );
+    assert_eq!(
+        body["error"].as_str(),
+        Some("invalid_client"),
+        "error should be invalid_client, got: {body:?}"
+    );
+}
+
+// ===================================================================
+// Group 14: Introspect Without Client Auth
+// ===================================================================
+
+#[tokio::test]
+async fn test_introspect_without_client_auth() {
+    let app = TestApp::new().await;
+
+    // POST /oidc/introspect without client_id/client_secret
+    let introspect_resp = app
+        .client()
+        .post(&format!("{}/oidc/introspect", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body("token=some_token_value")
+        .send()
+        .await
+        .expect("introspect request failed");
+
+    assert_eq!(introspect_resp.status(), StatusCode::OK);
+    let body: Value = introspect_resp
+        .json()
+        .await
+        .expect("response should be JSON");
+    assert_eq!(
+        body["active"], false,
+        "introspect without client auth must return active=false"
+    );
+}
+
+// ===================================================================
+// Group 15: Revoke Refresh Token
+// ===================================================================
+
+#[tokio::test]
+async fn test_revoke_refresh_token() {
+    let app = TestApp::new().await;
+
+    // 1. Seed a confidential client
+    let client_id = "revoke-rt-client";
+    let client_secret = "RevokeRTSecret1!";
+    app.seed_client_with_secret(client_id, client_secret, &[])
+        .await;
+
+    // 2. Login to get tokens
+    let login_resp = app
+        .client()
+        .post(&format!("{}/oidc/login", app.url()))
+        .json(&json!({
+            "email": fixtures::TEST_USER_EMAIL,
+            "password": fixtures::TEST_USER_PASSWORD,
+            "client_id": client_id,
+        }))
+        .send()
+        .await
+        .expect("login request failed");
+
+    assert_eq!(login_resp.status(), StatusCode::OK);
+    let login_body: Value = login_resp
+        .json()
+        .await
+        .expect("login response should be JSON");
+    let refresh_token = login_body["refresh_token"]
+        .as_str()
+        .expect("refresh_token must be present")
+        .to_string();
+
+    // 3. Revoke the refresh token
+    let revoke_resp = app
+        .client()
+        .post(&format!("{}/oidc/revoke", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "token={}&token_type_hint=refresh_token&client_id={}&client_secret={}",
+            urlencoding::encode(&refresh_token),
+            urlencoding::encode(client_id),
+            urlencoding::encode(client_secret),
+        ))
+        .send()
+        .await
+        .expect("revoke request failed");
+
+    assert_eq!(
+        revoke_resp.status(),
+        StatusCode::OK,
+        "revoke should succeed"
+    );
+
+    // 4. Try to use the revoked refresh token — should fail
+    let refresh_resp = app
+        .client()
+        .post(&format!("{}/oidc/token", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "grant_type=refresh_token&refresh_token={}&client_id={}&client_secret={}",
+            urlencoding::encode(&refresh_token),
+            urlencoding::encode(client_id),
+            urlencoding::encode(client_secret),
+        ))
+        .send()
+        .await
+        .expect("refresh token request failed");
+
+    let status = refresh_resp.status();
+    assert!(
+        status == StatusCode::BAD_REQUEST || status == StatusCode::UNAUTHORIZED,
+        "revoked refresh token should be rejected, got status {status}"
+    );
+}
+
+// ===================================================================
+// Group 16: Discovery Document Fields
+// ===================================================================
+
+#[tokio::test]
+async fn test_discovery_document_fields() {
+    let app = TestApp::new().await;
+
+    let resp = app
+        .client()
+        .get(&format!("{}/.well-known/openid-configuration", app.url()))
+        .send()
+        .await
+        .expect("discovery request failed");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp
+        .json()
+        .await
+        .expect("discovery response should be JSON");
+
+    // Assert all required fields per OIDC Discovery spec
+    assert!(body["issuer"].as_str().is_some(), "issuer must be present");
+    assert!(
+        body["authorization_endpoint"].as_str().is_some(),
+        "authorization_endpoint must be present"
+    );
+    assert!(
+        body["token_endpoint"].as_str().is_some(),
+        "token_endpoint must be present"
+    );
+    assert!(
+        body["userinfo_endpoint"].as_str().is_some(),
+        "userinfo_endpoint must be present"
+    );
+    assert!(
+        body["jwks_uri"].as_str().is_some(),
+        "jwks_uri must be present"
+    );
+    assert!(
+        body["response_types_supported"].as_array().is_some(),
+        "response_types_supported must be present and an array"
+    );
+    assert!(
+        body["subject_types_supported"].as_array().is_some(),
+        "subject_types_supported must be present and an array"
+    );
+    assert!(
+        body["id_token_signing_alg_values_supported"]
+            .as_array()
+            .is_some(),
+        "id_token_signing_alg_values_supported must be present and an array"
+    );
+
+    // Verify arrays are non-empty
+    assert!(
+        !body["response_types_supported"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "response_types_supported must not be empty"
+    );
+    assert!(
+        !body["subject_types_supported"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "subject_types_supported must not be empty"
+    );
+    assert!(
+        !body["id_token_signing_alg_values_supported"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "id_token_signing_alg_values_supported must not be empty"
+    );
+}

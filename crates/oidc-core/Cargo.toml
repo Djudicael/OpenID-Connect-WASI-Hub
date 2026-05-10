@@ -21,7 +21,9 @@ base64 = { workspace = true }
 hex = "0.4"
 getrandom = { workspace = true }
 url = "2"
+rsa = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = "1"
 proptest = "1"
+tokio = { workspace = true }
