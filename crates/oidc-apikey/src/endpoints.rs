@@ -41,6 +41,10 @@ pub async fn list_keys(
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
 
+    // Gracefully close the connection so the server releases the backend
+    // process immediately, rather than waiting for TCP keep-alive timeout.
+    let _ = conn.close().await;
+
     let rows: Vec<Value> = keys
         .into_iter()
         .map(|key| {
@@ -113,6 +117,9 @@ pub async fn create_key(
     };
     let _ = AuditEventRepo.create(&mut conn, &audit).await;
 
+    // Gracefully close the connection.
+    let _ = conn.close().await;
+
     Ok(Json(json!({
         "id": api_key.id,
         "realm_id": api_key.realm_id,
@@ -166,6 +173,9 @@ pub async fn revoke_key(
     };
     let _ = AuditEventRepo.create(&mut conn, &audit).await;
 
+    // Gracefully close the connection.
+    let _ = conn.close().await;
+
     Ok(Json(json!({"revoked": true})))
 }
 
@@ -209,6 +219,9 @@ pub async fn rotate_key(
         created_at: chrono::Utc::now(),
     };
     let _ = AuditEventRepo.create(&mut conn, &audit).await;
+
+    // Gracefully close the connection.
+    let _ = conn.close().await;
 
     let response = RotateKeyResponse {
         id: new_key.id,

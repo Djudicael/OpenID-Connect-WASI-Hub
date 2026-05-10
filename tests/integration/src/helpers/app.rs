@@ -10,7 +10,7 @@ use oidc_repository::repositories::{
 };
 use uuid::Uuid;
 
-use crate::harness::{clean_database, database_url, test_conn};
+use crate::harness::{database_url, test_conn};
 use crate::helpers::fixtures;
 
 // ===================================================================
@@ -36,6 +36,11 @@ pub struct TestApp {
     client: reqwest::Client,
     /// The master realm seeded during setup.
     master_realm_id: Uuid,
+    /// Sender half of a oneshot channel — when dropped, signals the
+    /// server task to shut down, releasing its DB connections.
+    shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    /// Handle to the server task so we can await its shutdown.
+    server_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl TestApp {
@@ -51,18 +56,14 @@ impl TestApp {
     pub async fn new() -> Self {
         let db_url = database_url().await;
 
-        // Clean the database first
-        {
-            let mut conn = test_conn().await;
-            clean_database(&mut conn)
-                .await
-                .expect("failed to clean database");
-        }
-
-        // Seed baseline data
+        // Seed baseline data (unique per test — no need to clean the DB).
+        // Each test gets its own realm/user/client with fresh UUIDs,
+        // so there's no cross-test contamination even without TRUNCATE.
         let master_realm_id = {
             let mut conn = test_conn().await;
-            seed_baseline_data(&mut conn).await
+            let id = seed_baseline_data(&mut conn).await;
+            let _ = conn.close().await;
+            id
         };
 
         // Set env vars so that `AppState::from_env()` picks up the test config.
@@ -90,9 +91,15 @@ impl TestApp {
 
         let app = openid_connect_wasi::app_router();
 
-        // Spawn the server
-        tokio::spawn(async move {
+        // Create a oneshot channel to signal server shutdown.
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+        // Spawn the server with graceful shutdown.
+        let server_handle = tokio::spawn(async move {
             axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
                 .await
                 .expect("test server failed");
         });
@@ -108,6 +115,8 @@ impl TestApp {
             base_url,
             client,
             master_realm_id,
+            shutdown_tx: Some(shutdown_tx),
+            server_handle: Some(server_handle),
         }
     }
 
@@ -139,6 +148,7 @@ impl TestApp {
             .create(&mut conn, &user)
             .await
             .expect("failed to seed user");
+        let _ = conn.close().await;
         id
     }
 
@@ -155,6 +165,7 @@ impl TestApp {
             .create(&mut conn, &user)
             .await
             .expect("failed to seed disabled user");
+        let _ = conn.close().await;
         id
     }
 
@@ -184,6 +195,7 @@ impl TestApp {
             .create(&mut conn, &client)
             .await
             .expect("failed to seed client");
+        let _ = conn.close().await;
         id
     }
 
@@ -215,44 +227,61 @@ impl TestApp {
             .create(&mut conn, &client)
             .await
             .expect("failed to seed client with secret");
+        let _ = conn.close().await;
         id
     }
 }
 
-// ===================================================================
-// Seed helpers
+impl Drop for TestApp {
+    fn drop(&mut self) {
+        // Signal the server to shut down by dropping the sender.
+        // This closes the oneshot channel, causing the server's
+        // `with_graceful_shutdown` to fire.
+        if let Some(tx) = self.shutdown_tx.take() {
+            drop(tx);
+        }
+        // Abort the server task to ensure it doesn't hold DB connections.
+        if let Some(handle) = self.server_handle.take() {
+            handle.abort();
+        }
+    }
+}
 // ===================================================================
 
 /// Seed the baseline data required for all tests:
-/// - A `master` realm
-/// - An admin user (`testadmin@localhost` / `TestPass123!`)
+/// - A unique realm (name includes a short UUID to avoid conflicts)
+/// - An admin user
 /// - An `admin-ui` client
 ///
 /// Returns the master realm ID.
 async fn seed_baseline_data(conn: &mut oidc_repository::Connection) -> Uuid {
+    // Use a short UUID suffix so each test gets a unique realm name.
+    // This avoids UNIQUE constraint violations when multiple tests
+    // run against the same database without cleaning between them.
+    let suffix = Uuid::new_v4().to_string()[..8].to_string();
+    let realm_name = format!("test-realm-{suffix}");
+
     // Master realm
-    let realm = fixtures::test_realm("master");
+    let realm = fixtures::test_realm(&realm_name);
     let realm_id = realm.id;
     RealmRepo
         .create(conn, &realm)
         .await
         .expect("failed to seed master realm");
 
-    // Admin user
-    let user = fixtures::test_user(
-        realm_id,
-        fixtures::TEST_USER_EMAIL,
-        fixtures::TEST_USER_PASSWORD,
-    );
+    // Admin user (email includes suffix for uniqueness)
+    let email = format!("testadmin-{suffix}@localhost");
+    let user = fixtures::test_user(realm_id, &email, fixtures::TEST_USER_PASSWORD);
     UserRepo
         .create(conn, &user)
         .await
         .expect("failed to seed admin user");
 
-    // Admin UI client
+    // Admin UI client (client_id includes suffix for uniqueness)
+    let client_id = format!("admin-ui-{suffix}");
     let client = fixtures::test_client(
         realm_id,
-        fixtures::TEST_CLIENT_ID,
+        &client_id,
         vec!["http://localhost:3000/callback".to_string()],
     );
     ClientRepo

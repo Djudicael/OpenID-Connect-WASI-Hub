@@ -63,6 +63,18 @@ impl Connection {
         self.inner.execute(sql).await
     }
 
+    /// Execute a batch of SQL statements (multi-statement simple query).
+    ///
+    /// Unlike `query`, this method properly handles multi-statement batches
+    /// and reports errors from any statement in the batch. Use this for
+    /// migration files that contain multiple DDL statements.
+    pub async fn batch_execute(
+        &mut self,
+        sql: &str,
+    ) -> Result<Vec<wasi_pg_client::QueryResult>, PgError> {
+        self.inner.batch_execute(sql).await
+    }
+
     /// Begin a database transaction.
     pub async fn begin(&mut self) -> Result<(), PgError> {
         self.inner.execute("BEGIN").await?;
@@ -89,6 +101,22 @@ impl Connection {
     ) -> Result<u64, PgError> {
         let result = self.inner.query_params(sql, params).await?;
         Ok(result.rows_affected().unwrap_or(0))
+    }
+
+    /// Gracefully close the connection.
+    ///
+    /// Sends a `Terminate` message to the PostgreSQL server and shuts down
+    /// the transport. After calling this, the connection cannot be used for
+    /// further operations.
+    ///
+    /// If you simply drop the connection, the underlying `wasi_pg_client`
+    /// `Drop` impl will close the TCP socket synchronously (without sending
+    /// `Terminate`). Calling `close()` explicitly is preferred because it
+    /// lets the server release the backend process immediately rather than
+    /// waiting for the TCP keep-alive timeout.
+    pub async fn close(&mut self) -> Result<(), PgError> {
+        debug!("closing pg_client connection");
+        self.inner.close().await
     }
 }
 

@@ -74,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
         let sql = fs::read_to_string(&path)?;
 
         tracing::info!("apply {filename}");
-        conn.query(&sql)
+        conn.batch_execute(&sql)
             .await
             .map_err(|e| anyhow::anyhow!("failed to apply {}: {}", filename, e))?;
 

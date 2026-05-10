@@ -56,6 +56,9 @@ async fn seed_api_key(
         api_key
     };
 
+    // Gracefully close the connection.
+    let _ = conn.close().await;
+
     (api_key, raw_key)
 }
 
@@ -66,7 +69,7 @@ async fn seed_api_key_in_realm(
     scopes: Vec<String>,
 ) -> (oidc_core::models::ApiKey, String) {
     let mut conn = test_conn().await;
-    oidc_apikey::ApiKeyService::generate_key(
+    let result = oidc_apikey::ApiKeyService::generate_key(
         &mut conn,
         realm_id,
         name.to_string(),
@@ -75,18 +78,28 @@ async fn seed_api_key_in_realm(
         None,
     )
     .await
-    .expect("failed to seed API key in realm")
+    .expect("failed to seed API key in realm");
+
+    // Gracefully close the connection.
+    let _ = conn.close().await;
+
+    result
 }
 
 /// Seed a second realm and return its ID.
-async fn seed_second_realm(app: &TestApp) -> Uuid {
+async fn seed_second_realm(_app: &TestApp) -> Uuid {
     let mut conn = test_conn().await;
-    let realm = crate::helpers::fixtures::test_realm("other-realm");
+    let suffix = Uuid::new_v4().to_string()[..8].to_string();
+    let realm = crate::helpers::fixtures::test_realm(&format!("other-realm-{suffix}"));
     let id = realm.id;
     oidc_repository::repositories::realm_repo::RealmRepo
         .create(&mut conn, &realm)
         .await
         .expect("failed to seed second realm");
+
+    // Gracefully close the connection.
+    let _ = conn.close().await;
+
     id
 }
 

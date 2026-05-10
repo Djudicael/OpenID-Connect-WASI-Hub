@@ -22,6 +22,14 @@ async fn init_harness() -> (
     rustainers::Container<rustainers::images::GenericImage>,
     String,
 ) {
+    // Initialise tracing subscriber (idempotent — safe to call multiple times)
+    let _ = tracing_subscriber::FmtSubscriber::builder()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .try_init();
+
     let image_name = ImageName::new_with_tag("docker.io/library/postgres", "16-alpine");
     let mut image = rustainers::images::GenericImage::new(image_name);
     image.add_env_var("POSTGRES_DB", DB_NAME);
@@ -29,7 +37,27 @@ async fn init_harness() -> (
     image.add_env_var("POSTGRES_PASSWORD", DB_PASSWORD);
     image.add_port_mapping(5432);
 
+    // Clean up stale PostgreSQL test containers from previous runs.
+    // The OnceCell is per-process, so old containers from crashed runs
+    // would otherwise accumulate and waste resources.
     let podman = Runner::podman().expect("Failed to create Podman runner");
+    {
+        let output = tokio::process::Command::new("podman")
+            .args([
+                "rm",
+                "-fa",
+                "--filter",
+                "label=org.rustainers.image=docker.io/library/postgres:16-alpine",
+            ])
+            .output()
+            .await;
+        match output {
+            Ok(o) if o.status.success() => tracing::debug!("cleaned up stale containers"),
+            Ok(o) => tracing::debug!("cleanup stderr: {}", String::from_utf8_lossy(&o.stderr)),
+            Err(e) => tracing::debug!("cleanup failed: {e}"),
+        }
+    }
+
     let container = podman
         .start(image)
         .await
@@ -68,10 +96,12 @@ async fn wait_for_postgres(url: &str) {
             Ok(mut conn) => match conn.query("SELECT 1").await {
                 Ok(_) => {
                     tracing::info!("PostgreSQL is ready");
+                    let _ = conn.close().await;
                     break;
                 }
                 Err(e) => {
                     tracing::debug!("query failed: {e}, retrying...");
+                    let _ = conn.close().await;
                     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                 }
             },
@@ -149,7 +179,7 @@ async fn run_migrations(url: &str) -> Result<(), Box<dyn std::error::Error>> {
         let sql = std::fs::read_to_string(&path)?;
 
         tracing::info!("apply {filename}");
-        conn.query(&sql)
+        conn.batch_execute(&sql)
             .await
             .map_err(|e| format!("failed to apply {}: {}", filename, e))?;
 
@@ -163,6 +193,10 @@ async fn run_migrations(url: &str) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     tracing::info!("migrations complete");
+
+    // Gracefully close the migration connection.
+    let _ = conn.close().await;
+
     Ok(())
 }
 
@@ -183,6 +217,11 @@ pub async fn test_conn() -> oidc_repository::connection::Connection {
 }
 
 /// Clean all data tables (keep `_migrations`).
+///
+/// Uses `DELETE FROM` instead of `TRUNCATE` because `TRUNCATE` requires
+/// `ACCESS EXCLUSIVE` locks that conflict with idle connections from prior
+/// tests. `DELETE FROM` only needs `ROW EXCLUSIVE` locks, which don't
+/// block concurrent reads.
 pub async fn clean_database(
     conn: &mut oidc_repository::connection::Connection,
 ) -> Result<(), oidc_core::OidcError> {
@@ -202,4 +241,53 @@ pub async fn clean_database(
             .map_err(|e| oidc_core::OidcError::Internal(e.to_string()))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod diag_tests {
+    use super::*;
+
+    /// Verify that V13 migration properly adds `deleted_at` columns
+    /// to both `realms` and `clients` tables.
+    #[tokio::test]
+    async fn test_v13_migration_columns() {
+        let url = database_url().await;
+        let config = wasi_pg_client::Config::from_uri(&url).expect("invalid URL");
+        let mut conn = wasi_pg_client::Connection::connect(&config)
+            .await
+            .expect("connect failed");
+
+        // Check realms table columns
+        let result = conn
+            .query("SELECT column_name FROM information_schema.columns WHERE table_name = 'realms' ORDER BY ordinal_position")
+            .await
+            .expect("query failed");
+        let columns: Vec<String> = result
+            .into_rows()
+            .iter()
+            .filter_map(|r| r.get::<String>(0).ok())
+            .collect();
+        assert!(
+            columns.contains(&"deleted_at".to_string()),
+            "deleted_at column missing from realms table! Columns: {columns:?}"
+        );
+
+        // Check clients table columns
+        let result = conn
+            .query("SELECT column_name FROM information_schema.columns WHERE table_name = 'clients' ORDER BY ordinal_position")
+            .await
+            .expect("query failed");
+        let columns: Vec<String> = result
+            .into_rows()
+            .iter()
+            .filter_map(|r| r.get::<String>(0).ok())
+            .collect();
+        assert!(
+            columns.contains(&"deleted_at".to_string()),
+            "deleted_at column missing from clients table! Columns: {columns:?}"
+        );
+
+        // Gracefully close the connection.
+        let _ = conn.close().await;
+    }
 }

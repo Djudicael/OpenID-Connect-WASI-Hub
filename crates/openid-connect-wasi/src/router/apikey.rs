@@ -98,6 +98,9 @@ async fn list_keys(
         }
     };
 
+    // Gracefully close the connection.
+    let _ = conn.close().await;
+
     let rows: Vec<Value> = keys
         .into_iter()
         .map(|key| {
@@ -172,7 +175,6 @@ async fn create_key(
         ApiRouteAuth::ApiKey(api_key_auth) => Some(api_key_auth.api_key.id),
         ApiRouteAuth::JwtBearer { subject } => subject.parse::<Uuid>().ok(),
     };
-
     let (api_key, raw_key) = match ApiKeyService::generate_key(
         &mut conn,
         req.realm_id,
@@ -209,6 +211,9 @@ async fn create_key(
         created_at: chrono::Utc::now(),
     };
     let _ = AuditEventRepo.create(&mut conn, &audit).await;
+
+    // Gracefully close the connection.
+    let _ = conn.close().await;
 
     axum::Json(serde_json::json!({
         "id": api_key.id,
@@ -258,7 +263,11 @@ async fn get_key(
         }
     };
 
-    match ApiKeyRepo.find_by_id(&mut conn, id).await {
+    let result = ApiKeyRepo.find_by_id(&mut conn, id).await;
+    // Gracefully close the connection.
+    let _ = conn.close().await;
+
+    match result {
         Ok(Some(key)) => axum::Json(serde_json::json!({
             "id": key.id.to_string(),
             "realm_id": key.realm_id.to_string(),
@@ -351,6 +360,9 @@ async fn revoke_key(
     };
     let _ = AuditEventRepo.create(&mut conn, &audit).await;
 
+    // Gracefully close the connection.
+    let _ = conn.close().await;
+
     axum::Json(serde_json::json!({"revoked": true})).into_response()
 }
 
@@ -417,6 +429,9 @@ async fn rotate_key(
         created_at: chrono::Utc::now(),
     };
     let _ = AuditEventRepo.create(&mut conn, &audit).await;
+
+    // Gracefully close the connection.
+    let _ = conn.close().await;
 
     axum::Json(serde_json::json!({
         "id": new_key.id,

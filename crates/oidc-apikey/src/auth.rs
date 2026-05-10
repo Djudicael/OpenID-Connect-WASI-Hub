@@ -99,6 +99,10 @@ impl<S: ApiKeyVerifierState> FromRequestParts<S> for ApiKeyAuth {
         // Best-effort usage tracking (fire-and-forget)
         let _ = ApiKeyService::increment_usage(&mut conn, api_key.id).await;
 
+        // Gracefully close the connection so the server releases the
+        // backend process immediately.
+        let _ = conn.close().await;
+
         Ok(ApiKeyAuth { api_key })
     }
 }
@@ -199,6 +203,9 @@ pub async fn verify_request_auth<S: oidc_core::traits::TokenService + Sync>(
 
         // Best-effort usage tracking
         let _ = ApiKeyService::increment_usage(&mut conn, api_key.id).await;
+
+        // Gracefully close the connection.
+        let _ = conn.close().await;
 
         return Ok(ApiRouteAuth::ApiKey(ApiKeyAuth { api_key }));
     }

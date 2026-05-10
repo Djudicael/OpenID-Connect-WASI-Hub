@@ -33,5 +33,9 @@ CREATE INDEX IF NOT EXISTS idx_clients_deleted_at ON clients(deleted_at) WHERE d
 CREATE INDEX IF NOT EXISTS idx_realms_deleted_at ON realms(deleted_at) WHERE deleted_at IS NOT NULL;
 
 -- 9. Indexes for cleanup_expired queries
-CREATE INDEX IF NOT EXISTS idx_sessions_cleanup ON sessions(expires_at) WHERE expires_at < NOW();
-CREATE INDEX IF NOT EXISTS idx_auth_codes_cleanup ON authorization_codes(expires_at) WHERE expires_at < NOW();
+-- NOTE: NOW() / CURRENT_TIMESTAMP are STABLE, not IMMUTABLE, so they cannot
+-- be used in partial index predicates. Use a plain btree index on expires_at
+-- instead; the cleanup query will filter with WHERE expires_at < NOW() at
+-- runtime, and the index will still be used for the scan.
+CREATE INDEX IF NOT EXISTS idx_sessions_cleanup ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_auth_codes_cleanup ON authorization_codes(expires_at);
