@@ -19,7 +19,7 @@ pub async fn discovery_handler(state: OidcState) -> Json<Value> {
         "grant_types_supported": ["authorization_code", "client_credentials", "refresh_token"],
         "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post"],
         "subject_types_supported": ["public"],
-        "id_token_signing_alg_values_supported": ["RS256"],
+        "id_token_signing_alg_values_supported": ["RS256", "EdDSA"],
         "claims_supported": [
             "sub", "iss", "aud", "exp", "iat",
             "name", "given_name", "family_name",

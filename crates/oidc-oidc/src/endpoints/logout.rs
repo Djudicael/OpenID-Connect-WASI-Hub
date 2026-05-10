@@ -1,22 +1,24 @@
 //! RP-Initiated Logout endpoint (OIDC Session Management).
 
 use axum::extract::Query;
-use axum::response::Redirect;
+use axum::http::header::SET_COOKIE;
+use axum::response::{IntoResponse, Redirect, Response};
 use std::collections::HashMap;
 
 use oidc_core::traits::TokenService;
 use oidc_repository::repositories::client_repo::ClientRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 
+use crate::session_cookie;
 use crate::state::OidcState;
 
 /// Logout endpoint handler.
 /// Validates id_token_hint, validates post_logout_redirect_uri against client's registered URIs,
-/// revokes session, and redirects.
+/// revokes session, clears the session cookie, and redirects.
 pub async fn logout_handler(
     state: OidcState,
     Query(params): Query<HashMap<String, String>>,
-) -> Redirect {
+) -> Response {
     let post_logout_redirect_uri = params.get("post_logout_redirect_uri").cloned();
     let state_param = params.get("state").cloned();
     let client_id_param = params.get("client_id").cloned();
@@ -24,11 +26,10 @@ pub async fn logout_handler(
     // If id_token_hint is provided, validate it and revoke the session
     if let Some(id_token_hint) = params.get("id_token_hint") {
         if let Ok(mut conn) = state.connect().await {
-            if let Ok(()) = conn.begin().await {
-                // Verify the ID token to extract the subject
+            // Best-effort transaction: begin, revoke, commit (ignore errors)
+            if conn.begin().await.is_ok() {
                 if let Ok(subject) = state.token_service.verify_id_token(id_token_hint).await {
                     if let Ok(user_id) = subject.parse::<uuid::Uuid>() {
-                        // Revoke all active sessions for this user via the repository
                         let _ = SessionRepo.revoke_by_user_id(&mut conn, user_id).await;
                     }
                 }
@@ -45,7 +46,16 @@ pub async fn logout_handler(
     )
     .await;
 
-    build_redirect(validated_uri, state_param)
+    let redirect = build_redirect(validated_uri, state_param);
+    let mut response = redirect.into_response();
+
+    // Clear the session cookie
+    let clear_header = session_cookie::clear_session_cookie_header();
+    if let Ok(value) = clear_header.parse() {
+        response.headers_mut().insert(SET_COOKIE, value);
+    }
+
+    response
 }
 
 /// Validate the post_logout_redirect_uri against the client's registered redirect URIs.

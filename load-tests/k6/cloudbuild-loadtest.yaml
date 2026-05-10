@@ -1,0 +1,265 @@
+# ---------------------------------------------------------------------------
+# cloudbuild-loadtest.yaml — Cloud Build config for scheduled k6 load tests
+#
+# This pipeline:
+#   1. Installs k6
+#   2. Runs the smoke test as a gate
+#   3. Runs all load tests with JSON output
+#   4. Parses results against SLO thresholds
+#   5. Uploads results to GCS
+#   6. Fails the build if any SLO is violated
+#
+# Prerequisites:
+#   - The OIDC Hub server must be reachable from Cloud Build
+#     (either already running or started in a prior build step)
+#   - A GCS bucket for results: gs://<BUCKET_NAME>
+#   - Substitution variables configured on the trigger
+#
+# Trigger setup (manual or scheduled):
+#   gcloud builds triggers create cloud-build \
+#     --repo=REPO --branch=main \
+#     --config=load-tests/k6/cloudbuild-loadtest.yaml \
+#     --substitutions=_BASE_URL="http://oidc-hub:8080",_GCS_BUCKET="my-oidc-results"
+#
+# Or for a scheduled trigger:
+#   gcloud scheduler jobs create http oidc-loadtest \
+#     --schedule="0 3 * * 1" \   # Every Monday 03:00 UTC
+#     --uri="https://cloudbuild.googleapis.com/v1/projects/PROJECT/triggers/TRIGGER_ID:run" \
+#     --oauth-service-account-email=SERVICE_ACCOUNT
+# ---------------------------------------------------------------------------
+
+substitutions:
+  # Base URL of the OIDC Hub under test
+  _BASE_URL: "http://localhost:8080"
+  # GCS bucket for uploading results
+  _GCS_BUCKET: "oidc-loadtest-results"
+  # k6 version to install
+  _K6_VERSION: "v0.54.0"
+  # Admin credentials (use Secret Manager in production)
+  _ADMIN_EMAIL: "admin@localhost"
+  _ADMIN_PASSWORD: "admin123"
+  _CLIENT_ID: "test-service-client"
+  _CLIENT_SECRET: "test-service-secret"
+  _API_KEY: "sk_test_admin_key_placeholder"
+  _REALM_ID: "00000000-0000-0000-0000-000000000001"
+
+steps:
+  # -----------------------------------------------------------------------
+  # Step 1: Install k6
+  # -----------------------------------------------------------------------
+  - name: "gcr.io/cloud-builders/curl"
+    id: "install-k6"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        set -e
+        echo "Installing k6 $${_K6_VERSION}..."
+        curl -fsSL https://github.com/grafana/k6/releases/download/$${_K6_VERSION}/k6-$${_K6_VERSION}-linux-amd64.tar.gz \
+          | tar xz -C /usr/local/bin --strip-components=1 k6-$${_K6_VERSION}-linux-amd64/k6
+        k6 version
+    waitFor: ["-"]
+
+  # -----------------------------------------------------------------------
+  # Step 2: Wait for OIDC Hub to be healthy (with timeout)
+  # -----------------------------------------------------------------------
+  - name: "gcr.io/cloud-builders/curl"
+    id: "wait-for-server"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        set -e
+        echo "Waiting for OIDC Hub at $${_BASE_URL}..."
+        MAX_RETRIES=30
+        RETRY_INTERVAL=5
+        for i in $(seq 1 $$MAX_RETRIES); do
+          if curl -sf "$${_BASE_URL}/health" > /dev/null 2>&1; then
+            echo "✅ OIDC Hub is healthy (attempt $$i/$$MAX_RETRIES)"
+            exit 0
+          fi
+          echo "  Attempt $$i/$$MAX_RETRIES failed, retrying in $${RETRY_INTERVAL}s..."
+          sleep $$RETRY_INTERVAL
+        done
+        echo "❌ OIDC Hub did not become healthy within $((MAX_RETRIES * RETRY_INTERVAL))s"
+        exit 1
+    waitFor: ["install-k6"]
+
+  # -----------------------------------------------------------------------
+  # Step 3: Run smoke test as a gate
+  # -----------------------------------------------------------------------
+  - name: "gcr.io/cloud-builders/curl"
+    id: "smoke-test"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        set -e
+        echo "🚦 Running smoke test gate..."
+        k6 run \
+          -e "BASE_URL=$${_BASE_URL}" \
+          -e "ADMIN_EMAIL=$${_ADMIN_EMAIL}" \
+          -e "ADMIN_PASSWORD=$${_ADMIN_PASSWORD}" \
+          -e "CLIENT_ID=$${_CLIENT_ID}" \
+          -e "CLIENT_SECRET=$${_CLIENT_SECRET}" \
+          -e "API_KEY=$${_API_KEY}" \
+          -e "REALM_ID=$${_REALM_ID}" \
+          --out "json=/workspace/results/smoke.json" \
+          /workspace/load-tests/k6/smoke.js
+        echo "✅ Smoke test passed"
+    waitFor: ["wait-for-server"]
+
+  # -----------------------------------------------------------------------
+  # Step 4: Run discovery load test (SLO 9.1)
+  # -----------------------------------------------------------------------
+  - name: "gcr.io/cloud-builders/curl"
+    id: "discovery-test"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        set -e
+        echo "📊 Running discovery load test (SLO 9.1)..."
+        k6 run \
+          -e "BASE_URL=$${_BASE_URL}" \
+          --out "json=/workspace/results/discovery.json" \
+          /workspace/load-tests/k6/discovery.js
+        echo "✅ Discovery test complete"
+    waitFor: ["smoke-test"]
+
+  # -----------------------------------------------------------------------
+  # Step 5: Run token load test (SLO 9.2)
+  # -----------------------------------------------------------------------
+  - name: "gcr.io/cloud-builders/curl"
+    id: "token-test"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        set -e
+        echo "📊 Running token load test (SLO 9.2)..."
+        k6 run \
+          -e "BASE_URL=$${_BASE_URL}" \
+          -e "CLIENT_ID=$${_CLIENT_ID}" \
+          -e "CLIENT_SECRET=$${_CLIENT_SECRET}" \
+          --out "json=/workspace/results/token.json" \
+          /workspace/load-tests/k6/token.js
+        echo "✅ Token test complete"
+    waitFor: ["smoke-test"]
+
+  # -----------------------------------------------------------------------
+  # Step 6: Run userinfo load test (SLO 9.3)
+  # -----------------------------------------------------------------------
+  - name: "gcr.io/cloud-builders/curl"
+    id: "userinfo-test"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        set -e
+        echo "📊 Running userinfo load test (SLO 9.3)..."
+        k6 run \
+          -e "BASE_URL=$${_BASE_URL}" \
+          -e "ADMIN_EMAIL=$${_ADMIN_EMAIL}" \
+          -e "ADMIN_PASSWORD=$${_ADMIN_PASSWORD}" \
+          --out "json=/workspace/results/userinfo.json" \
+          /workspace/load-tests/k6/userinfo.js
+        echo "✅ UserInfo test complete"
+    waitFor: ["smoke-test"]
+
+  # -----------------------------------------------------------------------
+  # Step 7: Run apikey load test (SLO 9.4)
+  # -----------------------------------------------------------------------
+  - name: "gcr.io/cloud-builders/curl"
+    id: "apikey-test"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        set -e
+        echo "📊 Running apikey load test (SLO 9.4)..."
+        k6 run \
+          -e "BASE_URL=$${_BASE_URL}" \
+          -e "API_KEY=$${_API_KEY}" \
+          -e "REALM_ID=$${_REALM_ID}" \
+          --out "json=/workspace/results/apikey.json" \
+          /workspace/load-tests/k6/apikey.js
+        echo "✅ API Key test complete"
+    waitFor: ["smoke-test"]
+
+  # -----------------------------------------------------------------------
+  # Step 8: Run full-flow load test (SLO 9.9)
+  # -----------------------------------------------------------------------
+  - name: "gcr.io/cloud-builders/curl"
+    id: "full-flow-test"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        set -e
+        echo "📊 Running full-flow 5-minute load test (SLO 9.9)..."
+        k6 run \
+          -e "BASE_URL=$${_BASE_URL}" \
+          -e "ADMIN_EMAIL=$${_ADMIN_EMAIL}" \
+          -e "ADMIN_PASSWORD=$${_ADMIN_PASSWORD}" \
+          -e "CLIENT_ID=$${_CLIENT_ID}" \
+          -e "CLIENT_SECRET=$${_CLIENT_SECRET}" \
+          -e "API_KEY=$${_API_KEY}" \
+          -e "REALM_ID=$${_REALM_ID}" \
+          --out "json=/workspace/results/full-flow.json" \
+          /workspace/load-tests/k6/full-flow.js
+        echo "✅ Full-flow test complete"
+    waitFor: ["discovery-test", "token-test", "userinfo-test", "apikey-test"]
+
+  # -----------------------------------------------------------------------
+  # Step 9: Parse results against SLO thresholds
+  # -----------------------------------------------------------------------
+  - name: "node:20-slim"
+    id: "parse-results"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        set -e
+        echo "📊 Parsing results against SLO thresholds..."
+        node /workspace/load-tests/k6/parse-results.js \
+          --json \
+          /workspace/results/discovery.json \
+          /workspace/results/token.json \
+          /workspace/results/userinfo.json \
+          /workspace/results/apikey.json \
+          /workspace/results/full-flow.json
+    waitFor: ["full-flow-test"]
+
+  # -----------------------------------------------------------------------
+  # Step 10: Upload results to GCS
+  # -----------------------------------------------------------------------
+  - name: "gcr.io/cloud-builders/gsutil"
+    id: "upload-results"
+    args:
+      - "-m"
+      - "cp"
+      - "/workspace/results/*.json"
+      - "gs://$${_GCS_BUCKET}/load-tests/$BUILD_ID/"
+    waitFor: ["parse-results"]
+
+# ---------------------------------------------------------------------------
+# Global options
+# ---------------------------------------------------------------------------
+options:
+  # Use more CPU for load generation
+  machineType: "E2_HIGHCPU_32"
+  # Timeout for the entire build (load tests take ~5 min each)
+  timeout: "1800s"
+
+# Artifacts to keep
+artifacts:
+  objects:
+    location: "gs://$${_GCS_BUCKET}/load-tests/$BUILD_ID/"
+    paths: ["/workspace/results/*.json"]
+
+# Build logs
+logsBucket: "gs://$${_GCS_BUCKET}/build-logs"
+
+# Timeout
+timeout: "1800s"

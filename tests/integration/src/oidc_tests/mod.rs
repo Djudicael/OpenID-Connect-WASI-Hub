@@ -706,7 +706,7 @@ async fn test_revoke_idempotent() {
         .client()
         .post(&format!("{}/oidc/revoke", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
-        .body(&revoke_body)
+        .body(revoke_body.clone())
         .send()
         .await
         .expect("first revoke request failed");
@@ -718,7 +718,7 @@ async fn test_revoke_idempotent() {
         .client()
         .post(&format!("{}/oidc/revoke", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
-        .body(&revoke_body)
+        .body(revoke_body)
         .send()
         .await
         .expect("second revoke request failed");

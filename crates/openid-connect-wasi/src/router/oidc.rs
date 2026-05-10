@@ -21,8 +21,8 @@ pub fn router() -> Router<AppState> {
                 .await
                 .unwrap()
         }))
-        .route("/oidc/authorize", get(|State(state): State<AppState>, Query(params): Query<HashMap<String, String>>| async move {
-            oidc_oidc::endpoints::authorize::authorize_handler(state.oidc_state(), Query(params)).await
+        .route("/oidc/authorize", get(|State(state): State<AppState>, headers: axum::http::HeaderMap, Query(params): Query<HashMap<String, String>>| async move {
+            oidc_oidc::endpoints::authorize::authorize_handler(state.oidc_state(), headers, Query(params)).await
         }))
         .route("/oidc/token", post(|State(state): State<AppState>, headers: axum::http::HeaderMap, Form(params): Form<HashMap<String, String>>| async move {
             oidc_oidc::endpoints::token::token_handler(state.oidc_state(), headers, params)

@@ -1,13 +1,17 @@
 //! Authorization endpoint handler.
 
 use axum::extract::Query;
+use axum::http::HeaderMap;
 use axum::response::Redirect;
 use std::collections::HashMap;
 
 use oidc_core::models::AuthCode;
 use oidc_core::utils::generate_uuid_v7;
 use oidc_repository::repositories::client_repo::ClientRepo;
+use oidc_repository::repositories::session_repo::SessionRepo;
+use oidc_repository::repositories::user_repo::UserRepo;
 
+use crate::session_cookie;
 use crate::state::OidcState;
 
 /// Authorization endpoint handler.
@@ -15,15 +19,17 @@ use crate::state::OidcState;
 ///
 /// Supports OIDC Core `prompt` and `max_age` parameters:
 /// - `prompt=none`: Returns `login_required` if no authenticated session exists.
-/// - `prompt=login`: Forces re-authentication (proceeds to login page).
+///   If a valid session cookie is present, the user is authenticated silently (SSO).
+/// - `prompt=login`: Forces re-authentication (ignores session cookie, proceeds to login page).
 /// - `prompt=consent`: Pass-through (auto-consent for now).
 /// - `max_age`: If the user's auth_time exceeds max_age, requires re-authentication.
 pub async fn authorize_handler(
     state: OidcState,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> Redirect {
     let state_param = params.get("state").cloned();
-    match authorize_inner(state, params).await {
+    match authorize_inner(state, &headers, params).await {
         Ok(redirect_uri) => Redirect::temporary(&redirect_uri),
         Err((redirect_uri, error, description)) => {
             tracing::warn!("authorize failed: {} - {}", error, description);
@@ -44,6 +50,7 @@ pub async fn authorize_handler(
 
 async fn authorize_inner(
     state: OidcState,
+    headers: &HeaderMap,
     params: HashMap<String, String>,
 ) -> Result<String, (String, String, String)> {
     // --- Extract redirect_uri early for error responses ---
@@ -203,62 +210,153 @@ async fn authorize_inner(
         .map(|p| p.split(' ').collect())
         .unwrap_or_default();
 
+    // prompt=login forces re-authentication — skip session cookie lookup.
+    let force_login = prompt_values.contains(&"login");
+
+    // Try to resolve the user from the session cookie.
+    let cookie_session_id = if !force_login {
+        match state.decode_encryption_key() {
+            Ok(key) => session_cookie::extract_session_id_from_headers(headers, &key),
+            Err(e) => {
+                tracing::warn!("Failed to decode encryption key: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // Look up the session and user from the cookie.
+    let cookie_user = if let Some(ref session_id_str) = cookie_session_id {
+        if let Ok(sid) = uuid::Uuid::parse_str(session_id_str) {
+            match SessionRepo.find_by_id(&mut conn, sid).await {
+                Ok(Some(session))
+                    if !session.revoked && session.expires_at > chrono::Utc::now() =>
+                {
+                    // Session is valid — look up the user.
+                    match UserRepo.find_by_id(&mut conn, session.user_id).await {
+                        Ok(Some(u)) if u.enabled => Some(u),
+                        Ok(Some(_)) => {
+                            tracing::warn!(
+                                "User {} is disabled, ignoring session cookie",
+                                session.user_id
+                            );
+                            None
+                        }
+                        Ok(None) => {
+                            tracing::warn!(
+                                "User {} not found, ignoring session cookie",
+                                session.user_id
+                            );
+                            None
+                        }
+                        Err(e) => {
+                            tracing::error!("DB error finding user from session cookie: {e}");
+                            None
+                        }
+                    }
+                }
+                Ok(Some(_)) => {
+                    tracing::debug!("Session {} is revoked or expired, ignoring", sid);
+                    None
+                }
+                Ok(None) => {
+                    tracing::debug!("Session {} not found, ignoring", sid);
+                    None
+                }
+                Err(e) => {
+                    tracing::error!("DB error finding session from cookie: {e}");
+                    None
+                }
+            }
+        } else {
+            tracing::debug!("Invalid UUID in session cookie: {session_id_str}");
+            None
+        }
+    } else {
+        None
+    };
+
     // prompt=none: If the user is not authenticated, return login_required.
-    // Since we don't have session cookies yet, we always return login_required
-    // for prompt=none when no login_hint is provided.
     if prompt_values.contains(&"none") {
-        let login_hint = params.get("login_hint");
-        if login_hint.is_none() {
+        if cookie_user.is_none() && params.get("login_hint").is_none() {
             return Err((
                 redirect_uri.clone(),
                 "login_required".to_string(),
                 "The Authorization Server requires End-User authentication.".to_string(),
             ));
         }
-        // If login_hint is provided, we proceed — the user will be looked up below.
+        // If a valid session cookie or login_hint exists, we proceed.
     }
-
-    // prompt=login: Force re-authentication. For now, this just proceeds to the
-    // login page normally (same as no session), so no special action needed.
 
     // prompt=consent: Pass-through — we auto-consent for now.
 
     // --- max_age parameter handling (OIDC Core §3.1.2.1) ---
     // If max_age is specified and the user's auth_time exceeds it, require
-    // re-authentication. Since we don't have session cookies yet, any max_age
-    // value means we need to re-authenticate unless login_hint is provided
-    // and we can verify the auth_time.
+    // re-authentication.
     if let Some(max_age_str) = params.get("max_age") {
         if let Ok(max_age) = max_age_str.parse::<i64>() {
             if max_age >= 0 {
-                // Without session cookies, we cannot verify auth_time.
-                // If login_hint is provided, we'll proceed (user will be
-                // looked up below). Otherwise, redirect to login.
-                let login_hint = params.get("login_hint");
-                if login_hint.is_none() {
-                    // No way to verify auth_time — require re-authentication
-                    let mut login_url = format!(
-                        "/login?return_to={}",
-                        urlencoding::encode(&format!(
-                            "/oidc/authorize?{}",
-                            serde_urlencoded::to_string(&params).unwrap_or_default()
-                        ))
-                    );
-                    if let Some(s) = state_param {
-                        login_url.push_str(&format!("&state={}", urlencoding::encode(&s)));
+                // If we have a session cookie, check auth_time via session creation time.
+                if cookie_user.is_some() {
+                    // The session's created_at serves as a proxy for auth_time.
+                    // We look up the session again to check the time.
+                    if let Some(ref session_id_str) = cookie_session_id {
+                        if let Ok(sid) = uuid::Uuid::parse_str(session_id_str) {
+                            if let Ok(Some(session)) = SessionRepo.find_by_id(&mut conn, sid).await
+                            {
+                                let auth_age =
+                                    (chrono::Utc::now() - session.created_at).num_seconds();
+                                if auth_age > max_age {
+                                    // Session is too old — require re-authentication.
+                                    let mut login_url = format!(
+                                        "/login?return_to={}",
+                                        urlencoding::encode(&format!(
+                                            "/oidc/authorize?{}",
+                                            serde_urlencoded::to_string(&params)
+                                                .unwrap_or_default()
+                                        ))
+                                    );
+                                    if let Some(s) = state_param {
+                                        login_url.push_str(&format!(
+                                            "&state={}",
+                                            urlencoding::encode(&s)
+                                        ));
+                                    }
+                                    return Ok(login_url);
+                                }
+                            }
+                        }
                     }
-                    return Ok(login_url);
+                } else {
+                    // No session cookie — if login_hint is provided, proceed.
+                    // Otherwise, redirect to login.
+                    let login_hint = params.get("login_hint");
+                    if login_hint.is_none() {
+                        let mut login_url = format!(
+                            "/login?return_to={}",
+                            urlencoding::encode(&format!(
+                                "/oidc/authorize?{}",
+                                serde_urlencoded::to_string(&params).unwrap_or_default()
+                            ))
+                        );
+                        if let Some(s) = state_param {
+                            login_url.push_str(&format!("&state={}", urlencoding::encode(&s)));
+                        }
+                        return Ok(login_url);
+                    }
                 }
             }
         }
     }
 
     // --- User authentication ---
-    // For now, we require a pre-authenticated session or login_hint.
-    // TODO: Replace with proper session/cookie-based authentication.
+    // Priority: 1) session cookie  2) login_hint  3) redirect to login
     let login_hint = params.get("login_hint").cloned();
-    let user = if let Some(email) = login_hint {
-        match oidc_repository::repositories::user_repo::UserRepo
+    let user = if let Some(u) = cookie_user {
+        u
+    } else if let Some(email) = login_hint {
+        match UserRepo
             .find_by_email(&mut conn, client.realm_id, &email)
             .await
         {
@@ -280,7 +378,7 @@ async fn authorize_inner(
             }
         }
     } else {
-        // No login_hint: redirect to login page with return URL
+        // No session cookie or login_hint: redirect to login page with return URL
         let mut login_url = format!(
             "/login?return_to={}",
             urlencoding::encode(&format!(

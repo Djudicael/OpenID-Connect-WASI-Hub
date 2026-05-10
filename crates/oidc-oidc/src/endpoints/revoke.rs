@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use oidc_repository::repositories::client_repo::ClientRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
+use oidc_repository::with_transaction;
 
 use crate::errors::OidcErrorResponse;
 use crate::state::OidcState;
@@ -34,78 +35,64 @@ pub async fn revoke_handler(
         .connect()
         .await
         .map_err(|e| OidcErrorResponse::from_internal(e))?;
-    conn.begin()
-        .await
-        .map_err(|e| OidcErrorResponse::from_internal(e))?;
 
-    // Verify client credentials
-    let client = match ClientRepo.find_by_client_id(&mut conn, client_id).await {
-        Ok(Some(c)) if c.enabled => c,
-        Ok(Some(_)) => {
-            let _ = conn.rollback().await;
-            return Err(OidcErrorResponse::invalid_client("Client is disabled"));
-        }
-        Ok(None) => {
-            let _ = conn.rollback().await;
-            return Err(OidcErrorResponse::invalid_client("Client not found"));
-        }
-        Err(e) => {
-            let _ = conn.rollback().await;
-            return Err(OidcErrorResponse::from_internal(e));
-        }
-    };
+    with_transaction!(conn, |e| OidcErrorResponse::from_internal(e), {
+        // Verify client credentials
+        let client = match ClientRepo.find_by_client_id(&mut conn, client_id).await {
+            Ok(Some(c)) if c.enabled => c,
+            Ok(Some(_)) => {
+                return Err(OidcErrorResponse::invalid_client("Client is disabled"));
+            }
+            Ok(None) => return Err(OidcErrorResponse::invalid_client("Client not found")),
+            Err(e) => return Err(OidcErrorResponse::from_internal(e)),
+        };
 
-    if let Some(ref hash) = client.client_secret_hash {
-        if !state.hasher.verify(_client_secret, hash).unwrap_or(false) {
-            let _ = conn.rollback().await;
+        if let Some(ref hash) = client.client_secret_hash {
+            if !state.hasher.verify(_client_secret, hash).unwrap_or(false) {
+                return Err(OidcErrorResponse::invalid_client(
+                    "Invalid client credentials",
+                ));
+            }
+        } else {
             return Err(OidcErrorResponse::invalid_client(
-                "Invalid client credentials",
+                "Public clients cannot revoke tokens",
             ));
         }
-    } else {
-        let _ = conn.rollback().await;
-        return Err(OidcErrorResponse::invalid_client(
-            "Public clients cannot revoke tokens",
-        ));
-    }
 
-    let token_hash = oidc_core::utils::sha2_256_hex(token);
+        let token_hash = oidc_core::utils::sha2_256_hex(token);
 
-    // Try refresh token first if hinted, otherwise try access token
-    if token_type_hint == Some("refresh_token") {
+        // Try refresh token first if hinted, otherwise try access token
+        if token_type_hint == Some("refresh_token") {
+            if let Ok(Some(session)) = SessionRepo
+                .find_by_refresh_token_hash(&mut conn, &token_hash)
+                .await
+            {
+                let _ = SessionRepo.revoke(&mut conn, session.id).await;
+                return Ok(Json(json!({})));
+            }
+        }
+
+        // Try as access token
         if let Ok(Some(session)) = SessionRepo
-            .find_by_refresh_token_hash(&mut conn, &token_hash)
+            .find_by_access_token_hash(&mut conn, &token_hash)
             .await
         {
             let _ = SessionRepo.revoke(&mut conn, session.id).await;
-            let _ = conn.commit().await;
             return Ok(Json(json!({})));
         }
-    }
 
-    // Try as access token
-    if let Ok(Some(session)) = SessionRepo
-        .find_by_access_token_hash(&mut conn, &token_hash)
-        .await
-    {
-        let _ = SessionRepo.revoke(&mut conn, session.id).await;
-        let _ = conn.commit().await;
-        return Ok(Json(json!({})));
-    }
-
-    // Also try as refresh token if not already tried
-    if token_type_hint != Some("refresh_token") {
-        if let Ok(Some(session)) = SessionRepo
-            .find_by_refresh_token_hash(&mut conn, &token_hash)
-            .await
-        {
-            let _ = SessionRepo.revoke(&mut conn, session.id).await;
-            let _ = conn.commit().await;
-            return Ok(Json(json!({})));
+        // Also try as refresh token if not already tried
+        if token_type_hint != Some("refresh_token") {
+            if let Ok(Some(session)) = SessionRepo
+                .find_by_refresh_token_hash(&mut conn, &token_hash)
+                .await
+            {
+                let _ = SessionRepo.revoke(&mut conn, session.id).await;
+                return Ok(Json(json!({})));
+            }
         }
-    }
 
-    // Per RFC 7009, return 200 even if token not found
-    let _ = conn.commit().await;
-    Ok(Json(json!({})))
+        // Per RFC 7009, return 200 even if token not found
+        Ok(Json(json!({})))
+    })
 }

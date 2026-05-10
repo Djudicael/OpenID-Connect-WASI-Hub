@@ -1,0 +1,229 @@
+# =============================================================================
+# Cloud Build — OWASP ZAP Baseline Security Scan
+# =============================================================================
+#
+# This is a SEPARATE pipeline from the main cloudbuild.yaml.
+# Security scans take 5-10 minutes and should run independently.
+#
+# Required substitutions:
+#   _BUCKET_NAME: GCS bucket for reports (e.g. "my-project-security-reports")
+#   _TARGET_URL:  Target URL to scan (default: http://localhost:8080)
+#
+# Usage:
+#   gcloud builds submit --config=security/zap-baseline.yaml \
+#     --substitutions=_TARGET_URL=https://staging.example.com
+#
+# Or with a running OIDC server sidecar:
+#   gcloud builds submit --config=security/zap-baseline.yaml \
+#     --substitutions=_TARGET_URL=http://localhost:8080
+#
+# The OIDC server can be started as a sidecar or must already be running.
+# =============================================================================
+
+timeout: 1200s
+
+substitutions:
+  _BUCKET_NAME: openid-connect-wasi-security-reports
+  _TARGET_URL: http://localhost:8080
+  _ZAP_IMAGE: owasp/zap2docker-stable
+  _SCAN_DURATION: "5"
+  _POSTGRES_IMAGE: postgres:16
+  _RUST_IMAGE: rust:1.85
+
+options:
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY
+
+steps:
+  # =========================================================================
+  # Step 0: Build the OIDC WASM component (native binary for sidecar)
+  # =========================================================================
+  - name: ${_RUST_IMAGE}
+    id: build-oidc-server
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        echo "==> Building OIDC server (native, release)..."
+        cargo build -p openid-connect-wasi --release
+        echo "==> Build complete."
+
+  # =========================================================================
+  # Step 1: Start OIDC server with PostgreSQL sidecar
+  # =========================================================================
+  - name: ${_RUST_IMAGE}
+    id: start-oidc-server
+    waitFor: ["build-oidc-server"]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        echo "==> Waiting for PostgreSQL to be ready..."
+        until pg_isready -h localhost -U oidc_test -d oidc_test 2>/dev/null; do
+          echo "    PostgreSQL not ready yet — waiting..."
+          sleep 2
+        done
+        echo "==> PostgreSQL is ready."
+
+        echo "==> Starting OIDC server..."
+        export DATABASE_URL="postgres://oidc_test:oidc_test@localhost:5432/oidc_test"
+        export OIDC_HOST="0.0.0.0"
+        export OIDC_PORT="8080"
+        # Start in background
+        /workspace/target/release/openid-connect-wasi &
+        SERVER_PID=$!
+
+        echo "==> Waiting for OIDC server to be healthy..."
+        for i in $(seq 1 30); do
+          if curl -sf http://localhost:8080/health >/dev/null 2>&1; then
+            echo "==> OIDC server is healthy (PID: ${SERVER_PID})."
+            break
+          fi
+          echo "    Waiting for server... ($i/30)"
+          sleep 2
+        done
+
+        # Keep the step alive — Cloud Build will kill it when the build ends
+        sleep infinity & wait
+
+    # PostgreSQL sidecar
+    sidecars:
+      - image: ${_POSTGRES_IMAGE}
+        env:
+          - "POSTGRES_USER=oidc_test"
+          - "POSTGRES_PASSWORD=oidc_test"
+          - "POSTGRES_DB=oidc_test"
+        readinessCheck:
+          command: ["pg_isready", "-U", "oidc_test", "-d", "oidc_test"]
+          intervalSeconds: 3
+          timeoutSeconds: 10
+          maxRetries: 20
+
+  # =========================================================================
+  # Step 2: Pull ZAP Docker image
+  # =========================================================================
+  - name: gcr.io/cloud-builders/docker
+    id: pull-zap-image
+    waitFor: ["start-oidc-server"]
+    args:
+      - pull
+      - ${_ZAP_IMAGE}
+
+  # =========================================================================
+  # Step 3: Run ZAP baseline scan
+  # =========================================================================
+  - name: ${_ZAP_IMAGE}
+    id: zap-baseline-scan
+    waitFor: ["pull-zap-image"]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set +e
+        echo "==> Running ZAP baseline scan against ${_TARGET_URL}..."
+        echo "==> Scan duration: ${_SCAN_DURATION} minutes"
+
+        # Create reports directory
+        mkdir -p /workspace/security/reports
+
+        # Run ZAP baseline scan
+        zap-baseline.py \
+          -t "${_TARGET_URL}" \
+          -m "${_SCAN_DURATION}" \
+          -c /workspace/security/zap-config.conf \
+          -r /workspace/security/reports/zap-report.html \
+          -J /workspace/security/reports/zap-report.json \
+          -z "-config contexts.0.include.regexes0=${_TARGET_URL}/.well-known/openid-configuration \
+              -config contexts.0.include.regexes1=${_TARGET_URL}/oidc/.* \
+              -config contexts.0.include.regexes2=${_TARGET_URL}/api/.* \
+              -config contexts.0.include.regexes3=${_TARGET_URL}/health.*"
+
+        ZAP_EXIT=$?
+        echo "==> ZAP exit code: ${ZAP_EXIT}"
+
+        # Save exit code for next step
+        echo "${ZAP_EXIT}" > /workspace/security/reports/zap-exit-code.txt
+
+        # Exit 0 here — we'll check the code in the next step
+        exit 0
+
+  # =========================================================================
+  # Step 4: Upload reports to GCS
+  # =========================================================================
+  - name: gcr.io/cloud-builders/gsutil
+    id: upload-reports
+    waitFor: ["zap-baseline-scan"]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        BUILD_ID_SHORT="$(echo ${BUILD_ID} | cut -c1-8)"
+        TIMESTAMP="$(date -u +%Y%m%d-%H%M%S)"
+        REPORT_PATH="gs://${_BUCKET_NAME}/zap-scans/${TIMESTAMP}-${BUILD_ID_SHORT}"
+
+        echo "==> Uploading ZAP reports to ${REPORT_PATH}/..."
+
+        if [[ -f /workspace/security/reports/zap-report.html ]]; then
+          gsutil cp /workspace/security/reports/zap-report.html "${REPORT_PATH}/zap-report.html"
+          echo "    HTML report uploaded."
+        fi
+
+        if [[ -f /workspace/security/reports/zap-report.json ]]; then
+          gsutil cp /workspace/security/reports/zap-report.json "${REPORT_PATH}/zap-report.json"
+          echo "    JSON report uploaded."
+        fi
+
+        # Upload latest symlink
+        gsutil cp /workspace/security/reports/zap-report.html "gs://${_BUCKET_NAME}/zap-scans/latest/zap-report.html" || true
+        gsutil cp /workspace/security/reports/zap-report.json "gs://${_BUCKET_NAME}/zap-scans/latest/zap-report.json" || true
+
+        echo "==> Reports uploaded."
+
+  # =========================================================================
+  # Step 5: Evaluate results — fail build on HIGH/CRITICAL alerts
+  # =========================================================================
+  - name: gcr.io/cloud-builders/gsutil
+    id: evaluate-results
+    waitFor: ["upload-reports"]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        ZAP_EXIT="$(cat /workspace/security/reports/zap-exit-code.txt 2>/dev/null || echo "3")"
+        echo "==> ZAP scan exit code: ${ZAP_EXIT}"
+
+        case ${ZAP_EXIT} in
+          0)
+            echo "✅ ZAP scan PASSED — no alerts found."
+            ;;
+          1)
+            echo "⚠️  ZAP scan found WARN-level alerts (informational)."
+            echo "    Review the report for details. Build continues."
+            ;;
+          2)
+            echo "❌ ZAP scan FAILED — HIGH or CRITICAL alerts found!"
+            echo "    Review the report and fix the issues."
+            echo "    Reports are available in GCS under the build artifacts."
+            exit 1
+            ;;
+          3)
+            echo "❌ ZAP scan encountered an ERROR."
+            echo "    Check that the target server was running and accessible."
+            exit 1
+            ;;
+          *)
+            echo "❌ ZAP exited with unexpected code: ${ZAP_EXIT}"
+            exit 1
+            ;;
+        esac
+
+        echo ""
+        echo "=========================================="
+        echo " ZAP Baseline Scan Complete"
+        echo " Target: ${_TARGET_URL}"
+        echo " Result: $([ ${ZAP_EXIT} -le 1 ] && echo 'PASS' || echo 'FAIL')"
+        echo "=========================================="

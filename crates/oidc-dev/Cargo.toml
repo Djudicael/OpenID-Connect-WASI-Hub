@@ -20,10 +20,14 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 
 # Database
-wasi-pg-client = { workspace = true, features = ["tokio-transport"] }
+wasi-pg-client = { workspace = true, features = ["tokio-transport", "uuid", "chrono", "serde-json"] }
+
+# Repository & API key layers
+oidc-repository = { path = "../oidc-repository" }
+oidc-apikey = { path = "../oidc-apikey" }
 
 # HTTP client for health checks
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
 # Process management
 nix = { version = "0.29", features = ["signal", "process"] }
@@ -33,5 +37,5 @@ portpicker = "0.1"
 
 # Workspace
 oidc-core = { path = "../oidc-core" }
-oidc-repository = { path = "../oidc-repository" }
 uuid = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }

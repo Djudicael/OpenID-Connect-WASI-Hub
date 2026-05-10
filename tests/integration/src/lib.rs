@@ -29,6 +29,9 @@ pub mod oidc_tests;
 pub mod security_tests;
 
 #[cfg(test)]
+pub mod repo_tests;
+
+#[cfg(test)]
 mod http_tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};

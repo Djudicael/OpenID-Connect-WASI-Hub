@@ -113,6 +113,27 @@ steps:
         cargo test --workspace --exclude integration-tests --exclude oidc-dev
 
   # =========================================================================
+  # Step 4d: Code coverage (parallel with WASM build)
+  # =========================================================================
+  - name: ${_RUST_IMAGE}
+    id: coverage
+    waitFor: ["test-native"]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        echo "==> Installing llvm-tools-preview rustup component..."
+        rustup component add llvm-tools-preview
+        echo "==> Installing cargo-llvm-cov..."
+        cargo install cargo-llvm-cov --locked
+        echo "==> Running cargo llvm-cov (workspace, excluding integration-tests & oidc-dev)..."
+        cargo llvm-cov --workspace --exclude integration-tests --exclude oidc-dev --lcov --output-path lcov.info
+        echo "==> Coverage report generated: lcov.info"
+        echo "==> Checking minimum line coverage (60%)..."
+        cargo llvm-cov --workspace --exclude integration-tests --exclude oidc-dev --fail-under-lines 60
+
+  # =========================================================================
   # Step 4a: Build WASM component (parallel)
   # =========================================================================
   - name: ${_RUST_IMAGE}
@@ -172,7 +193,7 @@ steps:
   # =========================================================================
   - name: ${_RUST_IMAGE}
     id: integration-tests
-    waitFor: ["build-wasm", "build-frontend", "security-audit"]
+    waitFor: ["build-wasm", "build-frontend", "security-audit", "coverage"]
     entrypoint: bash
     args:
       - -c
@@ -224,3 +245,11 @@ steps:
         echo "    Uploading to GCS..."
         gsutil -m cp /tmp/cargo-cache/*.tar.gz "gs://${_BUCKET_NAME}/cargo-cache/"
         echo "==> Cache saved."
+
+# ---------------------------------------------------------------------------
+# Artifacts: coverage report
+# ---------------------------------------------------------------------------
+artifacts:
+  objects:
+    location: "gs://${_BUCKET_NAME}/artifacts/${BUILD_ID}"
+    paths: ["lcov.info"]

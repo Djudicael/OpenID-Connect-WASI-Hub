@@ -7,6 +7,7 @@
 pub mod endpoints;
 pub mod errors;
 pub mod flows;
+pub mod session_cookie;
 pub mod state;
 pub mod tokens;
 pub mod validation;

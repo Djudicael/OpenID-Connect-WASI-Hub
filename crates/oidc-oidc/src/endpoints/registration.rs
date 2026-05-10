@@ -5,7 +5,9 @@ use uuid::Uuid;
 
 use oidc_core::OidcError;
 use oidc_core::models::{Client, ClientType};
+use oidc_repository::mapper::pg_err;
 use oidc_repository::repositories::client_repo::ClientRepo;
+use oidc_repository::with_transaction;
 
 use crate::state::OidcState;
 
@@ -170,7 +172,9 @@ pub async fn register_handler(
         deleted_at: None,
     };
 
-    ClientRepo.create(&mut conn, &client).await?;
+    with_transaction!(conn, pg_err, {
+        ClientRepo.create(&mut conn, &client).await
+    })?;
 
     // ── Response (RFC 7591 §3.2) ────────────────────────────────────────
     let mut response = json!({

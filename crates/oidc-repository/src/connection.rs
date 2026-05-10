@@ -91,3 +91,39 @@ impl Connection {
         Ok(result.rows_affected().unwrap_or(0))
     }
 }
+
+/// Execute an async block inside a database transaction.
+///
+/// - Begins a transaction on `$conn`
+/// - Runs the block (which can use `$conn` via `&mut`)
+/// - Commits on `Ok`, rolls back on `Err`
+///
+/// `$map_err` is an expression `impl Fn(PgError) -> E` that converts
+/// transaction-level errors (begin/commit failures) into the caller's
+/// error type.
+///
+/// # Example
+///
+/// ```ignore
+/// with_transaction!(conn, pg_err, {
+///     let user = UserRepo.find_by_email(conn, realm_id, email).await?;
+///     Ok(user)
+/// })
+/// ```
+#[macro_export]
+macro_rules! with_transaction {
+    ($conn:expr, $map_err:expr, $body:block) => {{
+        $conn.begin().await.map_err(&$map_err)?;
+        let result = async $body.await;
+        match result {
+            Ok(value) => {
+                $conn.commit().await.map_err($map_err)?;
+                Ok(value)
+            }
+            Err(user_err) => {
+                let _ = $conn.rollback().await;
+                Err(user_err)
+            }
+        }
+    }};
+}

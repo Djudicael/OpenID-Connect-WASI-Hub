@@ -2,11 +2,17 @@
 //! backend server, frontend dev server, and proxy for local development.
 //!
 //! Usage:
-//!   cargo run -p oidc-dev -- start    # Start everything
+//!   cargo run -p oidc-dev -- start    # Start everything (DB + backend + frontend + proxy)
 //!   cargo run -p oidc-dev -- stop     # Stop everything
 //!   cargo run -p oidc-dev -- status   # Show status
 //!   cargo run -p oidc-dev -- db-only  # Start DB + migrations only
 //!   cargo run -p oidc-dev -- logs     # Tail all service logs
+//!   cargo run -p oidc-dev -- wasm     # Start DB + WASM component via wasmtime
+//!   cargo run -p oidc-dev -- test     # Run smoke tests against running server
+//!
+//! Dev Credentials (seeded on first start):
+//!   Admin login:    admin@localhost / Admin123
+//!   Client creds:   test-service / test-service-secret
 //!
 //! When the process exits (Ctrl-C), the PostgreSQL container is automatically dropped.
 
@@ -83,8 +89,10 @@ async fn main() -> Result<()> {
         "status" => cmd_status().await,
         "db-only" => cmd_db_only().await,
         "logs" => cmd_logs().await,
+        "wasm" => cmd_wasm().await,
+        "test" => cmd_test().await,
         _ => {
-            eprintln!("Usage: oidc-dev {{start|stop|status|db-only|logs}}");
+            eprintln!("Usage: oidc-dev {{start|stop|status|db-only|logs|wasm|test}}");
             std::process::exit(1);
         }
     }
@@ -269,6 +277,328 @@ async fn cmd_logs() -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+// ─── WASM Command ──────────────────────────────────────────────────────────────
+
+async fn cmd_wasm() -> Result<()> {
+    check_tools().await?;
+
+    let state = Arc::new(Mutex::new(DevState::new(
+        String::new(),
+        pick_port(8080),
+        0, // no frontend
+        0, // no proxy
+    )));
+
+    let db_url = start_database(&state).await?;
+    {
+        let mut s = state.lock().await;
+        s.db_url = db_url.clone();
+    }
+
+    run_migrations(&db_url).await?;
+    seed_data(&db_url, 8080).await?;
+
+    // Build WASM component
+    info!("Building WASM component...");
+    let build = Command::new("cargo")
+        .args([
+            "build",
+            "-p",
+            "openid-connect-wasi",
+            "--target",
+            "wasm32-wasip2",
+            "--release",
+        ])
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .context("failed to build WASM component")?;
+
+    let output = build.wait_with_output().await?;
+    if !output.status.success() {
+        anyhow::bail!("WASM build failed (exit code: {:?})", output.status.code());
+    }
+    info!("WASM component built.");
+
+    // Check wasmtime is available
+    let wasmtime_check = Command::new("wasmtime")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await;
+    if wasmtime_check.is_err() || !wasmtime_check.unwrap().success() {
+        anyhow::bail!(
+            "wasmtime is required but not found. Install it first:\n  curl https://wasmtime.dev/install.sh -sSf | bash"
+        );
+    }
+
+    let port = {
+        let s = state.lock().await;
+        s.backend_port
+    };
+
+    let encryption_key =
+        "2a3131371e4b5559606b70777e858f969da4acb3babec5ccc3cdd5dddbe3e9f0".to_string();
+
+    let wasm_path = "target/wasm32-wasip2/release/openid_connect_wasi.wasm";
+    info!("Starting WASM component via wasmtime on port {port}...");
+
+    let mut cmd = Command::new("wasmtime");
+    cmd.arg("run")
+        .arg("--wasi")
+        .arg("inherit-network")
+        .arg("--wasi")
+        .arg("inherit-env")
+        .arg("--env")
+        .arg(format!("OIDC_DATABASE_URL={}", &db_url))
+        .arg("--env")
+        .arg(format!("OIDC_SERVER_PORT={}", port))
+        .arg("--env")
+        .arg(format!("OIDC_SERVER_BIND_ADDRESS={}", BIND_ADDRESS))
+        .arg("--env")
+        .arg(format!("OIDC_ENCRYPTION_KEY={}", &encryption_key))
+        .arg("--env")
+        .arg(format!("OIDC_ISSUER=http://localhost:{}", port))
+        .arg("--env")
+        .arg("OIDC_RATE_LIMIT_MAX=1000")
+        .arg("--env")
+        .arg("OIDC_RATE_LIMIT_WINDOW_SECS=60")
+        .arg(wasm_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().context("failed to start wasmtime")?;
+
+    let stderr = child.stderr.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    tokio::spawn(stream_logs("wasm", stderr));
+    tokio::spawn(stream_logs("wasm-out", stdout));
+
+    let health_url = format!("http://127.0.0.1:{port}/health");
+    wait_for_http(&health_url, 30).await?;
+
+    {
+        let mut s = state.lock().await;
+        s.backend = Some(child);
+    }
+
+    info!("═══════════════════════════════════════════════════════════════");
+    info!("  WASM dev environment ready!");
+    info!("");
+    info!("  Backend API:   http://localhost:{}", port);
+    info!("  Database:      {}", db_url);
+    info!("");
+    info!("  Press Ctrl-C to stop (container auto-drops)");
+    info!("═══════════════════════════════════════════════════════════════");
+
+    tokio::signal::ctrl_c().await?;
+    info!("Shutting down...");
+    shutdown_all(&state).await;
+
+    Ok(())
+}
+
+// ─── Test Command ────────────────────────────────────────────────────────────
+
+async fn cmd_test() -> Result<()> {
+    // Quick smoke test against a running dev environment
+    let port: u16 = std::env::var("OIDC_SERVER_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(8080);
+    let base_url = format!("http://localhost:{}", port);
+
+    info!("Running smoke tests against {}...", base_url);
+
+    let client = reqwest::Client::new();
+    let mut passed = 0u32;
+    let mut failed = 0u32;
+
+    // Test 1: Health endpoint
+    match client.get(format!("{base_url}/health")).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            info!("  ✓ GET /health → {}", resp.status());
+            passed += 1;
+        }
+        Ok(resp) => {
+            warn!("  ✗ GET /health → {} (expected 200)", resp.status());
+            failed += 1;
+        }
+        Err(e) => {
+            warn!("  ✗ GET /health → connection failed: {}", e);
+            failed += 1;
+        }
+    }
+
+    // Test 2: Health ready (checks DB)
+    match client.get(format!("{base_url}/health/ready")).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            info!("  ✓ GET /health/ready → {}", resp.status());
+            passed += 1;
+        }
+        Ok(resp) => {
+            warn!("  ✗ GET /health/ready → {} (expected 200)", resp.status());
+            failed += 1;
+        }
+        Err(e) => {
+            warn!("  ✗ GET /health/ready → connection failed: {}", e);
+            failed += 1;
+        }
+    }
+
+    // Test 3: Discovery document
+    match client
+        .get(format!("{base_url}/.well-known/openid-configuration"))
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+            let has_issuer = body.get("issuer").is_some();
+            let has_algs = body.get("id_token_signing_alg_values_supported").is_some();
+            if has_issuer && has_algs {
+                info!("  ✓ GET /.well-known/openid-configuration → valid");
+                passed += 1;
+            } else {
+                warn!("  ✗ GET /.well-known/openid-configuration → missing fields");
+                failed += 1;
+            }
+        }
+        Ok(resp) => {
+            warn!(
+                "  ✗ GET /.well-known/openid-configuration → {}",
+                resp.status()
+            );
+            failed += 1;
+        }
+        Err(e) => {
+            warn!("  ✗ GET /.well-known/openid-configuration → {}", e);
+            failed += 1;
+        }
+    }
+
+    // Test 4: JWKS endpoint
+    match client.get(format!("{base_url}/oidc/jwks")).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+            let keys = body.get("keys").and_then(|k| k.as_array());
+            if let Some(keys) = keys {
+                let has_rsa = keys
+                    .iter()
+                    .any(|k| k.get("kty").map(|v| v == "RSA").unwrap_or(false));
+                let has_okp = keys
+                    .iter()
+                    .any(|k| k.get("kty").map(|v| v == "OKP").unwrap_or(false));
+                info!(
+                    "  ✓ GET /oidc/jwks → {} keys (RSA: {}, EdDSA: {})",
+                    keys.len(),
+                    has_rsa,
+                    has_okp
+                );
+                passed += 1;
+            } else {
+                warn!("  ✗ GET /oidc/jwks → no keys array");
+                failed += 1;
+            }
+        }
+        Ok(resp) => {
+            warn!("  ✗ GET /oidc/jwks → {}", resp.status());
+            failed += 1;
+        }
+        Err(e) => {
+            warn!("  ✗ GET /oidc/jwks → {}", e);
+            failed += 1;
+        }
+    }
+
+    // Test 5: Client credentials token
+    match client
+        .post(format!("{base_url}/oidc/token"))
+        .form(&[
+            ("grant_type", "client_credentials"),
+            ("client_id", "test-service"),
+            ("client_secret", "test-service-secret"),
+        ])
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+            let has_token = body.get("access_token").is_some();
+            if has_token {
+                info!("  ✓ POST /oidc/token (client_credentials) → access_token issued");
+                passed += 1;
+            } else {
+                warn!("  ✗ POST /oidc/token (client_credentials) → no access_token");
+                failed += 1;
+            }
+        }
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            warn!(
+                "  ✗ POST /oidc/token (client_credentials) → {} : {}",
+                status, body
+            );
+            failed += 1;
+        }
+        Err(e) => {
+            warn!("  ✗ POST /oidc/token (client_credentials) → {}", e);
+            failed += 1;
+        }
+    }
+
+    // Test 6: Login with admin credentials
+    match client
+        .post(format!("{base_url}/oidc/login"))
+        .json(&serde_json::json!({
+            "email": "admin@localhost",
+            "password": "Admin123",
+            "client_id": "admin-ui"
+        }))
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            let body: serde_json::Value = resp.json().await.unwrap_or_default();
+            let has_tokens = body.get("access_token").is_some() && body.get("id_token").is_some();
+            if has_tokens {
+                info!("  ✓ POST /oidc/login → tokens issued");
+                passed += 1;
+            } else {
+                warn!("  ✗ POST /oidc/login → missing tokens");
+                failed += 1;
+            }
+        }
+        Ok(resp) => {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            warn!("  ✗ POST /oidc/login → {} : {}", status, body);
+            failed += 1;
+        }
+        Err(e) => {
+            warn!("  ✗ POST /oidc/login → {}", e);
+            failed += 1;
+        }
+    }
+
+    info!("");
+    info!("═══════════════════════════════════════════════════════════════");
+    info!("  Smoke test results: {} passed, {} failed", passed, failed);
+    if failed == 0 {
+        info!("  All tests passed! ✓");
+    } else {
+        warn!("  Some tests failed. Is the server running? Try: cargo run -p oidc-dev -- start");
+    }
+    info!("═══════════════════════════════════════════════════════════════");
+
+    if failed > 0 {
+        std::process::exit(1);
+    }
     Ok(())
 }
 
@@ -466,131 +796,214 @@ async fn seed_data(db_url: &str, proxy_port: u16) -> Result<()> {
     info!("Seeding dev data...");
 
     let config = wasi_pg_client::Config::from_uri(db_url).context("invalid database URL")?;
+    let hasher = oidc_core::traits::hasher::Argon2idHasher::new();
 
     // 1. Realm
-    info!("Step 1/4: realm...");
+    info!("Step 1/5: realm...");
     let realm_id = {
-        let mut conn = wasi_pg_client::Connection::connect(&config)
+        let pg_conn = wasi_pg_client::Connection::connect(&config)
             .await
             .context("seed: connect for realm")?;
-        let check = conn
-            .query_params("SELECT id FROM realms WHERE name = $1", &[&"master"])
-            .await?;
-        let rows = check.into_rows();
-        if rows.is_empty() {
-            let id = oidc_core::utils::generate_uuid_v7();
-            conn.execute_params(
-                "INSERT INTO realms (id, name, display_name, enabled) VALUES ($1, $2, $3, $4)",
-                &[&id, &"master", &"Master Realm", &true],
-            )
-            .await?;
-            info!("Created 'master' realm");
-            id
-        } else {
-            let row = rows.into_iter().next().unwrap();
-            row.get::<uuid::Uuid>(0)
-                .unwrap_or_else(|_| oidc_core::utils::generate_uuid_v7())
+        let mut conn = oidc_repository::Connection::from_pg_client(pg_conn);
+        let repo = oidc_repository::repositories::realm_repo::RealmRepo;
+        match repo.find_by_name(&mut conn, "master").await {
+            Ok(Some(realm)) => realm.id,
+            Ok(None) => {
+                let id = oidc_core::utils::generate_uuid_v7();
+                let realm = oidc_core::models::Realm {
+                    id,
+                    name: "master".into(),
+                    display_name: "Master Realm".into(),
+                    enabled: true,
+                    config: serde_json::Value::Object(serde_json::Map::new()),
+                    deleted_at: None,
+                };
+                repo.create(&mut conn, &realm)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("realm create: {e}"))?;
+                info!("Created 'master' realm");
+                id
+            }
+            Err(e) => return Err(anyhow::anyhow!("realm lookup: {e}")),
         }
     };
 
     // 2. Admin user
-    info!("Step 2/4: admin user...");
+    info!("Step 2/5: admin user...");
     let user_id = {
-        let mut conn = wasi_pg_client::Connection::connect(&config)
+        let pg_conn = wasi_pg_client::Connection::connect(&config)
             .await
             .context("seed: connect for user")?;
-        let check = conn
-            .query_params(
-                "SELECT id FROM users WHERE realm_id = $1 AND email = $2 AND deleted_at IS NULL",
-                &[&realm_id, &"admin@localhost"],
-            )
-            .await?;
-        let rows = check.into_rows();
-        if rows.is_empty() {
-            let id = oidc_core::utils::generate_uuid_v7();
-            let hasher = oidc_core::traits::hasher::Argon2idHasher::new();
-            let password_hash = hasher
-                .hash("admin123")
-                .map_err(|e| anyhow::anyhow!("hash failed: {e}"))?;
-            conn.execute_params(
-                r#"INSERT INTO users (id, realm_id, email, email_verified, username, password_hash, given_name, family_name, enabled)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
-                &[&id, &realm_id, &"admin@localhost", &true, &"admin", &Some(password_hash), &Some("Admin"), &Some("User"), &true],
-            ).await?;
-            info!("Created admin user (admin@localhost / admin123)");
-            id
-        } else {
-            let row = rows.into_iter().next().unwrap();
-            row.get::<uuid::Uuid>(0)
-                .unwrap_or_else(|_| oidc_core::utils::generate_uuid_v7())
+        let mut conn = oidc_repository::Connection::from_pg_client(pg_conn);
+        let repo = oidc_repository::repositories::user_repo::UserRepo;
+        match repo
+            .find_by_email(&mut conn, realm_id, "admin@localhost")
+            .await
+        {
+            Ok(Some(user)) => user.id,
+            Ok(None) => {
+                let id = oidc_core::utils::generate_uuid_v7();
+                let password_hash = hasher
+                    .hash("Admin123")
+                    .map_err(|e| anyhow::anyhow!("hash failed: {e}"))?;
+                let user = oidc_core::models::User {
+                    id,
+                    realm_id,
+                    email: "admin@localhost".into(),
+                    email_verified: true,
+                    username: Some("admin".into()),
+                    password_hash: Some(password_hash),
+                    given_name: Some("Admin".into()),
+                    family_name: Some("User".into()),
+                    phone_number: None,
+                    locale: None,
+                    attributes: serde_json::Value::Object(serde_json::Map::new()),
+                    enabled: true,
+                    deleted_at: None,
+                };
+                repo.create(&mut conn, &user)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("user create: {e}"))?;
+                info!("Created admin user (admin@localhost / Admin123)");
+                id
+            }
+            Err(e) => return Err(anyhow::anyhow!("user lookup: {e}")),
         }
     };
 
-    // 3. Client
-    info!("Step 3/4: OIDC client...");
+    // 3. Clients
+    info!("Step 3/5: OIDC clients...");
     {
-        let mut conn = wasi_pg_client::Connection::connect(&config)
+        let pg_conn = wasi_pg_client::Connection::connect(&config)
             .await
             .context("seed: connect for client")?;
-        let check = conn
-            .query_params(
-                "SELECT id FROM clients WHERE client_id = $1",
-                &[&"admin-ui"],
-            )
-            .await?;
-        let rows = check.into_rows();
-        if rows.is_empty() {
+        let mut conn = oidc_repository::Connection::from_pg_client(pg_conn);
+        let repo = oidc_repository::repositories::client_repo::ClientRepo;
+
+        // Public client (admin-ui)
+        if repo
+            .find_by_client_id(&mut conn, "admin-ui")
+            .await?
+            .is_none()
+        {
             let id = oidc_core::utils::generate_uuid_v7();
-            let redirect_uris = serde_json::json!([
-                format!("http://localhost:{}/callback", proxy_port),
-                format!("http://localhost:{}/admin/callback", proxy_port)
-            ]);
-            let scopes = serde_json::json!(["openid", "profile", "email"]);
-            let grant_types = serde_json::json!(["authorization_code", "refresh_token"]);
-            conn.execute_params(
-                r#"INSERT INTO clients (id, realm_id, client_id, client_type, name, redirect_uris, allowed_scopes, allowed_grant_types, pkce_required, enabled)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"#,
-                &[&id, &realm_id, &"admin-ui", &"public", &"Admin UI", &redirect_uris, &scopes, &grant_types, &true, &true],
-            ).await?;
-            info!("Created 'admin-ui' OIDC client");
+            let client = oidc_core::models::Client {
+                id,
+                realm_id,
+                client_id: "admin-ui".into(),
+                client_type: oidc_core::models::ClientType::Public,
+                client_secret_hash: None,
+                name: "Admin UI".into(),
+                redirect_uris: vec![
+                    format!("http://localhost:{}/callback", proxy_port),
+                    format!("http://localhost:{}/admin/callback", proxy_port),
+                ],
+                allowed_scopes: vec!["openid".into(), "profile".into(), "email".into()],
+                allowed_grant_types: vec!["authorization_code".into(), "refresh_token".into()],
+                pkce_required: true,
+                enabled: true,
+                deleted_at: None,
+            };
+            repo.create(&mut conn, &client)
+                .await
+                .map_err(|e| anyhow::anyhow!("client create: {e}"))?;
+            info!("Created 'admin-ui' public OIDC client");
+        }
+
+        // Confidential client (for client_credentials flow / load testing)
+        if repo
+            .find_by_client_id(&mut conn, "test-service")
+            .await?
+            .is_none()
+        {
+            let id = oidc_core::utils::generate_uuid_v7();
+            let client_secret_hash = hasher
+                .hash("test-service-secret")
+                .map_err(|e| anyhow::anyhow!("hash failed: {e}"))?;
+            let client = oidc_core::models::Client {
+                id,
+                realm_id,
+                client_id: "test-service".into(),
+                client_type: oidc_core::models::ClientType::Confidential,
+                client_secret_hash: Some(client_secret_hash),
+                name: "Test Service (client_credentials)".into(),
+                redirect_uris: vec![],
+                allowed_scopes: vec!["openid".into(), "profile".into(), "email".into()],
+                allowed_grant_types: vec!["client_credentials".into()],
+                pkce_required: false,
+                enabled: true,
+                deleted_at: None,
+            };
+            repo.create(&mut conn, &client)
+                .await
+                .map_err(|e| anyhow::anyhow!("client create: {e}"))?;
+            info!(
+                "Created 'test-service' confidential client (client_id: test-service, client_secret: test-service-secret)"
+            );
         }
     }
 
     // 4. API key — best effort, don't let it hang the whole startup
-    info!("Step 4/4: admin API key...");
+    info!("Step 4/5: admin API key...");
     let api_key_result = tokio::time::timeout(Duration::from_secs(10), async {
-        let mut conn = wasi_pg_client::Connection::connect(&config)
+        let pg_conn = wasi_pg_client::Connection::connect(&config)
             .await
             .context("seed: connect for api key")?;
-        let check = conn.query_params("SELECT id FROM api_keys WHERE NOT revoked LIMIT 1", &[]).await?;
-        let rows = check.into_rows();
-        if rows.is_empty() {
-            let id = oidc_core::utils::generate_uuid_v7();
-            let prefix = "oidc_adm";
-            let raw_secret = format!("{}_{}", prefix, oidc_core::utils::generate_opaque_token().map_err(|e| anyhow::anyhow!("token gen failed: {e}"))?);
-            let hasher = oidc_core::traits::hasher::Argon2idHasher::new();
-            let hashed_secret = hasher.hash(&raw_secret).map_err(|e| anyhow::anyhow!("hash failed: {e}"))?;
-            let scopes = serde_json::json!(["admin"]);
-            conn.execute_params(
-                r#"INSERT INTO api_keys (id, realm_id, name, prefix, hashed_secret, scopes, revoked, request_count, created_by)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
-                &[&id, &realm_id, &"Dev Admin Key", &prefix, &hashed_secret, &scopes, &false, &0i64, &Some(user_id)],
-            ).await?;
-            info!("═══════════════════════════════════════════════════════════════");
-            info!("  ADMIN API KEY (save this — shown only once):");
-            info!("  {}", raw_secret);
-            info!("═══════════════════════════════════════════════════════════════");
-        } else {
+        let mut conn = oidc_repository::Connection::from_pg_client(pg_conn);
+
+        // Check if any active API key already exists
+        let repo = oidc_repository::repositories::api_key_repo::ApiKeyRepo;
+        let existing = repo
+            .find_by_realm(&mut conn, realm_id, false)
+            .await
+            .map_err(|e| anyhow::anyhow!("api key lookup: {e}"))?;
+        if !existing.is_empty() {
             info!("Admin API key already exists.");
+            return Ok::<_, anyhow::Error>(());
         }
+
+        // Use ApiKeyService::generate_key for proper key generation
+        let (_api_key, raw_key) = oidc_apikey::ApiKeyService::generate_key(
+            &mut conn,
+            realm_id,
+            "Dev Admin Key".into(),
+            vec!["admin".into()],
+            None, // no expiration
+            Some(user_id),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("api key generate: {e}"))?;
+
+        info!("═══════════════════════════════════════════════════════════════");
+        info!("  ADMIN API KEY (save this — shown only once):");
+        info!("  {}", raw_key);
+        info!("═══════════════════════════════════════════════════════════════");
         Ok::<_, anyhow::Error>(())
-    }).await;
+    })
+    .await;
 
     match api_key_result {
         Ok(Ok(())) => {}
         Ok(Err(e)) => warn!("API key seed failed (non-fatal): {e}"),
         Err(_) => warn!("API key seed timed out (non-fatal), continuing..."),
     }
+
+    // 5. Print dev credentials summary
+    info!("Step 5/5: dev credentials summary...");
+    info!("═══════════════════════════════════════════════════════════════");
+    info!("  Dev Credentials:");
+    info!("");
+    info!("  Admin login:");
+    info!("    Email:    admin@localhost");
+    info!("    Password: Admin123");
+    info!("");
+    info!("  Confidential client (client_credentials):");
+    info!("    Client ID:     test-service");
+    info!("    Client Secret: test-service-secret");
+    info!("");
+    info!("  Note: JWT signing keys are auto-generated on startup.");
+    info!("  Tokens are invalidated on server restart.");
+    info!("═══════════════════════════════════════════════════════════════");
 
     info!("Seed data complete.");
     Ok(())
@@ -677,6 +1090,11 @@ async fn start_backend(state: &Arc<Mutex<DevState>>, db_url: &str) -> Result<()>
     let encryption_key =
         "2a3131371e4b5559606b70777e858f969da4acb3babec5ccc3cdd5dddbe3e9f0".to_string();
 
+    // Note: OIDC_SIGNING_KEY and OIDC_ED25519_KEY are NOT set here.
+    // The backend auto-generates RSA + Ed25519 keypairs on startup.
+    // This means JWTs are invalidated on restart — acceptable for dev.
+    // To persist keys across restarts, generate PEM files and set the env vars.
+
     let mut cmd = Command::new("cargo");
     cmd.arg("run")
         .arg("-p")
@@ -692,6 +1110,8 @@ async fn start_backend(state: &Arc<Mutex<DevState>>, db_url: &str) -> Result<()>
             "OIDC_CORS_ORIGINS",
             format!("http://localhost:{proxy_port}"),
         )
+        .env("OIDC_RATE_LIMIT_MAX", "1000") // High limit for dev/testing
+        .env("OIDC_RATE_LIMIT_WINDOW_SECS", "60")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 

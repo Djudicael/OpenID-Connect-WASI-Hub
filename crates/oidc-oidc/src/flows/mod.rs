@@ -2,4 +2,5 @@
 
 pub mod authorization_code;
 pub mod client_credentials;
+pub mod password;
 pub mod refresh_token;

@@ -4,6 +4,7 @@
 //! PostgreSQL database, seeds baseline test data, and provides a
 //! `reqwest` client for making HTTP requests in integration tests.
 
+use oidc_core::traits::Hasher;
 use oidc_repository::repositories::{
     client_repo::ClientRepo, realm_repo::RealmRepo, user_repo::UserRepo,
 };
@@ -76,12 +77,16 @@ impl TestApp {
 
         let issuer = format!("http://localhost:{port}");
 
-        std::env::set_var("OIDC_DATABASE_URL", &db_url);
-        std::env::set_var("OIDC_ENCRYPTION_KEY", fixtures::TEST_ENCRYPTION_KEY);
-        std::env::set_var("OIDC_ISSUER", &issuer);
-        std::env::set_var("OIDC_SERVER_PORT", port.to_string());
-        std::env::set_var("OIDC_SERVER_BIND_ADDRESS", "127.0.0.1");
-        std::env::set_var("OIDC_CORS_ORIGINS", "http://localhost:3000");
+        // SAFETY: These env vars are set before any concurrent access in tests.
+        // Tests run single-threaded (--test-threads=1).
+        unsafe {
+            std::env::set_var("OIDC_DATABASE_URL", &db_url);
+            std::env::set_var("OIDC_ENCRYPTION_KEY", fixtures::TEST_ENCRYPTION_KEY);
+            std::env::set_var("OIDC_ISSUER", &issuer);
+            std::env::set_var("OIDC_SERVER_PORT", port.to_string());
+            std::env::set_var("OIDC_SERVER_BIND_ADDRESS", "127.0.0.1");
+            std::env::set_var("OIDC_CORS_ORIGINS", "http://localhost:3000");
+        }
 
         let app = openid_connect_wasi::app_router();
 
@@ -201,8 +206,7 @@ impl TestApp {
         );
 
         let hasher = oidc_core::traits::hasher::Argon2idHasher::new();
-        let hash = hasher
-            .hash(client_secret)
+        let hash = <dyn oidc_core::traits::Hasher>::hash(&hasher, client_secret)
             .expect("failed to hash client secret");
         client.client_secret_hash = Some(hash);
 
