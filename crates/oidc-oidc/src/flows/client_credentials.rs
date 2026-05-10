@@ -4,6 +4,7 @@ use oidc_core::OidcError;
 use oidc_core::models::Session;
 use oidc_core::traits::TokenService;
 use oidc_core::utils::{generate_uuid_v7, sha2_256_hex};
+use oidc_repository::mapper::pg_err;
 use oidc_repository::repositories::client_repo::ClientRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 use serde_json::{Value, json};
@@ -21,22 +22,39 @@ impl ClientCredentialsFlow {
         client_secret: &str,
     ) -> Result<Value, OidcError> {
         let mut conn = state.connect().await?;
-        let client = ClientRepo
-            .find_by_client_id(&mut conn, client_id)
-            .await?
-            .ok_or(OidcError::InvalidClient)?;
+        conn.begin().await.map_err(pg_err)?;
 
-        if !client.enabled {
-            return Err(OidcError::InvalidClient);
-        }
+        let client = match ClientRepo.find_by_client_id(&mut conn, client_id).await? {
+            Some(c) if c.enabled => c,
+            Some(_) => {
+                let _ = conn.rollback().await;
+                return Err(OidcError::InvalidClient);
+            }
+            None => {
+                let _ = conn.rollback().await;
+                return Err(OidcError::InvalidClient);
+            }
+        };
 
         match client.client_secret_hash {
             Some(ref hash) => {
-                if !state.hasher.verify(client_secret, hash)? {
+                let verified = match state.hasher.verify(client_secret, hash) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::error!("Internal error: verify failed: {}", e);
+                        let _ = conn.rollback().await;
+                        return Err(OidcError::Internal(e.to_string()));
+                    }
+                };
+                if !verified {
+                    let _ = conn.rollback().await;
                     return Err(OidcError::InvalidClient);
                 }
             }
-            None => return Err(OidcError::InvalidClient),
+            None => {
+                let _ = conn.rollback().await;
+                return Err(OidcError::InvalidClient);
+            }
         }
 
         let access_token = state
@@ -70,7 +88,14 @@ impl ClientCredentialsFlow {
             family_revoked: false,
         };
 
-        SessionRepo.create(&mut conn, &session).await?;
+        if let Err(e) = SessionRepo.create(&mut conn, &session).await {
+            let _ = conn.rollback().await;
+            return Err(e);
+        }
+        if let Err(e) = conn.commit().await {
+            let _ = conn.rollback().await;
+            return Err(pg_err(e));
+        }
 
         Ok(json!({
             "access_token": access_token,

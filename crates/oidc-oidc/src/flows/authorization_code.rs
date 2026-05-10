@@ -4,6 +4,7 @@ use oidc_core::OidcError;
 use oidc_core::models::Session;
 use oidc_core::traits::token_service::{IdTokenExtraClaims, TokenService};
 use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, sha2_256_hex, verify_s256};
+use oidc_repository::mapper::pg_err;
 use oidc_repository::repositories::auth_code_repo::AuthCodeRepo;
 use oidc_repository::repositories::client_repo::ClientRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
@@ -25,49 +26,61 @@ impl AuthorizationCodeFlow {
         code_verifier: &str,
     ) -> Result<Value, OidcError> {
         let mut conn = state.connect().await?;
+        conn.begin().await.map_err(pg_err)?;
 
         // --- Look up and validate the authorization code ---
-        let auth_code = AuthCodeRepo
-            .find_by_code(&mut conn, code)
-            .await?
-            .ok_or(OidcError::InvalidRequest)?;
+        let auth_code = match AuthCodeRepo.find_by_code(&mut conn, code).await? {
+            Some(ac) => ac,
+            None => {
+                let _ = conn.rollback().await;
+                return Err(OidcError::InvalidRequest);
+            }
+        };
 
         if auth_code.used {
+            let _ = conn.rollback().await;
             return Err(OidcError::InvalidRequest);
         }
 
         if auth_code.redirect_uri != redirect_uri {
+            let _ = conn.rollback().await;
             return Err(OidcError::InvalidRequest);
         }
 
         // --- Validate client ---
-        let client = ClientRepo
-            .find_by_client_id(&mut conn, client_id)
-            .await?
-            .ok_or(OidcError::InvalidClient)?;
-
-        if client.id != auth_code.client_id {
-            return Err(OidcError::InvalidClient);
-        }
-
-        if !client.enabled {
-            return Err(OidcError::InvalidClient);
-        }
+        let client = match ClientRepo.find_by_client_id(&mut conn, client_id).await? {
+            Some(c) if c.id == auth_code.client_id && c.enabled => c,
+            Some(_) => {
+                let _ = conn.rollback().await;
+                return Err(OidcError::InvalidClient);
+            }
+            None => {
+                let _ = conn.rollback().await;
+                return Err(OidcError::InvalidClient);
+            }
+        };
 
         // --- PKCE verification ---
         // Only S256 is supported — plain method is not allowed
         if !verify_s256(code_verifier, &auth_code.code_challenge) {
+            let _ = conn.rollback().await;
             return Err(OidcError::InvalidRequest);
         }
 
         // --- Mark code as used ---
-        AuthCodeRepo.mark_used(&mut conn, auth_code.id).await?;
+        if let Err(e) = AuthCodeRepo.mark_used(&mut conn, auth_code.id).await {
+            let _ = conn.rollback().await;
+            return Err(e);
+        }
 
         // --- Fetch user for ID token claims ---
-        let user = UserRepo
-            .find_by_id(&mut conn, auth_code.user_id)
-            .await?
-            .ok_or(OidcError::NotFound("user".into()))?;
+        let user = match UserRepo.find_by_id(&mut conn, auth_code.user_id).await? {
+            Some(u) => u,
+            None => {
+                let _ = conn.rollback().await;
+                return Err(OidcError::NotFound("user".into()));
+            }
+        };
 
         // --- Issue tokens ---
         let subject = auth_code.user_id.to_string();
@@ -128,7 +141,14 @@ impl AuthorizationCodeFlow {
             family_revoked: false,
         };
 
-        SessionRepo.create(&mut conn, &session).await?;
+        if let Err(e) = SessionRepo.create(&mut conn, &session).await {
+            let _ = conn.rollback().await;
+            return Err(e);
+        }
+        if let Err(e) = conn.commit().await {
+            let _ = conn.rollback().await;
+            return Err(pg_err(e));
+        }
 
         Ok(json!({
             "access_token": access_token,

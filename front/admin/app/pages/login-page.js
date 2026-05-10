@@ -168,11 +168,11 @@ class LoginPage extends BaseComponent {
           <form class="login-form" @submit=${(e) => this._loginWithPassword(e)}>
             <div class="form-group">
               <label for="email">Email</label>
-              <input id="email" type="email" placeholder="admin@localhost" required ?disabled=${loading} />
+              <input id="email" type="email" placeholder="you@example.com" required ?disabled=${loading} />
             </div>
             <div class="form-group">
               <label for="password">Password</label>
-              <input id="password" type="password" placeholder="admin" required ?disabled=${loading} />
+              <input id="password" type="password" placeholder="••••••••" required ?disabled=${loading} />
             </div>
             <button class="login-btn" type="submit" ?disabled=${loading}>
               ${loading ? 'Signing in...' : 'Sign In'}

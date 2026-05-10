@@ -23,6 +23,11 @@ pub struct AdminAuth {
     pub subject: String,
     /// Whether this is an API key authentication.
     pub is_api_key: bool,
+    /// The realm ID associated with this authentication.
+    /// Populated from the API key's realm when `is_api_key` is true,
+    /// or `None` for JWT-based authentication (realm must be specified
+    /// in the request body instead).
+    pub realm_id: Option<uuid::Uuid>,
 }
 
 impl FromRequestParts<AppState> for AdminAuth {
@@ -38,6 +43,7 @@ impl FromRequestParts<AppState> for AdminAuth {
                 return Ok(AdminAuth {
                     subject: api_key_auth.api_key.id.to_string(),
                     is_api_key: true,
+                    realm_id: Some(api_key_auth.api_key.realm_id),
                 });
             }
             // API key found but lacks admin scope
@@ -62,6 +68,7 @@ impl FromRequestParts<AppState> for AdminAuth {
                             return Ok(AdminAuth {
                                 subject: claims.sub,
                                 is_api_key: false,
+                                realm_id: None,
                             });
                         }
                         Err(e) => {

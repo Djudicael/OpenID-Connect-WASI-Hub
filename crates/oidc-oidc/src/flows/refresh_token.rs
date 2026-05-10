@@ -4,6 +4,7 @@ use oidc_core::OidcError;
 use oidc_core::models::Session;
 use oidc_core::traits::token_service::{IdTokenExtraClaims, TokenService};
 use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, sha2_256_hex};
+use oidc_repository::mapper::pg_err;
 use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 use serde_json::{Value, json};
@@ -17,16 +18,24 @@ impl RefreshTokenFlow {
     /// Execute the refresh token flow with rotation and family detection.
     pub async fn execute(state: &OidcState, refresh_token: &str) -> Result<Value, OidcError> {
         let mut conn = state.connect().await?;
+        conn.begin().await.map_err(pg_err)?;
 
         let refresh_hash = sha2_256_hex(refresh_token);
 
         // --- Look up session by refresh token hash ---
-        let session = SessionRepo
+        let session = match SessionRepo
             .find_by_refresh_token_hash(&mut conn, &refresh_hash)
             .await?
-            .ok_or(OidcError::InvalidRequest)?;
+        {
+            Some(s) => s,
+            None => {
+                let _ = conn.rollback().await;
+                return Err(OidcError::InvalidRequest);
+            }
+        };
 
         if session.revoked || session.family_revoked {
+            let _ = conn.rollback().await;
             return Err(OidcError::InvalidRequest);
         }
 
@@ -34,18 +43,28 @@ impl RefreshTokenFlow {
         // If this session was already rotated (has a successor), it's a reuse
         if session.rotated_at.is_some() {
             // Mark as reused and revoke the entire family
-            SessionRepo.mark_reused(&mut conn, session.id).await?;
-            if let Some(family_id) = session.token_family_id {
-                SessionRepo.revoke_family(&mut conn, family_id).await?;
+            if let Err(e) = SessionRepo.mark_reused(&mut conn, session.id).await {
+                let _ = conn.rollback().await;
+                return Err(e);
             }
+            if let Some(family_id) = session.token_family_id {
+                if let Err(e) = SessionRepo.revoke_family(&mut conn, family_id).await {
+                    let _ = conn.rollback().await;
+                    return Err(e);
+                }
+            }
+            let _ = conn.rollback().await;
             return Err(OidcError::InvalidRequest);
         }
 
         // --- Fetch user for ID token claims ---
-        let user = UserRepo
-            .find_by_id(&mut conn, session.user_id)
-            .await?
-            .ok_or(OidcError::NotFound("user".into()))?;
+        let user = match UserRepo.find_by_id(&mut conn, session.user_id).await? {
+            Some(u) => u,
+            None => {
+                let _ = conn.rollback().await;
+                return Err(OidcError::NotFound("user".into()));
+            }
+        };
 
         // --- Issue new tokens ---
         let subject = session.user_id.to_string();
@@ -103,10 +122,21 @@ impl RefreshTokenFlow {
             family_revoked: false,
         };
 
-        SessionRepo.create(&mut conn, &new_session).await?;
+        if let Err(e) = SessionRepo.create(&mut conn, &new_session).await {
+            let _ = conn.rollback().await;
+            return Err(e);
+        }
 
         // Mark the old session as rotated via the repository
-        SessionRepo.mark_rotated(&mut conn, session.id).await?;
+        if let Err(e) = SessionRepo.mark_rotated(&mut conn, session.id).await {
+            let _ = conn.rollback().await;
+            return Err(e);
+        }
+
+        if let Err(e) = conn.commit().await {
+            let _ = conn.rollback().await;
+            return Err(pg_err(e));
+        }
 
         Ok(json!({
             "access_token": access_token,

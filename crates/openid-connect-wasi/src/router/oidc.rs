@@ -7,6 +7,7 @@ use axum::response::Html;
 use axum::routing::{get, post};
 use std::collections::HashMap;
 
+use crate::middleware::admin_auth::AdminAuth;
 use crate::state::AppState;
 
 /// Build the OIDC sub-router.
@@ -41,8 +42,8 @@ pub fn router() -> Router<AppState> {
         .route("/oidc/logout", get(|State(state): State<AppState>, Query(params): Query<HashMap<String, String>>| async move {
             oidc_oidc::endpoints::logout::logout_handler(state.oidc_state(), Query(params)).await
         }))
-        .route("/oidc/register", post(|State(state): State<AppState>, Json(req): Json<oidc_oidc::endpoints::registration::RegisterClientRequest>| async move {
-            oidc_oidc::endpoints::registration::register_handler(state.oidc_state(), Json(req)).await
+        .route("/oidc/register", post(|State(state): State<AppState>, auth: AdminAuth, Json(req): Json<oidc_oidc::endpoints::registration::RegisterClientRequest>| async move {
+            oidc_oidc::endpoints::registration::register_handler(state.oidc_state(), auth.realm_id, Json(req)).await
                 .unwrap_or_else(|e| axum::Json(serde_json::json!({"error": e.to_string()})))
         }))
         .route("/oidc/login", post(|State(state): State<AppState>, json: Json<oidc_oidc::endpoints::login::LoginRequest>| async move {

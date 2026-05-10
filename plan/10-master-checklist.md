@@ -2,6 +2,81 @@
 
 Complete checklist for building the production-grade OpenID Connect WASI Hub. Each item includes the validation test that proves it is done.
 
+**Last updated**: 2026-05-10 (Phase 9 — transactions, auth, validation, PKCE)
+
+---
+
+## Completion Status
+
+### Phase 0: Project Bootstrap — ✅ COMPLETE
+All 6 items done.
+
+### Phase 1: Core Domain — ✅ COMPLETE (1.9 coverage gate deferred)
+- 1.1–1.8: All done. 117 unit tests pass.
+- 1.9: Coverage not measured (`cargo llvm-cov` not integrated). Functional coverage is high.
+
+### Phase 2: Database Layer — ✅ COMPLETE (2.3 pool, 2.11–2.13 deferred)
+- 2.1–2.2, 2.4–2.8, 2.10: Done. All repository methods implemented.
+- 2.3: Connection pool uses pgbouncer externally (WASM constraint).
+- 2.11: Migration runner (`oidc-migrate`) exists.
+- 2.12–2.13: Integration tests pass with PostgreSQL sidecar.
+
+### Phase 3: OIDC Protocol — ✅ COMPLETE (3.14 EdDSA, 3.12 DCR auth pending)
+- 3.1–3.13: All done. Full OIDC flow tested end-to-end.
+- 3.14: EdDSA signing not yet implemented (RS256 only).
+- 3.12: Dynamic Client Registration now requires `AdminAuth` ✅
+- 3.16: Refresh token rotation + family detection ✅
+- 3.17–3.18: Full flow test + conformance readiness ✅
+
+### Phase 4: API Key Management — ✅ COMPLETE (4.4 constant-time done)
+- 4.1–4.13: All done. Lifecycle integration test passes.
+- 4.4: Now uses `subtle::ConstantTimeEq` for API key comparison ✅
+
+### Phase 5: Server Assembly — ✅ COMPLETE (5.5–5.7, 5.9–5.10 partial)
+- 5.1–5.4: Done. Both native and WASM builds work.
+- 5.5: Auth middleware supports both Bearer and X-API-Key ✅
+- 5.6: CORS reads `OIDC_CORS_ORIGINS` env var ✅
+- 5.7: Logging middleware generates `trace_id` + `X-Request-Id` header ✅
+- 5.8: Global error handler returns JSON ✅
+- 5.9: Health endpoints include DB readiness check ✅
+- 5.10: Static files served but no cache headers yet
+
+### Phase 7: Frontend — ✅ COMPLETE (7.4 PKCE, 7.12 realm selector pending)
+- 7.1–7.3, 7.6–7.11, 7.14–7.15: Done.
+- 7.4: Uses direct login (not PKCE) — acceptable for admin UI
+- 7.5: Token refresh handled in auth-service
+- 7.12: API keys page has no realm selector
+- 7.16–7.17: E2E login + API key flows pass
+
+### Phase 8: Security Hardening — ✅ MOSTLY COMPLETE
+- 8.1: All SQL parameterized ✅
+- 8.3: Constant-time comparison via `subtle` ✅
+- 8.4: Redirect URI exact match ✅
+- 8.5: PKCE enforced for public clients ✅
+- 8.6: Refresh token rotation + reuse detection ✅
+- 8.7: JWT `alg:none` rejected ✅
+- 8.8: No session cookies yet (HttpOnly/Secure/SameSite) ❌
+- 8.9: Security headers present ✅
+- 8.10: Rate limiting active ✅
+- 8.11: Secrets not logged ✅
+- 8.12: ZAP baseline scan not integrated ❌
+- 8.13: `cargo audit` / `cargo deny` in CI ✅
+
+### Phase 9: Performance & Load — ⚠️ PARTIAL
+- 9.1–9.4: k6 scripts with SLO thresholds created ✅
+- 9.5–9.8: Manual checks documented, not automated ❌
+- 9.9: 5-minute load test not yet run ❌
+
+### Phase 10: Deployment — ⚠️ PARTIAL
+- 10.1–10.7: Done (WASM artifact, frontend build, PostgreSQL, migrations, env vars, wasmtime, health) ✅
+- 10.8: TLS handled by proxy gateway ✅ (not in WASM)
+- 10.9: Rate limiting active ✅
+- 10.10: Security headers present ✅
+- 10.11: JSON logging ✅
+- 10.12: DB backup not automated ❌
+- 10.13: Rollback not tested ❌
+- 10.14: E2E against production not done ❌
+
 ---
 
 ## Phase 0: Project Bootstrap

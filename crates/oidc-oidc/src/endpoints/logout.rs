@@ -24,12 +24,15 @@ pub async fn logout_handler(
     // If id_token_hint is provided, validate it and revoke the session
     if let Some(id_token_hint) = params.get("id_token_hint") {
         if let Ok(mut conn) = state.connect().await {
-            // Verify the ID token to extract the subject
-            if let Ok(subject) = state.token_service.verify_id_token(id_token_hint).await {
-                if let Ok(user_id) = subject.parse::<uuid::Uuid>() {
-                    // Revoke all active sessions for this user via the repository
-                    let _ = SessionRepo.revoke_by_user_id(&mut conn, user_id).await;
+            if let Ok(()) = conn.begin().await {
+                // Verify the ID token to extract the subject
+                if let Ok(subject) = state.token_service.verify_id_token(id_token_hint).await {
+                    if let Ok(user_id) = subject.parse::<uuid::Uuid>() {
+                        // Revoke all active sessions for this user via the repository
+                        let _ = SessionRepo.revoke_by_user_id(&mut conn, user_id).await;
+                    }
                 }
+                let _ = conn.commit().await;
             }
         }
     }

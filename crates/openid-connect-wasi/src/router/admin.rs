@@ -13,7 +13,9 @@ use uuid::Uuid;
 use oidc_core::models::ClientType;
 use oidc_core::models::audit_event::ActorType;
 
-use oidc_core::utils::{generate_opaque_token, generate_uuid_v7};
+use oidc_core::utils::{
+    generate_opaque_token, generate_uuid_v7, is_strong_password, is_valid_email, is_valid_username,
+};
 use oidc_repository::Connection;
 use oidc_repository::repositories::audit_event_repo::AuditEventRepo;
 use oidc_repository::repositories::client_repo::ClientRepo;
@@ -974,6 +976,31 @@ async fn create_user(State(state): State<AppState>, auth: AdminAuth, body: Strin
                 .into_response();
         }
     };
+
+    // --- Input validation ---
+    if !is_valid_email(&req.email) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "invalid_request", "error_description": "Invalid input"})),
+        )
+            .into_response();
+    }
+    if !is_strong_password(&req.password) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "invalid_request", "error_description": "Invalid input"})),
+        )
+            .into_response();
+    }
+    if let Some(ref username) = req.username {
+        if !is_valid_username(username) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "invalid_request", "error_description": "Invalid input"})),
+            )
+                .into_response();
+        }
+    }
 
     let mut conn = match connect(&state).await {
         Ok(c) => c,

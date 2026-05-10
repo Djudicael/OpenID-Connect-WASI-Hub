@@ -8,7 +8,7 @@ use oidc_core::models::Session;
 use oidc_core::models::audit_event::{ActorType, AuditEvent};
 use oidc_core::traits::hasher::{Argon2idHasher, Hasher};
 use oidc_core::traits::token_service::{IdTokenExtraClaims, TokenService};
-use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, sha2_256_hex};
+use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, is_valid_email, sha2_256_hex};
 use oidc_repository::repositories::audit_event_repo::AuditEventRepo;
 use oidc_repository::repositories::client_repo::ClientRepo;
 use oidc_repository::repositories::realm_repo::RealmRepo;
@@ -53,7 +53,7 @@ pub async fn login_handler(
     Json(req): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, OidcErrorResponse> {
     // --- Input validation ---
-    if req.email.is_empty() || !req.email.contains('@') {
+    if !is_valid_email(&req.email) {
         return Err(OidcErrorResponse::invalid_grant("Invalid credentials"));
     }
     if req.password.is_empty() || req.password.len() < 8 {
@@ -61,6 +61,10 @@ pub async fn login_handler(
     }
 
     let mut conn = state.connect().await.map_err(|e| {
+        tracing::error!("Internal error: {}", e);
+        OidcErrorResponse::server_error("An internal error occurred")
+    })?;
+    conn.begin().await.map_err(|e| {
         tracing::error!("Internal error: {}", e);
         OidcErrorResponse::server_error("An internal error occurred")
     })?;
@@ -76,6 +80,7 @@ pub async fn login_handler(
         .ok_or_else(|| OidcErrorResponse::server_error("Master realm not found"))?;
 
     if !realm.enabled {
+        let _ = conn.rollback().await;
         return Err(OidcErrorResponse::access_denied("Realm disabled"));
     }
 
@@ -88,6 +93,7 @@ pub async fn login_handler(
             OidcErrorResponse::server_error("An internal error occurred")
         })?;
     if failure_count >= 5 {
+        let _ = conn.rollback().await;
         return Err(OidcErrorResponse::access_denied(
             "Too many failed attempts. Please try again later.",
         ));
@@ -108,25 +114,36 @@ pub async fn login_handler(
                 "dummy",
                 "$argon2id$v=19$m=19456,t=2,p=1$dummysalt$dummyhash",
             );
+            let _ = conn.rollback().await;
             return Err(OidcErrorResponse::invalid_grant("Invalid credentials"));
         }
     };
 
     if !user.enabled {
+        let _ = conn.rollback().await;
         return Err(OidcErrorResponse::access_denied("Account disabled"));
     }
 
     // Verify password
-    let password_hash = user
-        .password_hash
-        .as_ref()
-        .ok_or_else(|| OidcErrorResponse::invalid_grant("Invalid credentials"))?;
+    let password_hash = match user.password_hash {
+        Some(ref h) => h,
+        None => {
+            let _ = conn.rollback().await;
+            return Err(OidcErrorResponse::invalid_grant("Invalid credentials"));
+        }
+    };
 
     let hasher = Argon2idHasher::new();
-    let valid = hasher.verify(&req.password, password_hash).map_err(|e| {
-        tracing::error!("Internal error: verify failed: {}", e);
-        OidcErrorResponse::server_error("An internal error occurred")
-    })?;
+    let valid = match hasher.verify(&req.password, password_hash) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("Internal error: verify failed: {}", e);
+            let _ = conn.rollback().await;
+            return Err(OidcErrorResponse::server_error(
+                "An internal error occurred",
+            ));
+        }
+    };
 
     if !valid {
         // Log failed attempt for brute-force tracking via the repository
@@ -144,23 +161,30 @@ pub async fn login_handler(
             created_at: chrono::Utc::now(),
         };
         let _ = AuditEventRepo.create(&mut conn, &audit).await;
+        let _ = conn.rollback().await;
         return Err(OidcErrorResponse::invalid_grant("Invalid credentials"));
     }
 
     // Find client
     let client_id_str = req.client_id.as_deref().unwrap_or("admin-ui");
-    let client = ClientRepo
-        .find_by_client_id(&mut conn, client_id_str)
-        .await
-        .map_err(|e| {
+    let client = match ClientRepo.find_by_client_id(&mut conn, client_id_str).await {
+        Ok(Some(c)) if c.enabled => c,
+        Ok(Some(_)) => {
+            let _ = conn.rollback().await;
+            return Err(OidcErrorResponse::invalid_client("Client is disabled"));
+        }
+        Ok(None) => {
+            let _ = conn.rollback().await;
+            return Err(OidcErrorResponse::invalid_client("Client not found"));
+        }
+        Err(e) => {
             tracing::error!("Internal error: {}", e);
-            OidcErrorResponse::server_error("An internal error occurred")
-        })?
-        .ok_or_else(|| OidcErrorResponse::invalid_client("Client not found"))?;
-
-    if !client.enabled {
-        return Err(OidcErrorResponse::invalid_client("Client disabled"));
-    }
+            let _ = conn.rollback().await;
+            return Err(OidcErrorResponse::server_error(
+                "An internal error occurred",
+            ));
+        }
+    };
 
     // Issue tokens
     let subject = user.id.to_string();
@@ -232,10 +256,20 @@ pub async fn login_handler(
         family_revoked: false,
     };
 
-    SessionRepo.create(&mut conn, &session).await.map_err(|e| {
+    if let Err(e) = SessionRepo.create(&mut conn, &session).await {
         tracing::error!("Internal error: {}", e);
-        OidcErrorResponse::server_error("An internal error occurred")
-    })?;
+        let _ = conn.rollback().await;
+        return Err(OidcErrorResponse::server_error(
+            "An internal error occurred",
+        ));
+    }
+
+    if let Err(e) = conn.commit().await {
+        tracing::error!("Internal error: {}", e);
+        return Err(OidcErrorResponse::server_error(
+            "An internal error occurred",
+        ));
+    }
 
     Ok(Json(LoginResponse {
         access_token,

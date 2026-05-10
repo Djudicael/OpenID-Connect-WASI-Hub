@@ -34,22 +34,36 @@ pub async fn revoke_handler(
         .connect()
         .await
         .map_err(|e| OidcErrorResponse::from_internal(e))?;
+    conn.begin()
+        .await
+        .map_err(|e| OidcErrorResponse::from_internal(e))?;
 
     // Verify client credentials
     let client = match ClientRepo.find_by_client_id(&mut conn, client_id).await {
         Ok(Some(c)) if c.enabled => c,
-        Ok(Some(_)) => return Err(OidcErrorResponse::invalid_client("Client is disabled")),
-        Ok(None) => return Err(OidcErrorResponse::invalid_client("Client not found")),
-        Err(e) => return Err(OidcErrorResponse::from_internal(e)),
+        Ok(Some(_)) => {
+            let _ = conn.rollback().await;
+            return Err(OidcErrorResponse::invalid_client("Client is disabled"));
+        }
+        Ok(None) => {
+            let _ = conn.rollback().await;
+            return Err(OidcErrorResponse::invalid_client("Client not found"));
+        }
+        Err(e) => {
+            let _ = conn.rollback().await;
+            return Err(OidcErrorResponse::from_internal(e));
+        }
     };
 
     if let Some(ref hash) = client.client_secret_hash {
         if !state.hasher.verify(_client_secret, hash).unwrap_or(false) {
+            let _ = conn.rollback().await;
             return Err(OidcErrorResponse::invalid_client(
                 "Invalid client credentials",
             ));
         }
     } else {
+        let _ = conn.rollback().await;
         return Err(OidcErrorResponse::invalid_client(
             "Public clients cannot revoke tokens",
         ));
@@ -64,6 +78,7 @@ pub async fn revoke_handler(
             .await
         {
             let _ = SessionRepo.revoke(&mut conn, session.id).await;
+            let _ = conn.commit().await;
             return Ok(Json(json!({})));
         }
     }
@@ -74,6 +89,7 @@ pub async fn revoke_handler(
         .await
     {
         let _ = SessionRepo.revoke(&mut conn, session.id).await;
+        let _ = conn.commit().await;
         return Ok(Json(json!({})));
     }
 
@@ -84,10 +100,12 @@ pub async fn revoke_handler(
             .await
         {
             let _ = SessionRepo.revoke(&mut conn, session.id).await;
+            let _ = conn.commit().await;
             return Ok(Json(json!({})));
         }
     }
 
     // Per RFC 7009, return 200 even if token not found
+    let _ = conn.commit().await;
     Ok(Json(json!({})))
 }

@@ -1,6 +1,7 @@
 //! PKCE (RFC 7636) utilities.
 
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 
 use crate::OidcError;
 
@@ -22,24 +23,10 @@ pub fn s256_challenge(verifier: &str) -> String {
 }
 
 /// Verify a code verifier against a stored S256 code challenge.
-/// Uses constant-time comparison to prevent timing side-channels.
+/// Uses constant-time comparison via `subtle::ConstantTimeEq` to prevent timing side-channels.
 pub fn verify_s256(verifier: &str, challenge: &str) -> bool {
     let expected = s256_challenge(verifier);
-    constant_time_eq(expected.as_bytes(), challenge.as_bytes())
-}
-
-/// Constant-time comparison of two byte slices.
-/// Returns true if the slices are equal, false otherwise.
-/// The comparison time is independent of the content of the slices.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut result: u8 = 0;
-    for (&x, &y) in a.iter().zip(b.iter()) {
-        result |= x ^ y;
-    }
-    result == 0
+    expected.as_bytes().ct_eq(challenge.as_bytes()).into()
 }
 
 fn base64_encode_url_safe_no_pad(data: &[u8]) -> String {
@@ -58,14 +45,6 @@ mod tests {
         let challenge = s256_challenge(&verifier);
         assert!(verify_s256(&verifier, &challenge));
         assert!(!verify_s256("wrong", &challenge));
-    }
-
-    #[test]
-    fn test_constant_time_eq() {
-        assert!(constant_time_eq(b"hello", b"hello"));
-        assert!(!constant_time_eq(b"hello", b"world"));
-        assert!(!constant_time_eq(b"hello", b"hella"));
-        assert!(!constant_time_eq(b"short", b"longer"));
     }
 
     #[test]

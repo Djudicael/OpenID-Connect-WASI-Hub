@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use oidc_core::traits::TokenService;
 use oidc_repository::repositories::client_repo::ClientRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
+use oidc_repository::repositories::user_repo::UserRepo;
 
 use crate::errors::OidcErrorResponse;
 use crate::state::OidcState;
@@ -35,23 +36,37 @@ pub async fn introspect_handler(
         .connect()
         .await
         .map_err(|e| OidcErrorResponse::from_internal(e))?;
+    conn.begin()
+        .await
+        .map_err(|e| OidcErrorResponse::from_internal(e))?;
 
     // Verify client credentials
     let client = match ClientRepo.find_by_client_id(&mut conn, client_id).await {
         Ok(Some(c)) if c.enabled => c,
-        Ok(Some(_)) => return Err(OidcErrorResponse::invalid_client("Client is disabled")),
-        Ok(None) => return Err(OidcErrorResponse::invalid_client("Client not found")),
-        Err(e) => return Err(OidcErrorResponse::from_internal(e)),
+        Ok(Some(_)) => {
+            let _ = conn.rollback().await;
+            return Err(OidcErrorResponse::invalid_client("Client is disabled"));
+        }
+        Ok(None) => {
+            let _ = conn.rollback().await;
+            return Err(OidcErrorResponse::invalid_client("Client not found"));
+        }
+        Err(e) => {
+            let _ = conn.rollback().await;
+            return Err(OidcErrorResponse::from_internal(e));
+        }
     };
 
     // Verify client secret for confidential clients
     if let Some(ref hash) = client.client_secret_hash {
         if !state.hasher.verify(_client_secret, hash).unwrap_or(false) {
+            let _ = conn.rollback().await;
             return Err(OidcErrorResponse::invalid_client(
                 "Invalid client credentials",
             ));
         }
     } else {
+        let _ = conn.rollback().await;
         return Err(OidcErrorResponse::invalid_client(
             "Public clients cannot introspect",
         ));
@@ -64,7 +79,10 @@ pub async fn introspect_handler(
         .await
     {
         Ok(c) => c,
-        Err(_) => return Ok(Json(json!({"active": false}))),
+        Err(_) => {
+            let _ = conn.commit().await;
+            return Ok(Json(json!({"active": false})));
+        }
     };
 
     // Look up the session by access token hash to confirm it is not revoked
@@ -74,18 +92,44 @@ pub async fn introspect_handler(
         .await
     {
         Ok(Some(s)) if !s.revoked => s,
-        Ok(Some(_)) => return Ok(Json(json!({"active": false}))),
-        Ok(None) => return Ok(Json(json!({"active": false}))),
-        Err(e) => return Err(OidcErrorResponse::from_internal(e)),
+        Ok(Some(_)) => {
+            let _ = conn.commit().await;
+            return Ok(Json(json!({"active": false})));
+        }
+        Ok(None) => {
+            let _ = conn.commit().await;
+            return Ok(Json(json!({"active": false})));
+        }
+        Err(e) => {
+            let _ = conn.rollback().await;
+            return Err(OidcErrorResponse::from_internal(e));
+        }
     };
+
+    // Look up the user by sub to get the email for the `username` field
+    let username = match uuid::Uuid::parse_str(&claims.sub) {
+        Ok(user_id) => UserRepo
+            .find_by_id(&mut conn, user_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|u| u.username.clone().or(Some(u.email.clone()))),
+        Err(_) => None,
+    };
+
+    conn.commit()
+        .await
+        .map_err(|e| OidcErrorResponse::from_internal(e))?;
 
     Ok(Json(json!({
         "active": true,
         "sub": claims.sub,
         "client_id": claims.aud,
+        "aud": claims.aud,
         "scope": claims.scope,
         "token_type": "Bearer",
         "exp": claims.exp,
         "iat": claims.iat,
+        "username": username,
     })))
 }
