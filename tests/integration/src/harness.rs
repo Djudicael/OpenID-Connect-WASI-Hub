@@ -207,7 +207,34 @@ pub async fn database_url() -> String {
 }
 
 /// Open a fresh connection to the shared test database.
+///
+/// The connection automatically starts a transaction.  When this
+/// connection is dropped, the TCP socket closes which implicitly rolls
+/// back the transaction on the server side.  Every test that uses this
+/// gets its own isolated workspace — no `clean_database` needed.
+///
+/// Use this for **unit-style** DB/repo tests that do all their work
+/// through this single connection.
 pub async fn test_conn() -> oidc_repository::connection::Connection {
+    let url = database_url().await;
+    let config = wasi_pg_client::Config::from_uri(&url).expect("invalid database URL");
+    let pg_conn = wasi_pg_client::Connection::connect(&config)
+        .await
+        .expect("failed to connect to test database");
+    let mut conn = oidc_repository::connection::Connection::from_pg_client(pg_conn);
+    conn.begin()
+        .await
+        .expect("failed to begin test transaction");
+    conn
+}
+
+/// Open a connection **without** a transaction.
+///
+/// Use this for **HTTP integration** tests where the app under test
+/// gets its own database connection and must be able to see seeded
+/// data.  Callers must pair this with [`clean_database`] to reset
+/// state between tests.
+pub async fn test_conn_no_tx() -> oidc_repository::connection::Connection {
     let url = database_url().await;
     let config = wasi_pg_client::Config::from_uri(&url).expect("invalid database URL");
     let pg_conn = wasi_pg_client::Connection::connect(&config)
@@ -218,13 +245,22 @@ pub async fn test_conn() -> oidc_repository::connection::Connection {
 
 /// Clean all data tables (keep `_migrations`).
 ///
-/// Uses `DELETE FROM` instead of `TRUNCATE` because `TRUNCATE` requires
-/// `ACCESS EXCLUSIVE` locks that conflict with idle connections from prior
-/// tests. `DELETE FROM` only needs `ROW EXCLUSIVE` locks, which don't
-/// block concurrent reads.
+/// For HTTP tests using [`test_conn_no_tx`] this wraps a
+/// `TRUNCATE ... CASCADE` in a transaction.  For DB tests using
+/// [`test_conn`] (which already has an open transaction) this is a
+/// no-op — the connection-drop rollback handles cleanup.
 pub async fn clean_database(
     conn: &mut oidc_repository::connection::Connection,
 ) -> Result<(), oidc_core::OidcError> {
+    static CLEANUP_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = CLEANUP_MUTEX.lock().unwrap();
+
+    // If BEGIN fails (transaction already open), we're in test_conn()
+    // mode — connection-drop rollback handles cleanup, no TRUNCATE needed.
+    if conn.begin().await.is_err() {
+        return Ok(());
+    }
+
     let tables = [
         "audit_events",
         "authorization_codes",
@@ -236,10 +272,18 @@ pub async fn clean_database(
         "realms",
     ];
     for table in &tables {
-        conn.execute(&format!("DELETE FROM {}", table))
+        if let Err(e) = conn
+            .execute(&format!("TRUNCATE TABLE {} CASCADE", table))
             .await
-            .map_err(|e| oidc_core::OidcError::Internal(e.to_string()))?;
+        {
+            let _ = conn.rollback().await;
+            return Err(oidc_core::OidcError::Internal(e.to_string()));
+        }
     }
+
+    conn.commit()
+        .await
+        .map_err(|e| oidc_core::OidcError::Internal(e.to_string()))?;
     Ok(())
 }
 

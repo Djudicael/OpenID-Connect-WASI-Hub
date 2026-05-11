@@ -9,7 +9,7 @@ use reqwest::StatusCode;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use crate::harness::test_conn;
+use crate::harness::test_conn_no_tx;
 use crate::helpers::app::TestApp;
 
 // ===================================================================
@@ -26,7 +26,7 @@ async fn seed_api_key(
     scopes: Vec<String>,
     expires_at: Option<chrono::DateTime<Utc>>,
 ) -> (oidc_core::models::ApiKey, String) {
-    let mut conn = test_conn().await;
+    let mut conn = test_conn_no_tx().await;
     let (api_key, raw_key) = oidc_apikey::ApiKeyService::generate_key(
         &mut conn,
         app.master_realm_id(),
@@ -68,7 +68,7 @@ async fn seed_api_key_in_realm(
     name: &str,
     scopes: Vec<String>,
 ) -> (oidc_core::models::ApiKey, String) {
-    let mut conn = test_conn().await;
+    let mut conn = test_conn_no_tx().await;
     let result = oidc_apikey::ApiKeyService::generate_key(
         &mut conn,
         realm_id,
@@ -88,7 +88,7 @@ async fn seed_api_key_in_realm(
 
 /// Seed a second realm and return its ID.
 async fn seed_second_realm(_app: &TestApp) -> Uuid {
-    let mut conn = test_conn().await;
+    let mut conn = test_conn_no_tx().await;
     let suffix = Uuid::new_v4().to_string()[..8].to_string();
     let realm = crate::helpers::fixtures::test_realm(&format!("other-realm-{suffix}"));
     let id = realm.id;

@@ -402,7 +402,9 @@ async fn test_auth_code_crud() {
     let found = repo.find_by_code(&mut conn, "abc123").await.unwrap();
     assert!(found.is_some());
     let found = found.unwrap();
-    assert_eq!(found.code, "abc123");
+    // AuthCodeRepo stores the SHA-256 hash of the code, not the plaintext
+    let expected_hash = oidc_core::utils::sha2_256_hex("abc123");
+    assert_eq!(found.code, expected_hash);
     assert!(!found.used);
 
     repo.mark_used(&mut conn, code.id).await.unwrap();
@@ -868,14 +870,9 @@ async fn test_unique_constraint_violation_surface() {
     let result = realm_repo.create(&mut conn, &realm2).await;
 
     // The error should be OidcError::Conflict (not OidcError::Internal)
+    let err = result.expect_err("creating a realm with a duplicate name should fail");
     assert!(
-        result.is_err(),
-        "creating a realm with a duplicate name should fail"
-    );
-    let err = result.unwrap_err();
-    assert_eq!(
-        err,
-        oidc_core::OidcError::Conflict(err.to_string()),
+        matches!(err, oidc_core::OidcError::Conflict(_)),
         "unique constraint violation should surface as OidcError::Conflict, got: {err:?}"
     );
 }

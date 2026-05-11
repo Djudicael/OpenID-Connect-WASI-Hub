@@ -10,7 +10,7 @@ use oidc_repository::repositories::{
 };
 use uuid::Uuid;
 
-use crate::harness::{database_url, test_conn};
+use crate::harness::{database_url, test_conn_no_tx};
 use crate::helpers::fixtures;
 
 // ===================================================================
@@ -60,7 +60,7 @@ impl TestApp {
         // Each test gets its own realm/user/client with fresh UUIDs,
         // so there's no cross-test contamination even without TRUNCATE.
         let master_realm_id = {
-            let mut conn = test_conn().await;
+            let mut conn = test_conn_no_tx().await;
             let id = seed_baseline_data(&mut conn).await;
             let _ = conn.close().await;
             id
@@ -141,7 +141,7 @@ impl TestApp {
     ///
     /// The password is hashed using Argon2id.
     pub async fn seed_user(&self, email: &str, password: &str) -> Uuid {
-        let mut conn = test_conn().await;
+        let mut conn = test_conn_no_tx().await;
         let user = fixtures::test_user(self.master_realm_id, email, password);
         let id = user.id;
         UserRepo
@@ -157,7 +157,7 @@ impl TestApp {
     /// The password is hashed using Argon2id. The user's `enabled` field
     /// is set to `false`.
     pub async fn seed_disabled_user(&self, email: &str, password: &str) -> Uuid {
-        let mut conn = test_conn().await;
+        let mut conn = test_conn_no_tx().await;
         let mut user = fixtures::test_user(self.master_realm_id, email, password);
         user.enabled = false;
         let id = user.id;
@@ -179,7 +179,7 @@ impl TestApp {
         client_type: &str,
         redirect_uris: &[&str],
     ) -> Uuid {
-        let mut conn = test_conn().await;
+        let mut conn = test_conn_no_tx().await;
         let mut client = fixtures::test_client(
             self.master_realm_id,
             client_id,
@@ -210,7 +210,7 @@ impl TestApp {
         client_secret: &str,
         redirect_uris: &[&str],
     ) -> Uuid {
-        let mut conn = test_conn().await;
+        let mut conn = test_conn_no_tx().await;
         let mut client = fixtures::test_client(
             self.master_realm_id,
             client_id,
