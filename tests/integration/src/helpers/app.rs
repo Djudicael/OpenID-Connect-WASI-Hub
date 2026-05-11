@@ -10,7 +10,7 @@ use oidc_repository::repositories::{
 };
 use uuid::Uuid;
 
-use crate::harness::{database_url, test_conn_no_tx};
+use crate::harness::{clean_database, database_url, test_conn_no_tx};
 use crate::helpers::fixtures;
 
 // ===================================================================
@@ -36,6 +36,8 @@ pub struct TestApp {
     client: reqwest::Client,
     /// The master realm seeded during setup.
     master_realm_id: Uuid,
+    /// The admin user email seeded during setup.
+    master_user_email: String,
     /// Sender half of a oneshot channel — when dropped, signals the
     /// server task to shut down, releasing its DB connections.
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
@@ -56,14 +58,21 @@ impl TestApp {
     pub async fn new() -> Self {
         let db_url = database_url().await;
 
+        // Clean leftover data from previous tests.
+        {
+            let mut conn = test_conn_no_tx().await;
+            let _ = clean_database(&mut conn).await;
+            let _ = conn.close().await;
+        }
+
         // Seed baseline data (unique per test — no need to clean the DB).
         // Each test gets its own realm/user/client with fresh UUIDs,
         // so there's no cross-test contamination even without TRUNCATE.
-        let master_realm_id = {
+        let (master_realm_id, master_user_email) = {
             let mut conn = test_conn_no_tx().await;
-            let id = seed_baseline_data(&mut conn).await;
+            let (id, email) = seed_baseline_data(&mut conn).await;
             let _ = conn.close().await;
-            id
+            (id, email)
         };
 
         // Set env vars so that `AppState::from_env()` picks up the test config.
@@ -81,6 +90,7 @@ impl TestApp {
         // SAFETY: These env vars are set before any concurrent access in tests.
         // Tests run single-threaded (--test-threads=1).
         unsafe {
+            std::env::set_var("RUST_LOG", "oidc_oidc=trace,oidc_repository=trace,trace");
             std::env::set_var("OIDC_DATABASE_URL", &db_url);
             std::env::set_var("OIDC_ENCRYPTION_KEY", fixtures::TEST_ENCRYPTION_KEY);
             std::env::set_var("OIDC_ISSUER", &issuer);
@@ -115,6 +125,7 @@ impl TestApp {
             base_url,
             client,
             master_realm_id,
+            master_user_email,
             shutdown_tx: Some(shutdown_tx),
             server_handle: Some(server_handle),
         }
@@ -135,6 +146,11 @@ impl TestApp {
     /// The master realm ID seeded during setup.
     pub fn master_realm_id(&self) -> Uuid {
         self.master_realm_id
+    }
+
+    /// The admin user email seeded during setup.
+    pub fn master_user_email(&self) -> &str {
+        &self.master_user_email
     }
 
     /// Seed a user directly in the database and return its ID.
@@ -249,39 +265,38 @@ impl Drop for TestApp {
 // ===================================================================
 
 /// Seed the baseline data required for all tests:
-/// - A unique realm (name includes a short UUID to avoid conflicts)
-/// - An admin user
+/// - A "master" realm  (the PasswordFlow expects this exact name)
+/// - An admin user with the fixed test email
 /// - An `admin-ui` client
 ///
-/// Returns the master realm ID.
-async fn seed_baseline_data(conn: &mut oidc_repository::Connection) -> Uuid {
-    // Use a short UUID suffix so each test gets a unique realm name.
-    // This avoids UNIQUE constraint violations when multiple tests
-    // run against the same database without cleaning between them.
-    let suffix = Uuid::new_v4().to_string()[..8].to_string();
-    let realm_name = format!("test-realm-{suffix}");
-
-    // Master realm
-    let realm = fixtures::test_realm(&realm_name);
+/// Returns (realm_id, user_email).
+async fn seed_baseline_data(conn: &mut oidc_repository::Connection) -> (Uuid, String) {
+    // Master realm — PasswordFlow::execute does
+    //   RealmRepo.find_by_name("master").await
+    // so the name must match exactly.
+    let realm = fixtures::test_realm("master");
     let realm_id = realm.id;
     RealmRepo
         .create(conn, &realm)
         .await
         .expect("failed to seed master realm");
 
-    // Admin user (email includes suffix for uniqueness)
-    let email = format!("testadmin-{suffix}@localhost");
-    let user = fixtures::test_user(realm_id, &email, fixtures::TEST_USER_PASSWORD);
+    // Admin user — use the FIXED test email so `login()` can find it.
+    let user = fixtures::test_user(
+        realm_id,
+        fixtures::TEST_USER_EMAIL,
+        fixtures::TEST_USER_PASSWORD,
+    );
     UserRepo
         .create(conn, &user)
         .await
         .expect("failed to seed admin user");
 
-    // Admin UI client (client_id includes suffix for uniqueness)
-    let client_id = format!("admin-ui-{suffix}");
+    // Admin UI client — PasswordFlow::execute defaults to "admin-ui"
+    // so the client_id must match exactly.
     let client = fixtures::test_client(
         realm_id,
-        &client_id,
+        "admin-ui",
         vec!["http://localhost:3000/callback".to_string()],
     );
     ClientRepo
@@ -289,5 +304,5 @@ async fn seed_baseline_data(conn: &mut oidc_repository::Connection) -> Uuid {
         .await
         .expect("failed to seed admin-ui client");
 
-    realm_id
+    (realm_id, fixtures::TEST_USER_EMAIL.to_string())
 }

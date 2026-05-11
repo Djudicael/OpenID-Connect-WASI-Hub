@@ -52,7 +52,24 @@ async fn login(app: &TestApp) -> Value {
         .await
         .expect("login request failed");
 
-    assert_eq!(resp.status(), StatusCode::OK, "login should succeed");
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "login should succeed, got {status}: {body}"
+    );
+    // Parse as JSON (re-request since body was consumed)
+    let resp = app
+        .client()
+        .post(&format!("{}/oidc/login", app.url()))
+        .json(&json!({
+            "email": fixtures::TEST_USER_EMAIL,
+            "password": fixtures::TEST_USER_PASSWORD,
+        }))
+        .send()
+        .await
+        .expect("login request failed");
     resp.json().await.expect("login response should be JSON")
 }
 

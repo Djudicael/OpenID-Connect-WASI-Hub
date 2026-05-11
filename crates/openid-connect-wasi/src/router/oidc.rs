@@ -3,7 +3,7 @@
 use axum::Json;
 use axum::Router;
 use axum::extract::{Form, Query, State};
-use axum::response::Html;
+use axum::response::{Html, IntoResponse};
 use axum::routing::{get, post};
 use std::collections::HashMap;
 
@@ -25,9 +25,11 @@ pub fn router() -> Router<AppState> {
             oidc_oidc::endpoints::authorize::authorize_handler(state.oidc_state(), headers, Query(params)).await
         }))
         .route("/oidc/token", post(|State(state): State<AppState>, headers: axum::http::HeaderMap, Form(params): Form<HashMap<String, String>>| async move {
-            oidc_oidc::endpoints::token::token_handler(state.oidc_state(), headers, params)
-                .await
-                .unwrap_or_else(|e| axum::Json(serde_json::json!({"error": e.to_string() })))
+            let oidc_state = state.oidc_state();
+            match oidc_oidc::endpoints::token::token_handler(oidc_state, headers, params).await {
+                Ok(json) => (axum::http::StatusCode::OK, json).into_response(),
+                Err(e) => oidc_oidc::errors::from_oidc_error(&e).into_response(),
+            }
         }))
         .route("/oidc/userinfo", get(|State(state): State<AppState>, headers: axum::http::HeaderMap| async move {
             let auth = headers.get(axum::http::header::AUTHORIZATION).cloned();
@@ -43,8 +45,10 @@ pub fn router() -> Router<AppState> {
             oidc_oidc::endpoints::logout::logout_handler(state.oidc_state(), Query(params)).await
         }))
         .route("/oidc/register", post(|State(state): State<AppState>, auth: AdminAuth, Json(req): Json<oidc_oidc::endpoints::registration::RegisterClientRequest>| async move {
-            oidc_oidc::endpoints::registration::register_handler(state.oidc_state(), auth.realm_id, Json(req)).await
-                .unwrap_or_else(|e| axum::Json(serde_json::json!({"error": e.to_string()})))
+            match oidc_oidc::endpoints::registration::register_handler(state.oidc_state(), auth.realm_id, Json(req)).await {
+                Ok(json) => (axum::http::StatusCode::OK, json).into_response(),
+                Err(e) => oidc_oidc::errors::from_oidc_error(&e).into_response(),
+            }
         }))
         .route("/oidc/login", post(|State(state): State<AppState>, json: Json<oidc_oidc::endpoints::login::LoginRequest>| async move {
             oidc_oidc::endpoints::login::login_handler(State(state.oidc_state()), json).await

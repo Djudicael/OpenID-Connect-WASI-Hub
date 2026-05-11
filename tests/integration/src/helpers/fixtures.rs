@@ -18,7 +18,7 @@ pub const TEST_ENCRYPTION_KEY: &str =
     "0000000000000000000000000000000000000000000000000000000000000000";
 
 /// Default test admin user email.
-pub const TEST_USER_EMAIL: &str = "testadmin@localhost";
+pub const TEST_USER_EMAIL: &str = "testadmin@example.com";
 
 /// Default test admin user password.
 pub const TEST_USER_PASSWORD: &str = "TestPass123!";

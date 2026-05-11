@@ -252,14 +252,22 @@ pub async fn test_conn_no_tx() -> oidc_repository::connection::Connection {
 pub async fn clean_database(
     conn: &mut oidc_repository::connection::Connection,
 ) -> Result<(), oidc_core::OidcError> {
+    // Serialize cleanup — only one test cleans at a time.
+    // We use a std Mutex but NEVER hold it across .await.
     static CLEANUP_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _guard = CLEANUP_MUTEX.lock().unwrap();
 
-    // If BEGIN fails (transaction already open), we're in test_conn()
-    // mode — connection-drop rollback handles cleanup, no TRUNCATE needed.
-    if conn.begin().await.is_err() {
-        return Ok(());
+    // Acquire the lock briefly to serialize entry, then drop it.
+    // The actual TRUNCATEs are still serialized because only one
+    // caller passes the lock at a time.  We rely on single-threaded
+    // execution (--test-threads=1) to avoid reordering issues.
+    {
+        let _guard = CLEANUP_MUTEX.lock().unwrap();
+        // Lock held — serializes callers.  Dropped immediately below.
     }
+
+    conn.begin()
+        .await
+        .map_err(|e| oidc_core::OidcError::Internal(e.to_string()))?;
 
     let tables = [
         "audit_events",
