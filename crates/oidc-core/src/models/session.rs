@@ -6,8 +6,8 @@ use uuid::Uuid;
 pub struct Session {
     /// Unique identifier.
     pub id: Uuid,
-    /// The user this session belongs to.
-    pub user_id: Uuid,
+    /// The user this session belongs to (None for client_credentials grant).
+    pub user_id: Option<Uuid>,
     /// The realm.
     pub realm_id: Uuid,
     /// The client that requested the tokens.

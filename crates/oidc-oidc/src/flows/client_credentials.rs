@@ -55,10 +55,11 @@ impl ClientCredentialsFlow {
             let access_hash = sha2_256_hex(&access_token);
             let now = chrono::Utc::now();
 
-            // Create a session record so the token can be introspected and revoked
+            // Create a session record so the token can be introspected and revoked.
+            // Client credentials have no end-user, so user_id is NULL.
             let session = Session {
                 id: generate_uuid_v7(),
-                user_id: client.id, // For client credentials, use client's internal ID
+                user_id: None, // no end-user for client_credentials
                 realm_id: client.realm_id,
                 client_id: client.id,
                 grant_type: "client_credentials".to_string(),

@@ -233,27 +233,35 @@ async fn authorize_inner(
                 Ok(Some(session))
                     if !session.revoked && session.expires_at > chrono::Utc::now() =>
                 {
-                    // Session is valid — look up the user.
-                    match UserRepo.find_by_id(&mut conn, session.user_id).await {
-                        Ok(Some(u)) if u.enabled => Some(u),
-                        Ok(Some(_)) => {
-                            tracing::warn!(
-                                "User {} is disabled, ignoring session cookie",
-                                session.user_id
-                            );
-                            None
+                    // Session is valid — look up the user if one is attached.
+                    if let Some(user_id) = session.user_id {
+                        match UserRepo.find_by_id(&mut conn, user_id).await {
+                            Ok(Some(u)) if u.enabled => Some(u),
+                            Ok(Some(_)) => {
+                                tracing::warn!(
+                                    "User {} is disabled, ignoring session cookie",
+                                    user_id
+                                );
+                                None
+                            }
+                            Ok(None) => {
+                                tracing::warn!(
+                                    "User {} not found, ignoring session cookie",
+                                    user_id
+                                );
+                                None
+                            }
+                            Err(e) => {
+                                tracing::error!("DB error finding user from session cookie: {e}");
+                                None
+                            }
                         }
-                        Ok(None) => {
-                            tracing::warn!(
-                                "User {} not found, ignoring session cookie",
-                                session.user_id
-                            );
-                            None
-                        }
-                        Err(e) => {
-                            tracing::error!("DB error finding user from session cookie: {e}");
-                            None
-                        }
+                    } else {
+                        tracing::debug!(
+                            "Session {} has no user (client_credentials grant), ignoring",
+                            session.id
+                        );
+                        None
                     }
                 }
                 Ok(Some(_)) => {

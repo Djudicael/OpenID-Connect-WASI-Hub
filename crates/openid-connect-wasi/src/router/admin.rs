@@ -819,7 +819,7 @@ async fn list_sessions(
         .map(|s| {
             json!({
                 "id": s.id.to_string(),
-                "user_id": s.user_id.to_string(),
+                "user_id": s.user_id.map(|id| id.to_string()),
                 "realm_id": s.realm_id.to_string(),
                 "client_id": s.client_id.to_string(),
                 "grant_type": s.grant_type,

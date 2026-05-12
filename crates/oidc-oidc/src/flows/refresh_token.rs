@@ -18,43 +18,70 @@ pub struct RefreshTokenFlow;
 impl RefreshTokenFlow {
     /// Execute the refresh token flow with rotation and family detection.
     pub async fn execute(state: &OidcState, refresh_token: &str) -> Result<Value, OidcError> {
-        let mut conn = state.connect().await?;
+        let refresh_hash = sha2_256_hex(refresh_token);
 
-        with_transaction!(conn, pg_err, {
-            let refresh_hash = sha2_256_hex(refresh_token);
+        // --- Phase 1: Check for replay / theft detection ---
+        // This runs in its own transaction so that revocation changes are
+        // committed even though we return an error.
+        {
+            let mut conn = state.connect().await?;
+            conn.begin().await.map_err(pg_err)?;
 
-            // --- Look up session by refresh token hash ---
             let session = match SessionRepo
                 .find_by_refresh_token_hash(&mut conn, &refresh_hash)
                 .await?
             {
                 Some(s) => s,
-                None => return Err(OidcError::InvalidRequest),
+                None => {
+                    let _ = conn.rollback().await;
+                    return Err(OidcError::InvalidRequest);
+                }
             };
 
             if session.revoked || session.family_revoked {
+                let _ = conn.rollback().await;
                 return Err(OidcError::InvalidRequest);
             }
 
             // --- Token theft detection ---
-            // If this session was already rotated (has a successor), it's a reuse
+            // If this session was already rotated (has a successor), it's a reuse.
+            // Commit the revocation before returning the error.
             if session.rotated_at.is_some() {
-                // Mark as reused and revoke the entire family
                 SessionRepo.mark_reused(&mut conn, session.id).await?;
                 if let Some(family_id) = session.token_family_id {
                     SessionRepo.revoke_family(&mut conn, family_id).await?;
                 }
+                conn.commit().await.map_err(pg_err)?;
                 return Err(OidcError::InvalidRequest);
             }
 
+            // No theft — rollback to release the FOR UPDATE lock.
+            let _ = conn.rollback().await;
+        }
+
+        // --- Phase 2: Normal rotation ---
+        let mut conn = state.connect().await?;
+
+        with_transaction!(conn, pg_err, {
+            // Re-fetch the session (we verified above it's not revoked/rotated).
+            let session = match SessionRepo
+                .find_by_refresh_token_hash(&mut conn, &refresh_hash)
+                .await?
+            {
+                Some(s) if !s.revoked && !s.family_revoked && s.rotated_at.is_none() => s,
+                Some(_) => return Err(OidcError::InvalidRequest),
+                None => return Err(OidcError::InvalidRequest),
+            };
+
             // --- Fetch user for ID token claims ---
-            let user = match UserRepo.find_by_id(&mut conn, session.user_id).await? {
+            let user_id = session.user_id.ok_or(OidcError::NotFound("user".into()))?;
+            let user = match UserRepo.find_by_id(&mut conn, user_id).await? {
                 Some(u) => u,
                 None => return Err(OidcError::NotFound("user".into())),
             };
 
             // --- Issue new tokens ---
-            let subject = session.user_id.to_string();
+            let subject = user_id.to_string();
             let audience = session.client_id.to_string();
             let scopes = session.scope.clone();
 
@@ -89,7 +116,7 @@ impl RefreshTokenFlow {
 
             let new_session = Session {
                 id: generate_uuid_v7(),
-                user_id: session.user_id,
+                user_id: Some(user_id),
                 realm_id: session.realm_id,
                 client_id: session.client_id,
                 grant_type: "refresh_token".to_string(),

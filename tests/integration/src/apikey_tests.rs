@@ -231,12 +231,8 @@ async fn test_delete_api_key() {
         .await
         .expect("get revoked key request failed");
 
-    // The endpoint returns the key with revoked=true, not 404.
-    // The get_key endpoint does a find_by_id which returns the row regardless
-    // of revocation status. So we verify the revoked flag instead.
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body: Value = resp.json().await.expect("response should be JSON");
-    assert_eq!(body["revoked"], true);
+    // Subsequent GET with the now-revoked key should return 401 UNAUTHORIZED.
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]

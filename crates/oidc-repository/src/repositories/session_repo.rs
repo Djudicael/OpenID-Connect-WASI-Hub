@@ -314,7 +314,7 @@ impl SessionRepo {
     fn map_row(row: &wasi_pg_client::Row) -> Result<Session, OidcError> {
         Ok(Session {
             id: mapper::uuid(row, 0)?,
-            user_id: mapper::uuid(row, 1)?,
+            user_id: mapper::opt_uuid(row, 1)?,
             realm_id: mapper::uuid(row, 2)?,
             client_id: mapper::uuid(row, 3)?,
             grant_type: mapper::string(row, 4)?,

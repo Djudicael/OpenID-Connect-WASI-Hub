@@ -74,7 +74,7 @@ fn make_session(user_id: Uuid, realm_id: Uuid, client_id: Uuid, hash: &str) -> S
     let now = chrono::Utc::now();
     Session {
         id: Uuid::new_v4(),
-        user_id,
+        user_id: Some(user_id),
         realm_id,
         client_id,
         grant_type: "authorization_code".to_string(),

@@ -171,8 +171,11 @@ async fn create_key(
     };
 
     let (actor_id, actor_type) = auth_actor(&auth);
+    // Only set created_by when the actor is a user (JWT), not an API key.
+    // The api_keys.created_by column has a FK to users(id), so API key UUIDs
+    // would violate the constraint.
     let created_by = match &auth {
-        ApiRouteAuth::ApiKey(api_key_auth) => Some(api_key_auth.api_key.id),
+        ApiRouteAuth::ApiKey(_) => None,
         ApiRouteAuth::JwtBearer { subject } => subject.parse::<Uuid>().ok(),
     };
     let (api_key, raw_key) = match ApiKeyService::generate_key(

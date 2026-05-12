@@ -381,7 +381,7 @@ impl InMemorySessionRepo {
             .write()
             .map_err(|e| OidcError::Internal(e.to_string()))?;
         for s in sessions.values_mut() {
-            if s.user_id == user_id && !s.revoked {
+            if s.user_id == Some(user_id) && !s.revoked {
                 s.revoked = true;
             }
         }
@@ -935,7 +935,7 @@ mod tests {
     fn test_session(user_id: Uuid, realm_id: Uuid, client_id: Uuid) -> Session {
         Session {
             id: Uuid::now_v7(),
-            user_id,
+            user_id: Some(user_id),
             realm_id,
             client_id,
             grant_type: "authorization_code".into(),

@@ -189,7 +189,7 @@ impl PasswordFlow {
             let now = chrono::Utc::now();
             let session = Session {
                 id: generate_uuid_v7(),
-                user_id: user.id,
+                user_id: Some(user.id),
                 realm_id: user.realm_id,
                 client_id: client.id,
                 grant_type: "password".to_string(),

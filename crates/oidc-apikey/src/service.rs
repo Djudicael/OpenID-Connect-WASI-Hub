@@ -39,7 +39,9 @@ impl ApiKeyService {
 
         let secret = URL_SAFE_NO_PAD.encode(&random_bytes);
         let prefix = secret.chars().take(PREFIX_LEN).collect::<String>();
-        let raw_key = format!("oidc_{}_{}_{}", env_segment(), prefix, secret);
+        // Use `.` as separator — it is NOT in the base64 URL-safe alphabet,
+        // so it can never collide with characters in the prefix or secret.
+        let raw_key = format!("oidc_{}.{}.{}", env_segment(), prefix, secret);
 
         let hashed_secret = hashing::hash_secret(&raw_key)?;
 
@@ -139,10 +141,12 @@ impl ApiKeyService {
     }
 }
 
-/// Extract components from a raw key of the form `oidc_<env>_<prefix>_<secret>`.
+/// Extract components from a raw key of the form `oidc_<env>.<prefix>.<secret>`.
+/// Uses `.` as separator because it is not in the base64 URL-safe alphabet,
+/// preventing collisions with characters in the prefix or secret.
 fn parse_key(raw_key: &str) -> Option<(String, String, String)> {
     let stripped = raw_key.strip_prefix("oidc_")?;
-    let mut parts = stripped.splitn(3, '_');
+    let mut parts = stripped.splitn(3, '.');
     let env = parts.next()?.to_string();
     let prefix = parts.next()?.to_string();
     let secret = parts.next()?.to_string();

@@ -249,7 +249,7 @@ async fn test_session_crud() {
     let repo = SessionRepo;
     let session = Session {
         id: Uuid::new_v4(),
-        user_id: user.id,
+        user_id: Some(user.id),
         realm_id: realm.id,
         client_id: client.id,
         grant_type: "authorization_code".to_string(),
@@ -258,11 +258,11 @@ async fn test_session_crud() {
         id_token_jti: Some("jti123".to_string()),
         scope: vec!["openid".to_string(), "profile".to_string()],
         revoked: false,
-        expires_at: now + chrono::Duration::minutes(15),
-        refresh_expires_at: Some(now + chrono::Duration::days(7)),
+        expires_at: now + chrono::Duration::hours(1),
+        refresh_expires_at: Some(now + chrono::Duration::days(30)),
         created_at: now,
         last_used_at: None,
-        token_family_id: None,
+        token_family_id: Some(Uuid::new_v4()),
         previous_session_id: None,
         rotated_at: None,
         reused_at: None,
@@ -271,6 +271,7 @@ async fn test_session_crud() {
 
     repo.create(&mut conn, &session).await.unwrap();
 
+    // ---- find_by_id ----
     let found = repo.find_by_id(&mut conn, session.id).await.unwrap();
     assert!(found.is_some());
     let found = found.unwrap();
@@ -598,7 +599,7 @@ async fn test_session_token_hash_index_performance() {
         let now = chrono::Utc::now();
         let session = Session {
             id: Uuid::new_v4(),
-            user_id: user.id,
+            user_id: Some(user.id),
             realm_id: realm.id,
             client_id: client.id,
             grant_type: "authorization_code".to_string(),
@@ -607,7 +608,7 @@ async fn test_session_token_hash_index_performance() {
             id_token_jti: None,
             scope: vec!["openid".to_string()],
             revoked: false,
-            expires_at: now + chrono::Duration::minutes(15),
+            expires_at: now + chrono::Duration::hours(1),
             refresh_expires_at: Some(now + chrono::Duration::days(7)),
             created_at: now,
             last_used_at: None,
@@ -807,7 +808,7 @@ async fn test_cascade_delete_sessions_on_user_delete() {
     let session_repo = SessionRepo;
     let session = Session {
         id: Uuid::new_v4(),
-        user_id: user.id,
+        user_id: Some(user.id),
         realm_id: realm.id,
         client_id: client.id,
         grant_type: "authorization_code".to_string(),
@@ -904,7 +905,7 @@ async fn test_expired_session_cleanup() {
     // Create a session with expires_at in the past
     let expired_session = Session {
         id: Uuid::new_v4(),
-        user_id: user.id,
+        user_id: Some(user.id),
         realm_id: realm.id,
         client_id: client.id,
         grant_type: "authorization_code".to_string(),

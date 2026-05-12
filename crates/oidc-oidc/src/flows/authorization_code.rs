@@ -104,7 +104,7 @@ impl AuthorizationCodeFlow {
 
             let session = Session {
                 id: generate_uuid_v7(),
-                user_id: auth_code.user_id,
+                user_id: Some(auth_code.user_id),
                 realm_id: auth_code.realm_id,
                 client_id: client.id,
                 grant_type: "authorization_code".to_string(),

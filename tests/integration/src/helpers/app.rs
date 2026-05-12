@@ -61,7 +61,9 @@ impl TestApp {
         // Clean leftover data from previous tests.
         {
             let mut conn = test_conn_no_tx().await;
-            let _ = clean_database(&mut conn).await;
+            clean_database(&mut conn)
+                .await
+                .expect("clean_database failed");
             let _ = conn.close().await;
         }
 
