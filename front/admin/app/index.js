@@ -13,6 +13,7 @@ import './components/ui/table.js';
 import './components/ui/modal.js';
 import './components/ui/toast.js';
 import './components/ui/pagination.js';
+import './components/ui/session-timer.js';
 
 import './components/forms/form-field.js';
 import './components/forms/form-select.js';

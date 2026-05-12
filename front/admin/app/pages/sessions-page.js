@@ -61,8 +61,8 @@ class SessionsPage extends BaseComponent {
   template() {
     const { sessions, loading, page, pageSize, total, showRevoked } = this._state;
     const columns = [
-      { key: 'user_id', label: 'User ID', render: (v) => v.slice(0, 8) + '...' },
-      { key: 'client_id', label: 'Client ID', render: (v) => v.slice(0, 8) + '...' },
+      { key: 'user_id', label: 'User ID', render: (v) => v ? v.slice(0, 8) + '...' : '-' },
+      { key: 'client_id', label: 'Client ID', render: (v) => v ? v.slice(0, 8) + '...' : '-' },
       { key: 'grant_type', label: 'Grant' },
       { key: 'scope', label: 'Scopes', render: (v) => Array.isArray(v) ? v.join(', ') : v },
       { key: 'revoked', label: 'Status', render: (v) => v ? html`<span style="color:var(--color-danger)">Revoked</span>` : html`<span style="color:var(--color-success)">Active</span>` },

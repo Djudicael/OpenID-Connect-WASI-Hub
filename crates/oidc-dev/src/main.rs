@@ -11,7 +11,7 @@
 //!   cargo run -p oidc-dev -- test     # Run smoke tests against running server
 //!
 //! Dev Credentials (seeded on first start):
-//!   Admin login:    admin@localhost / Admin123
+//!   Admin login:    admin@example.com / Admin123
 //!   Client creds:   test-service / test-service-secret
 //!
 //! When the process exits (Ctrl-C), the PostgreSQL container is automatically dropped.
@@ -556,7 +556,7 @@ async fn cmd_test() -> Result<()> {
     match client
         .post(format!("{base_url}/oidc/login"))
         .json(&serde_json::json!({
-            "email": "admin@localhost",
+            "email": "admin@example.com",
             "password": "Admin123",
             "client_id": "admin-ui"
         }))
@@ -837,7 +837,7 @@ async fn seed_data(db_url: &str, proxy_port: u16) -> Result<()> {
         let mut conn = oidc_repository::Connection::from_pg_client(pg_conn);
         let repo = oidc_repository::repositories::user_repo::UserRepo;
         match repo
-            .find_by_email(&mut conn, realm_id, "admin@localhost")
+            .find_by_email(&mut conn, realm_id, "admin@example.com")
             .await
         {
             Ok(Some(user)) => user.id,
@@ -849,7 +849,7 @@ async fn seed_data(db_url: &str, proxy_port: u16) -> Result<()> {
                 let user = oidc_core::models::User {
                     id,
                     realm_id,
-                    email: "admin@localhost".into(),
+                    email: "admin@example.com".into(),
                     email_verified: true,
                     username: Some("admin".into()),
                     password_hash: Some(password_hash),
@@ -864,7 +864,7 @@ async fn seed_data(db_url: &str, proxy_port: u16) -> Result<()> {
                 repo.create(&mut conn, &user)
                     .await
                     .map_err(|e| anyhow::anyhow!("user create: {e}"))?;
-                info!("Created admin user (admin@localhost / Admin123)");
+                info!("Created admin user (admin@example.com / Admin123)");
                 id
             }
             Err(e) => return Err(anyhow::anyhow!("user lookup: {e}")),
@@ -994,7 +994,7 @@ async fn seed_data(db_url: &str, proxy_port: u16) -> Result<()> {
     info!("  Dev Credentials:");
     info!("");
     info!("  Admin login:");
-    info!("    Email:    admin@localhost");
+    info!("    Email:    admin@example.com");
     info!("    Password: Admin123");
     info!("");
     info!("  Confidential client (client_credentials):");

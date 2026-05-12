@@ -3,7 +3,7 @@
  * The admin UI uses Shadow DOM, but Playwright's locator() pierces shadow DOM by default.
  */
 
-const DEFAULT_EMAIL = 'admin@localhost';
+const DEFAULT_EMAIL = 'admin@example.com';
 const DEFAULT_PASSWORD = 'admin123';
 
 /**

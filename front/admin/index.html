@@ -16,7 +16,10 @@
     <c-header></c-header>
     <main class="main">
         <c-sidebar></c-sidebar>
-        <router-outlet></router-outlet>
+        <div style="flex:1;display:flex;flex-direction:column;min-width:0">
+            <c-session-timer></c-session-timer>
+            <router-outlet></router-outlet>
+        </div>
     </main>
     <script src="/js/index.js" type="module"></script>
 </body>

@@ -187,17 +187,22 @@ class AuthService {
 
   _randomString(length) {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
-    let result = '';
-    const randomValues = new Uint8Array(length);
+    const randomValues = new Uint8Array(length * 2); // Get extra bytes for rejection sampling
     crypto.getRandomValues(randomValues);
-    for (let i = 0; i < length; i++) {
-      // Use rejection sampling to avoid modulo bias
-      let val;
-      const max = 256 - (256 % chars.length);
-      do {
-        val = randomValues[i];
-      } while (val >= max && i < length);
-      result += chars[val % chars.length];
+    let result = '';
+    let byteIndex = 0;
+    const max = 256 - (256 % chars.length);
+    while (result.length < length && byteIndex < randomValues.length) {
+      const val = randomValues[byteIndex++];
+      if (val < max) {
+        result += chars[val % chars.length];
+      }
+    }
+    // Fallback: if we somehow didn't get enough chars, fill with simple random
+    while (result.length < length) {
+      const extra = new Uint8Array(1);
+      crypto.getRandomValues(extra);
+      result += chars[extra[0] % chars.length];
     }
     return result;
   }

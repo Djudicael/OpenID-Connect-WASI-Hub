@@ -20,7 +20,7 @@ test.describe('Login page', () => {
   });
 
   test('displays error on wrong credentials', async ({ page }) => {
-    await page.locator('#email').fill('admin@localhost');
+    await page.locator('#email').fill('admin@example.com');
     await page.locator('#password').fill('wrong');
     await page.locator('button[type="submit"]').click();
 
@@ -30,7 +30,7 @@ test.describe('Login page', () => {
   });
 
   test('redirects to dashboard on successful login', async ({ page }) => {
-    await page.locator('#email').fill('admin@localhost');
+    await page.locator('#email').fill('admin@example.com');
     await page.locator('#password').fill('admin123');
     await page.locator('button[type="submit"]').click();
 

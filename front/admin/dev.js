@@ -6,9 +6,49 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 
 app.disable('x-powered-by');
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Security headers
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '0');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('Content-Security-Policy',
+    "default-src 'self'; " +
+    "script-src 'self'; " +
+    "style-src 'self' 'unsafe-inline'; " +
+    "img-src 'self' data:; " +
+    "font-src 'self'; " +
+    "connect-src 'self'; " +
+    "frame-ancestors 'none'; " +
+    "base-uri 'self'; " +
+    "form-action 'self';"
+  );
+  next();
+});
+
 app.use('/style', express.static(join(__dirname, 'style')));
+
+// Cache static JS assets (hashed filenames allow immutable caching)
+app.use('/js', (req, res, next) => {
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  next();
+});
 app.use('/js', express.static(join(__dirname, 'dist/js')));
 app.use('/', express.static(join(__dirname, 'dist')));
+
+// Security contact
+app.get('/.well-known/security.txt', (req, res) => {
+  res.type('text/plain');
+  res.send(`Contact: mailto:security@example.com
+Expires: ${new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString()}
+Preferred-Languages: en
+Canonical: ${req.protocol}://${req.get('host')}/.well-known/security.txt
+`);
+});
 
 // SPA fallback — serve index.html for all non-API routes
 app.get('/*', (req, res) => {

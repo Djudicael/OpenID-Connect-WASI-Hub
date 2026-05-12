@@ -40,6 +40,15 @@ class LoginPage extends BaseComponent {
     }
   }
 
+  _togglePassword(e) {
+    const input = this.shadowRoot.querySelector('#password');
+    if (!input) return;
+    const isPassword = input.type === 'password';
+    input.type = isPassword ? 'text' : 'password';
+    const btn = e.currentTarget;
+    btn.textContent = isPassword ? '\u{1F576}' : '\u{1F441}';  // 🕶 → 👁
+  }
+
   _toggleMode() {
     this.setState({ mode: this._state.mode === 'password' ? 'oidc' : 'password', error: null });
   }
@@ -172,7 +181,15 @@ class LoginPage extends BaseComponent {
             </div>
             <div class="form-group">
               <label for="password">Password</label>
-              <input id="password" type="password" placeholder="••••••••" required ?disabled=${loading} />
+              <div style="position:relative">
+                <input id="password" type="password" placeholder="••••••••" required ?disabled=${loading}
+                  style="padding-right:2.5rem" />
+                <button type="button" class="toggle-password" @click=${(e) => this._togglePassword(e)}
+                  aria-label="Toggle password visibility" tabindex="-1"
+                  style="position:absolute;right:0.5rem;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:1rem;color:var(--color-text-muted);padding:0.25rem;">
+                  &#128065;
+                </button>
+              </div>
             </div>
             <button class="login-btn" type="submit" ?disabled=${loading}>
               ${loading ? 'Signing in...' : 'Sign In'}

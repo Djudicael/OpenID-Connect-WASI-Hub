@@ -23,13 +23,16 @@ function getCsrfTokenFromCookie() {
 }
 
 function ensureCsrfToken() {
+  // Prefer server-set cookie
   let token = getCsrfTokenFromCookie();
   if (!token) {
-    // Generate a new CSRF token and set it as a cookie
+    // Fallback: generate a token (server should set this in production)
     const array = new Uint8Array(32);
     crypto.getRandomValues(array);
     token = Array.from(array, b => b.toString(16).padStart(2, '0')).join('');
-    document.cookie = `${CSRF_COOKIE_NAME}=${token}; path=/; SameSite=Strict; Secure`;
+    // Set as non-HttpOnly so JS can read it for the header
+    // In production, the backend should set this cookie with Secure and SameSite=Strict
+    document.cookie = `${CSRF_COOKIE_NAME}=${token}; path=/; SameSite=Strict; max-age=86400`;
   }
   return token;
 }

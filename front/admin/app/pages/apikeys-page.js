@@ -81,8 +81,10 @@ class ApiKeysPage extends BaseComponent {
   }
 
   _onRealmChange(e) {
-    this.setState({ realmId: e.target.value });
-    this._loadKeys();
+    const realmId = e.target.value;
+    this.setState({ realmId });
+    // Use requestAnimationFrame to ensure state is committed before loading
+    requestAnimationFrame(() => this._loadKeys());
   }
 
   template() {
