@@ -25,12 +25,26 @@ class UsersPage extends BaseComponent {
       createLastName: '',
       createEnabled: true,
       createLoading: false,
+      realms: [],
     };
   }
 
   connectedCallback() {
     super.connectedCallback();
     this._loadUsers();
+    this._loadRealms();
+  }
+
+  async _loadRealms() {
+    try {
+      const data = await get('/api/realms?limit=100');
+      const realms = data.items || [];
+      const defaultRealmId = realms.length > 0 ? realms[0].id : '';
+      this.setState({ realms, createRealmId: defaultRealmId });
+    } catch (err) {
+      showToast('Failed to load realms', 'error');
+      this.setState({ realms: [] });
+    }
   }
 
   async _loadUsers() {
@@ -80,7 +94,6 @@ class UsersPage extends BaseComponent {
   _openCreateModal() {
     this.setState({
       showCreateModal: true,
-      createRealmId: '',
       createEmail: '',
       createPassword: '',
       createUsername: '',
@@ -125,7 +138,7 @@ class UsersPage extends BaseComponent {
   }
 
   template() {
-    const { users, loading, search, page, pageSize, total, showCreateModal, createRealmId, createEmail, createPassword, createUsername, createFirstName, createLastName, createEnabled, createLoading } = this._state;
+    const { users, loading, search, page, pageSize, total, showCreateModal, createRealmId, createEmail, createPassword, createUsername, createFirstName, createLastName, createEnabled, createLoading, realms } = this._state;
     const columns = [
       { key: 'email', label: 'Email' },
       { key: 'username', label: 'Username' },
@@ -174,7 +187,7 @@ class UsersPage extends BaseComponent {
           font-weight: 500;
           margin-bottom: 0.25rem;
         }
-        .field-input {
+        .field-input, .field-select {
           width: 100%;
           padding: 0.5rem 0.75rem;
           font-size: 0.875rem;
@@ -183,7 +196,7 @@ class UsersPage extends BaseComponent {
           font-family: inherit;
           box-sizing: border-box;
         }
-        .field-input:focus {
+        .field-input:focus, .field-select:focus {
           outline: none;
           border-color: var(--color-primary);
         }
@@ -232,14 +245,14 @@ class UsersPage extends BaseComponent {
         ${showCreateModal ? html`
           <div class="form">
             <div class="field">
-              <label class="field-label">Realm ID *</label>
-              <input
-                class="field-input"
-                type="text"
-                placeholder="Enter realm UUID"
+              <label class="field-label">Realm *</label>
+              <select
+                class="field-select"
                 .value=${createRealmId}
-                @input=${(e) => this.setState({ createRealmId: e.target.value })}
-              />
+                @change=${(e) => this.setState({ createRealmId: e.target.value })}
+              >
+                ${realms.map(r => html`<option value=${r.id} ?selected=${createRealmId === r.id}>${r.display_name || r.name}</option>`)}
+              </select>
             </div>
             <div class="field">
               <label class="field-label">Email *</label>

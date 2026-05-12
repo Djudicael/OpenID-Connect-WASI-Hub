@@ -4,6 +4,7 @@ import { authService } from '../auth/auth-service.js';
 const routes = [
   { path: '/login', component: 'login-page', public: true },
   { path: '/callback', component: 'login-page', public: true },
+  { path: '/admin', component: 'dashboard-page' },
   { path: '/', component: 'dashboard-page' },
   { path: '/users', component: 'users-page' },
   { path: '/users/:id', component: 'user-detail-page' },

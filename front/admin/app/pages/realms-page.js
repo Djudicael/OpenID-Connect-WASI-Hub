@@ -69,8 +69,10 @@ class RealmsPage extends BaseComponent {
       createDisplayName: '',
       createEnabled: true,
       createLoading: false,
-    }, () => {
-      this.shadowRoot.querySelector('c-modal').open();
+    });
+    requestAnimationFrame(() => {
+      const modal = this.shadowRoot.querySelector('c-modal');
+      if (modal) modal.open();
     });
   }
 

@@ -157,6 +157,7 @@ impl PasswordFlow {
                 "openid".to_string(),
                 "profile".to_string(),
                 "email".to_string(),
+                "admin".to_string(),
             ];
 
             let access_token = state

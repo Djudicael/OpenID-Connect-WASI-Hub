@@ -28,12 +28,26 @@ class ClientsPage extends BaseComponent {
       createPkceRequired: true,
       createEnabled: true,
       createLoading: false,
+      realms: [],
     };
   }
 
   connectedCallback() {
     super.connectedCallback();
     this._loadClients();
+    this._loadRealms();
+  }
+
+  async _loadRealms() {
+    try {
+      const data = await get('/api/realms?limit=100');
+      const realms = data.items || [];
+      const defaultRealmId = realms.length > 0 ? realms[0].id : '';
+      this.setState({ realms, createRealmId: defaultRealmId });
+    } catch (err) {
+      showToast('Failed to load realms', 'error');
+      this.setState({ realms: [] });
+    }
   }
 
   async _loadClients() {
@@ -83,7 +97,6 @@ class ClientsPage extends BaseComponent {
   _openCreateModal() {
     this.setState({
       showCreateModal: true,
-      createRealmId: '',
       createClientId: '',
       createName: '',
       createClientType: 'confidential',
@@ -195,7 +208,7 @@ class ClientsPage extends BaseComponent {
       showCreateModal, createRealmId, createClientId, createName,
       createClientType, createClientSecret, createRedirectUris,
       createAllowedScopes, createAllowedGrantTypes, createPkceRequired,
-      createEnabled, createLoading,
+      createEnabled, createLoading, realms,
     } = this._state;
     const columns = [
       { key: 'client_id', label: 'Client ID' },
@@ -307,14 +320,14 @@ class ClientsPage extends BaseComponent {
         ${showCreateModal ? html`
           <div class="form">
             <div class="field">
-              <label class="field-label">Realm ID</label>
-              <input
-                class="field-input"
-                type="text"
-                placeholder="Enter realm UUID"
+              <label class="field-label">Realm *</label>
+              <select
+                class="field-select"
                 .value=${createRealmId}
-                @input=${(e) => this.setState({ createRealmId: e.target.value })}
-              />
+                @change=${(e) => this.setState({ createRealmId: e.target.value })}
+              >
+                ${realms.map(r => html`<option value=${r.id} ?selected=${createRealmId === r.id}>${r.display_name || r.name}</option>`)}
+              </select>
             </div>
             <div class="field">
               <label class="field-label">Client ID *</label>

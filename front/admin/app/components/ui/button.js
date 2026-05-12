@@ -9,6 +9,7 @@ class Button extends BaseComponent {
   constructor() {
     super();
     this._state = { variant: 'primary', size: 'md', disabled: false };
+    this._onClick = this._onClick.bind(this);
   }
 
   attributeChangedCallback(name, oldVal, newVal) {
