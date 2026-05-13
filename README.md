@@ -83,6 +83,10 @@ cargo build --release -p openid-connect-wasi --target wasm32-wasip2
 | `OIDC_ISSUER` | `http://localhost:8080` | Base URL for OIDC issuer |
 | `OIDC_ENCRYPTION_KEY` | *(required)* | 32-byte hex key for session cookie HMAC |
 | `OIDC_CORS_ORIGINS` | *(none)* | Comma-separated allowed CORS origins |
+| `OIDC_SIGNING_KEY` | *(auto-generated)* | RSA private key in PKCS#1 PEM format |
+| `OIDC_SIGNING_KID` | `key-1` | Key ID for the RSA signing key |
+| `OIDC_ED25519_KEY` | *(auto-generated)* | Ed25519 private key in PKCS#8 PEM format |
+| `OIDC_ED25519_KID` | `ed-key-1` | Key ID for the Ed25519 signing key |
 
 ## API Overview
 
@@ -140,6 +144,46 @@ cargo test -p integration-tests -- --test-threads=1
 # WASM build check
 cargo build -p openid-connect-wasi --target wasm32-wasip2 --release
 ```
+
+## Production Deployment
+
+### WASM Runtime (`wasmtime serve`)
+
+When running as a WASI Preview 2 component, **every HTTP request may instantiate a fresh WASM component** (depending on `--max-instance-reuse-count`). If signing keys are randomly generated at startup, tokens issued by instance *N* will fail verification on instance *N+1* because the keys differ.
+
+**You must provide deterministic signing keys via environment variables:**
+
+```bash
+# Generate keys once and store them in your secrets manager
+openssl genrsa -out rsa.pem 2048
+openssl genpkey -algorithm Ed25519 -out ed25519.pem
+
+# Export for the WASM runtime
+export OIDC_SIGNING_KEY="$(cat rsa.pem)"
+export OIDC_SIGNING_KID="key-1"
+export OIDC_ED25519_KEY="$(cat ed25519.pem)"
+export OIDC_ED25519_KID="ed-key-1"
+```
+
+Then start `wasmtime serve` with the required WASI worlds enabled:
+
+```bash
+wasmtime serve \
+  -S cli=y \
+  -S inherit-env=y \
+  -S inherit-network=y \
+  -S tcp=y \
+  -S allow-ip-name-lookup=y \
+  --env OIDC_DATABASE_URL="postgresql://..." \
+  --env OIDC_SIGNING_KEY="$OIDC_SIGNING_KEY" \
+  --env OIDC_ED25519_KEY="$OIDC_ED25519_KEY" \
+  --env OIDC_ENCRYPTION_KEY="<64-hex-chars>" \
+  target/wasm32-wasip2/release/openid_connect_wasi.wasm
+```
+
+### Native Binary
+
+The native binary (`cargo build --release -p openid-connect-wasi`) runs as a single long-lived process, so random key generation at startup is safe. However, for high-availability deployments with multiple replicas, you should still share the same signing keys across all instances so tokens remain valid after load-balancer routing.
 
 ## Security Notes
 

@@ -109,10 +109,28 @@ impl Clone for JwtTokenService {
 
 impl JwtTokenService {
     /// Create a new token service.
-    /// Attempts to load the RSA private key from `OIDC_SIGNING_KEY` env var (PEM format).
-    /// Falls back to generating a fresh RSA keypair if the env var is not set.
-    /// Attempts to load the Ed25519 private key from `OIDC_ED25519_KEY` env var (PKCS8 PEM).
-    /// Falls back to generating a fresh Ed25519 keypair if the env var is not set.
+    ///
+    /// **Production requirement:** Every WASM instance must load the same signing
+    /// keys, otherwise tokens issued by instance *N* will fail verification on
+    /// instance *N+1*. In `wasmtime serve` each request may spin up a fresh
+    /// component (depending on `--max-instance-reuse-count`), so ephemeral
+    /// random keys break SSO across requests.
+    ///
+    /// Set these environment variables before starting the server:
+    ///
+    /// ```bash
+    /// # Generate once, reuse everywhere
+    /// openssl genrsa -out rsa.pem 2048
+    /// openssl genpkey -algorithm Ed25519 -out ed25519.pem
+    ///
+    /// export OIDC_SIGNING_KEY="$(cat rsa.pem)"
+    /// export OIDC_SIGNING_KID="key-1"
+    /// export OIDC_ED25519_KEY="$(cat ed25519.pem)"
+    /// export OIDC_ED25519_KID="ed-key-1"
+    /// ```
+    ///
+    /// If the variables are absent, fresh random keys are generated (fine for
+    /// single-instance dev, fatal for multi-request production).
     pub fn new(issuer: impl Into<String>) -> Result<Self, OidcError> {
         let issuer = issuer.into();
         let (rsa_private_key, rsa_kid) = load_rsa_key()?;

@@ -22,5 +22,12 @@ pub fn app_router() -> Router {
 #[cfg(target_arch = "wasm32")]
 #[wstd_axum::http_server]
 fn main() -> Router {
+    // Initialize tracing so logs are emitted to stderr (visible via wasmtime)
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .try_init();
     app_router()
 }

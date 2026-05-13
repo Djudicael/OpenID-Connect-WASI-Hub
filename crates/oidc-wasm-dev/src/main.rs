@@ -887,17 +887,44 @@ async fn start_wasmtime(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
     let encryption_key =
         "2a3131371e4b5559606b70777e858f969da4acb3babec5ccc3cdd5dddbe3e9f0".to_string();
 
+    // Generate deterministic dev signing keys so all WASM instances share the
+    // same keys. Without this, wasmtime serve creates fresh instances per
+    // request and random startup keys break token verification (SSO fails).
+    let (rsa_pem, ed25519_pem) = generate_dev_signing_keys().await?;
+
     let wasm_path = format!(
-        "target/wasm32-wasip2/release/{}_wasi.wasm",
+        "target/wasm32-wasip2/release/{}.wasm",
         BACKEND_WASM.replace("-", "_")
     );
 
     info!("Starting wasmtime serve on port {port}...");
 
+    // NOTE: --max-instance-reuse-count=1000 keeps the same WASM instance alive
+    // across requests so the random JWT signing keys generated at startup are
+    // reused. Without this, every request gets a fresh instance with new keys,
+    // and tokens issued by instance N fail verification on instance N+1.
+    //
+    // PRODUCTION: Do NOT rely on instance reuse. Instead set OIDC_SIGNING_KEY
+    // and OIDC_ED25519_KEY env vars so every instance loads the same
+    // deterministic keys. See JwtTokenService::new for key-generation commands.
     let mut cmd = Command::new("wasmtime");
     cmd.arg("serve")
         .arg("--addr")
         .arg(format!("{BIND_ADDRESS}:{port}"))
+        .arg("--max-instance-reuse-count")
+        .arg("1000")
+        .arg("--idle-instance-timeout")
+        .arg("300s")
+        .arg("-S")
+        .arg("cli=y")
+        .arg("-S")
+        .arg("inherit-env=y")
+        .arg("-S")
+        .arg("inherit-network=y")
+        .arg("-S")
+        .arg("tcp=y")
+        .arg("-S")
+        .arg("allow-ip-name-lookup=y")
         .arg("--env")
         .arg(format!("OIDC_DATABASE_URL={}", &db_url))
         .arg("--env")
@@ -907,11 +934,21 @@ async fn start_wasmtime(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
         .arg("--env")
         .arg(format!("OIDC_ENCRYPTION_KEY={}", &encryption_key))
         .arg("--env")
+        .arg(format!("OIDC_SIGNING_KEY={}", &rsa_pem))
+        .arg("--env")
+        .arg("OIDC_SIGNING_KID=key-1")
+        .arg("--env")
+        .arg(format!("OIDC_ED25519_KEY={}", &ed25519_pem))
+        .arg("--env")
+        .arg("OIDC_ED25519_KID=ed-key-1")
+        .arg("--env")
         .arg(format!("OIDC_ISSUER=http://localhost:{}", port))
         .arg("--env")
         .arg("OIDC_RATE_LIMIT_MAX=1000")
         .arg("--env")
         .arg("OIDC_RATE_LIMIT_WINDOW_SECS=60")
+        .arg("--env")
+        .arg("RUST_LOG=trace")
         .arg(&wasm_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -1235,4 +1272,96 @@ async fn stream_logs(name: &str, output: impl tokio::io::AsyncRead + Unpin) {
     while let Ok(Some(line)) = lines.next_line().await {
         info!("[{name}] {line}");
     }
+}
+
+/// Generate or reuse cached dev signing keys (RSA 2048 + Ed25519) via openssl.
+/// Keys are stored in the system temp directory so they survive across restarts.
+async fn generate_dev_signing_keys() -> Result<(String, String)> {
+    let tmp = std::env::temp_dir();
+    let rsa_path = tmp.join("oidc-wasm-dev-rsa.pem");
+    let ed25519_path = tmp.join("oidc-wasm-dev-ed25519.pem");
+
+    // If both files exist and look valid, reuse them.
+    if rsa_path.exists() && ed25519_path.exists() {
+        let rsa_pem = tokio::fs::read_to_string(&rsa_path)
+            .await
+            .with_context(|| format!("reading cached RSA key: {}", rsa_path.display()))?;
+        let ed25519_pem = tokio::fs::read_to_string(&ed25519_path)
+            .await
+            .with_context(|| format!("reading cached Ed25519 key: {}", ed25519_path.display()))?;
+
+        // Sanity-check: RSA PEM must contain the PKCS#1 label.
+        if rsa_pem.contains("RSA PRIVATE KEY") && ed25519_pem.contains("PRIVATE KEY") {
+            return Ok((rsa_pem, ed25519_pem));
+        }
+        // Corrupted / wrong-format cache — delete and regenerate.
+        let _ = tokio::fs::remove_file(&rsa_path).await;
+        let _ = tokio::fs::remove_file(&ed25519_path).await;
+    }
+
+    // Generate RSA key in PKCS#1 format (required by the `rsa` crate).
+    // We use a two-step approach for compatibility with both OpenSSL 1.x and 3.x:
+    // 1. genpkey always outputs PKCS#8
+    // 2. `openssl rsa -traditional` converts PKCS#8 → PKCS#1
+    let rsa_pkcs8_path = tmp.join("oidc-wasm-dev-rsa-pkcs8.pem");
+    let gen_status = Command::new("openssl")
+        .arg("genpkey")
+        .arg("-algorithm")
+        .arg("RSA")
+        .arg("-pkeyopt")
+        .arg("rsa_keygen_bits:2048")
+        .arg("-out")
+        .arg(&rsa_pkcs8_path)
+        .status()
+        .await
+        .context("spawning openssl genpkey -algorithm RSA")?;
+    if !gen_status.success() {
+        anyhow::bail!(
+            "openssl genpkey -algorithm RSA failed (exit code: {:?})",
+            gen_status.code()
+        );
+    }
+    let conv_status = Command::new("openssl")
+        .arg("rsa")
+        .arg("-in")
+        .arg(&rsa_pkcs8_path)
+        .arg("-out")
+        .arg(&rsa_path)
+        .arg("-traditional")
+        .status()
+        .await
+        .context("spawning openssl rsa -traditional")?;
+    if !conv_status.success() {
+        anyhow::bail!(
+            "openssl rsa -traditional failed (exit code: {:?})",
+            conv_status.code()
+        );
+    }
+    let _ = tokio::fs::remove_file(&rsa_pkcs8_path).await;
+
+    // Generate Ed25519 key (PKCS#8 format — required by ed25519-dalek)
+    let ed25519_status = Command::new("openssl")
+        .arg("genpkey")
+        .arg("-algorithm")
+        .arg("Ed25519")
+        .arg("-out")
+        .arg(&ed25519_path)
+        .status()
+        .await
+        .context("spawning openssl genpkey -algorithm Ed25519")?;
+    if !ed25519_status.success() {
+        anyhow::bail!(
+            "openssl genpkey -algorithm Ed25519 failed (exit code: {:?})",
+            ed25519_status.code()
+        );
+    }
+
+    let rsa_pem = tokio::fs::read_to_string(&rsa_path)
+        .await
+        .with_context(|| format!("reading generated RSA key: {}", rsa_path.display()))?;
+    let ed25519_pem = tokio::fs::read_to_string(&ed25519_path)
+        .await
+        .with_context(|| format!("reading generated Ed25519 key: {}", ed25519_path.display()))?;
+
+    Ok((rsa_pem, ed25519_pem))
 }
