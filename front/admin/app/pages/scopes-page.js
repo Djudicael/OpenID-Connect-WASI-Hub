@@ -1,6 +1,7 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
-import { get, post, put, del } from '../core/http.js';
+import { listScopes, createScope, deleteScope } from '../services/scope-service.js';
+import { listRealms } from '../services/realm-service.js';
 import { showToast } from '../components/ui/toast.js';
 
 class ScopesPage extends BaseComponent {
@@ -26,7 +27,7 @@ class ScopesPage extends BaseComponent {
 
   async _loadRealms() {
     try {
-      const data = await get('/api/realms?limit=100');
+      const data = await listRealms({ limit: '100' });
       const realms = data.items || [];
       const defaultRealmId = realms.length > 0 ? realms[0].id : '';
       this.setState({ realms, realmId: defaultRealmId });
@@ -41,7 +42,7 @@ class ScopesPage extends BaseComponent {
     if (!realmId) return;
     this.setState({ loading: true });
     try {
-      const data = await get(`/api/scopes?realm_id=${realmId}`);
+      const data = await listScopes(realmId);
       this.setState({ scopes: data.items || [], loading: false });
     } catch (err) {
       showToast('Failed to load scopes', 'error');
@@ -72,7 +73,7 @@ class ScopesPage extends BaseComponent {
     if (!createName.trim()) return;
     this.setState({ createLoading: true });
     try {
-      await post('/api/scopes', { realm_id: realmId, name: createName.trim(), description: createDescription.trim() || null, enabled: createEnabled });
+      await createScope({ realm_id: realmId, name: createName.trim(), description: createDescription.trim() || null, enabled: createEnabled });
       this._closeCreateModal();
       showToast('Scope created', 'success');
       this._loadScopes();
@@ -85,7 +86,7 @@ class ScopesPage extends BaseComponent {
   async _deleteScope(id) {
     if (!confirm('Delete this scope? Clients using it will lose access.')) return;
     try {
-      await del(`/api/scopes/${id}`);
+      await deleteScope(id);
       showToast('Scope deleted', 'success');
       this._loadScopes();
     } catch (err) {

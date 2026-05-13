@@ -1,6 +1,7 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
-import { get, del, post } from '../core/http.js';
+import { listApiKeys, deleteApiKey, rotateApiKey } from '../services/apikey-service.js';
+import { listRealms } from '../services/realm-service.js';
 import { navigate } from '../core/router.js';
 import { formatDate, formatRelativeTime } from '../utils/format.js';
 import { showToast } from '../components/ui/toast.js';
@@ -24,7 +25,7 @@ class ApiKeysPage extends BaseComponent {
 
   async _loadRealms() {
     try {
-      const data = await get('/api/realms?limit=100');
+      const data = await listRealms({ limit: '100' });
       const realms = data.items || [];
       const defaultRealmId = realms.length > 0 ? realms[0].id : '00000000-0000-0000-0000-000000000000';
       this.setState({ realms, realmId: defaultRealmId });
@@ -39,7 +40,10 @@ class ApiKeysPage extends BaseComponent {
   async _loadKeys() {
     this.setState({ loading: true });
     try {
-      const data = await get(`/api/keys?realm_id=${this._state.realmId}&include_revoked=${this._state.includeRevoked}`);
+      const data = await listApiKeys({
+        realm_id: this._state.realmId,
+        include_revoked: String(this._state.includeRevoked),
+      });
       this.setState({ keys: data.items || [], loading: false });
     } catch (err) {
       showToast('Failed to load API keys', 'error');
@@ -50,7 +54,7 @@ class ApiKeysPage extends BaseComponent {
   async _revokeKey(id) {
     if (!confirm('Are you sure you want to revoke this API key?')) return;
     try {
-      await del(`/api/keys/${id}`);
+      await deleteApiKey(id);
       showToast('API key revoked', 'success');
       this._loadKeys();
     } catch (err) {
@@ -61,7 +65,7 @@ class ApiKeysPage extends BaseComponent {
   async _rotateKey(id) {
     if (!confirm('Rotate this API key? The old key will stop working immediately.')) return;
     try {
-      const data = await post(`/api/keys/${id}/rotate`);
+      const data = await rotateApiKey(id);
       showToast('API key rotated! New key copied to clipboard.', 'success');
       const rawKey = data.raw_key;
       const copied = await navigator.clipboard.writeText(rawKey).catch(() => false);

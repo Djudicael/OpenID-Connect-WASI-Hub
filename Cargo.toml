@@ -8,6 +8,7 @@ members = [
     "crates/openid-connect-wasi",
     "crates/oidc-migrate",
     "crates/oidc-dev",
+    "crates/oidc-wasm-dev",
     "tests/integration",
 ]
 

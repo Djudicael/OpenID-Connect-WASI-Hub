@@ -1,6 +1,6 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
-import { get } from '../core/http.js';
+import { listAuditEvents } from '../services/audit-service.js';
 import { formatDate } from '../utils/format.js';
 import { showToast } from '../components/ui/toast.js';
 
@@ -39,7 +39,12 @@ class AuditPage extends BaseComponent {
         params.set('actor_id', actorSearch);
       }
 
-      const data = await get(`/api/audit/events?${params.toString()}`);
+      const data = await listAuditEvents({
+        limit: String(pageSize),
+        offset: String(offset),
+        ...(eventTypeFilter ? { event_type: eventTypeFilter } : {}),
+        ...(actorSearch ? { actor_id: actorSearch } : {}),
+      });
       const events = data.items || [];
       const total = data.total || 0;
 

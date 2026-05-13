@@ -1,6 +1,6 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
-import { get, put } from '../core/http.js';
+import { getUser, updateUser } from '../services/user-service.js';
 import { navigate } from '../core/router.js';
 import { showToast } from '../components/ui/toast.js';
 
@@ -46,7 +46,7 @@ class UserDetailPage extends BaseComponent {
   async _loadUser(id) {
     this.setState({ loading: true });
     try {
-      const user = await get(`/api/users/${id}`);
+      const user = await getUser(id);
       this.setState({ user, savedUser: { ...user }, loading: false, dirty: false });
     } catch (err) {
       showToast('Failed to load user', 'error');
@@ -59,7 +59,7 @@ class UserDetailPage extends BaseComponent {
     if (!user) return;
     this.setState({ saving: true });
     try {
-      await put(`/api/users/${user.id}`, {
+      await updateUser(user.id, {
         email: user.email,
         email_verified: user.email_verified,
         username: user.username,

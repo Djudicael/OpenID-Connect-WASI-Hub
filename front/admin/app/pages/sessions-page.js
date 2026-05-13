@@ -1,6 +1,6 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
-import { get, post } from '../core/http.js';
+import { listSessions, revokeSession } from '../services/session-service.js';
 import { showToast } from '../components/ui/toast.js';
 
 class SessionsPage extends BaseComponent {
@@ -31,7 +31,11 @@ class SessionsPage extends BaseComponent {
       params.set('offset', String(offset));
       if (!showRevoked) params.set('revoked', 'false');
 
-      const data = await get(`/api/sessions?${params.toString()}`);
+      const data = await listSessions({
+        limit: String(pageSize),
+        offset: String(offset),
+        ...(!showRevoked ? { revoked: 'false' } : {}),
+      });
       this.setState({
         sessions: data.items || [],
         total: data.total || 0,
@@ -50,7 +54,7 @@ class SessionsPage extends BaseComponent {
   async _revokeSession(id) {
     if (!confirm('Revoke this session? The user will be forced to re-authenticate.')) return;
     try {
-      await post(`/api/sessions/${id}/revoke`);
+      await revokeSession(id);
       showToast('Session revoked', 'success');
       this._loadSessions();
     } catch (err) {

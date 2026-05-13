@@ -1,6 +1,7 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
-import { get } from '../core/http.js';
+import { fetchStats } from '../services/stats-service.js';
+import { listAuditEvents } from '../services/audit-service.js';
 import { formatDate } from '../utils/format.js';
 import { showToast } from '../components/ui/toast.js';
 
@@ -22,8 +23,8 @@ class DashboardPage extends BaseComponent {
   async _loadData() {
     try {
       const [stats, events] = await Promise.allSettled([
-        get('/api/stats'),
-        get('/api/audit/events?limit=10'),
+        fetchStats(),
+        listAuditEvents({ limit: '10' }),
       ]);
 
       const statsData = stats.status === 'fulfilled' ? stats.value : null;

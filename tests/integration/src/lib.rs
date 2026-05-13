@@ -26,6 +26,12 @@ pub mod db_tests;
 pub mod oidc_tests;
 
 #[cfg(test)]
+pub mod realm_oidc_tests;
+
+#[cfg(test)]
+pub mod scope_tests;
+
+#[cfg(test)]
 pub mod security_tests;
 
 #[cfg(test)]

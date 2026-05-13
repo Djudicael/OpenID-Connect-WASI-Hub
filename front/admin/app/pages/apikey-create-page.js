@@ -1,6 +1,7 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
-import { get, post } from '../core/http.js';
+import { listRealms } from '../services/realm-service.js';
+import { createApiKey } from '../services/apikey-service.js';
 import { navigate } from '../core/router.js';
 import { showToast } from '../components/ui/toast.js';
 
@@ -25,7 +26,7 @@ class ApiKeyCreatePage extends BaseComponent {
 
   async _loadRealms() {
     try {
-      const data = await get('/api/realms?limit=100');
+      const data = await listRealms({ limit: '100' });
       const realms = data.items || [];
       const defaultRealmId = realms.length > 0 ? realms[0].id : '00000000-0000-0000-0000-000000000000';
       this.setState({ realms, realmId: defaultRealmId });
@@ -44,7 +45,7 @@ class ApiKeyCreatePage extends BaseComponent {
 
     this.setState({ loading: true });
     try {
-      const data = await post('/api/keys', {
+      const data = await createApiKey({
         realm_id: realmId,
         name: name.trim(),
         scopes: scopes.split(',').map(s => s.trim()).filter(Boolean),

@@ -1,6 +1,6 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
-import { get, del, post } from '../core/http.js';
+import { getApiKey, deleteApiKey, rotateApiKey } from '../services/apikey-service.js';
 import { navigate } from '../core/router.js';
 import { formatDate, formatRelativeTime } from '../utils/format.js';
 import { showToast } from '../components/ui/toast.js';
@@ -27,7 +27,7 @@ class ApiKeyDetailPage extends BaseComponent {
   async _loadKey(id) {
     this.setState({ loading: true });
     try {
-      const key = await get(`/api/keys/${id}`);
+      const key = await getApiKey(id);
       this.setState({ key, loading: false });
     } catch (err) {
       if (err.status === 404) {
@@ -62,7 +62,7 @@ class ApiKeyDetailPage extends BaseComponent {
 
     this.setState({ rotating: true });
     try {
-      const data = await post(`/api/keys/${key.id}/rotate`);
+      const data = await rotateApiKey(key.id);
       showToast('API key rotated successfully', 'success');
       this.setState({ rotating: false, rotatedRawKey: data.raw_key });
       // Reload key details to reflect updated state
@@ -81,7 +81,7 @@ class ApiKeyDetailPage extends BaseComponent {
 
     this.setState({ revoking: true });
     try {
-      await del(`/api/keys/${key.id}`);
+      await deleteApiKey(key.id);
       showToast('API key revoked', 'success');
       this.setState({ revoking: false });
       this._loadKey(key.id);

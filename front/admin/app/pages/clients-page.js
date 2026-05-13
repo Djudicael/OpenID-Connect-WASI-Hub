@@ -1,6 +1,8 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
-import { get, post, del } from '../core/http.js';
+import { listClients, createClient, deleteClient } from '../services/client-service.js';
+import { listRealms } from '../services/realm-service.js';
+import { listScopes } from '../services/scope-service.js';
 import { navigate } from '../core/router.js';
 import { showToast } from '../components/ui/toast.js';
 import { isRequired, minLength, isEmail } from '../utils/validators.js';
@@ -42,7 +44,7 @@ class ClientsPage extends BaseComponent {
 
   async _loadRealms() {
     try {
-      const data = await get('/api/realms?limit=100');
+      const data = await listRealms({ limit: '100' });
       const realms = data.items || [];
       const defaultRealmId = realms.length > 0 ? realms[0].id : '';
       this.setState({ realms, createRealmId: defaultRealmId });
@@ -55,7 +57,7 @@ class ClientsPage extends BaseComponent {
   async _loadScopesForRealm(realmId) {
     if (!realmId) return;
     try {
-      const data = await get('/api/scopes?realm_id=' + realmId);
+      const data = await listScopes(realmId);
       const scopes = (data.items || []).filter(s => s.enabled);
       const names = scopes.map(s => s.name);
       this.setState({ availableScopes: scopes, selectedScopes: names, createAllowedScopes: names.join(', ') });
@@ -73,7 +75,11 @@ class ClientsPage extends BaseComponent {
       if (search) params.set('search', search);
       params.set('limit', String(pageSize));
       params.set('offset', String(offset));
-      const data = await get('/api/clients?' + params.toString());
+      const data = await listClients({
+        ...(search ? { search } : {}),
+        limit: String(pageSize),
+        offset: String(offset),
+      });
       this.setState({ clients: data.items || [], total: data.total || 0, loading: false });
     } catch (err) {
       showToast('Failed to load clients', 'error');
@@ -95,7 +101,7 @@ class ClientsPage extends BaseComponent {
   async _deleteClient(id) {
     if (!confirm('Are you sure you want to delete this client?')) return;
     try {
-      await del('/api/clients/' + id);
+      await deleteClient(id);
       showToast('Client deleted', 'success');
       this._loadClients();
     } catch (err) {
@@ -162,7 +168,7 @@ class ClientsPage extends BaseComponent {
     if (createClientType === 'confidential' && createClientSecret.trim()) body.client_secret = createClientSecret.trim();
     this.setState({ createLoading: true });
     try {
-      const data = await post('/api/clients', body);
+      const data = await createClient(body);
       this._closeCreateModal();
       showToast('Client created', 'success');
       if (data.client_secret) {

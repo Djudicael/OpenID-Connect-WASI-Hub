@@ -1,6 +1,7 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
-import { get, post, del } from '../core/http.js';
+import { listUsers, createUser, deleteUser } from '../services/user-service.js';
+import { listRealms } from '../services/realm-service.js';
 import { navigate } from '../core/router.js';
 import { formatDate } from '../utils/format.js';
 import { showToast } from '../components/ui/toast.js';
@@ -37,7 +38,7 @@ class UsersPage extends BaseComponent {
 
   async _loadRealms() {
     try {
-      const data = await get('/api/realms?limit=100');
+      const data = await listRealms({ limit: '100' });
       const realms = data.items || [];
       const defaultRealmId = realms.length > 0 ? realms[0].id : '';
       this.setState({ realms, createRealmId: defaultRealmId });
@@ -57,7 +58,11 @@ class UsersPage extends BaseComponent {
       params.set('limit', String(pageSize));
       params.set('offset', String(offset));
 
-      const data = await get(`/api/users?${params.toString()}`);
+      const data = await listUsers({
+        ...(search ? { search } : {}),
+        limit: String(pageSize),
+        offset: String(offset),
+      });
       this.setState({
         users: data.items || [],
         total: data.total || 0,
@@ -83,7 +88,7 @@ class UsersPage extends BaseComponent {
   async _deleteUser(id) {
     if (!confirm('Are you sure you want to delete this user?')) return;
     try {
-      await del(`/api/users/${id}`);
+      await deleteUser(id);
       showToast('User deleted', 'success');
       this._loadUsers();
     } catch (err) {
@@ -119,7 +124,7 @@ class UsersPage extends BaseComponent {
 
     this.setState({ createLoading: true });
     try {
-      await post('/api/users', {
+      await createUser({
         realm_id: createRealmId.trim(),
         email: createEmail.trim(),
         password: createPassword,

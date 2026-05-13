@@ -1,6 +1,6 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
-import { get, put } from '../core/http.js';
+import { getRealm, updateRealm } from '../services/realm-service.js';
 import { navigate } from '../core/router.js';
 import { showToast } from '../components/ui/toast.js';
 
@@ -52,7 +52,7 @@ class RealmDetailPage extends BaseComponent {
   async _loadRealm(id) {
     this.setState({ loading: true });
     try {
-      const realm = await get(`/api/realms/${id}`);
+      const realm = await getRealm(id);
       // Ensure config/theme objects exist for binding
       if (!realm.config) realm.config = {};
       if (!realm.config.theme) realm.config.theme = {};
@@ -68,7 +68,7 @@ class RealmDetailPage extends BaseComponent {
     if (!realm) return;
     this.setState({ saving: true });
     try {
-      await put(`/api/realms/${realm.id}`, {
+      await updateRealm(realm.id, {
         name: realm.name,
         display_name: realm.display_name,
         enabled: realm.enabled,

@@ -1,6 +1,6 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
-import { get, put } from '../core/http.js';
+import { getClient, updateClient } from '../services/client-service.js';
 import { navigate } from '../core/router.js';
 import { showToast } from '../components/ui/toast.js';
 
@@ -53,7 +53,7 @@ class ClientDetailPage extends BaseComponent {
   async _loadClient(id) {
     this.setState({ loading: true });
     try {
-      const client = await get(`/api/clients/${id}`);
+      const client = await getClient(id);
       this.setState({ client, savedClient: { ...client }, loading: false, dirty: false });
     } catch (err) {
       showToast('Failed to load client', 'error');
@@ -66,7 +66,7 @@ class ClientDetailPage extends BaseComponent {
     if (!client) return;
     this.setState({ saving: true });
     try {
-      await put(`/api/clients/${client.id}`, {
+      await updateClient(client.id, {
         name: client.name,
         redirect_uris: client.redirect_uris,
         allowed_scopes: client.allowed_scopes,

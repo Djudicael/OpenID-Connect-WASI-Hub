@@ -1,6 +1,6 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
-import { get, post, del } from '../core/http.js';
+import { listRealms, createRealm, deleteRealm } from '../services/realm-service.js';
 import { navigate } from '../core/router.js';
 import { showToast } from '../components/ui/toast.js';
 
@@ -35,7 +35,7 @@ class RealmsPage extends BaseComponent {
       params.set('limit', String(pageSize));
       params.set('offset', String(offset));
 
-      const data = await get(`/api/realms?${params.toString()}`);
+      const data = await listRealms({ limit: String(pageSize), offset: String(offset) });
       this.setState({
         realms: data.items || [],
         total: data.total || 0,
@@ -54,7 +54,7 @@ class RealmsPage extends BaseComponent {
   async _deleteRealm(id) {
     if (!confirm('Are you sure you want to delete this realm? This will cascade to all users, clients, and sessions.')) return;
     try {
-      await del(`/api/realms/${id}`);
+      await deleteRealm(id);
       showToast('Realm deleted', 'success');
       this._loadRealms();
     } catch (err) {
@@ -87,7 +87,7 @@ class RealmsPage extends BaseComponent {
 
     this.setState({ createLoading: true });
     try {
-      await post('/api/realms', {
+      await createRealm({
         name: createName.trim(),
         display_name: createDisplayName.trim(),
         enabled: createEnabled,

@@ -1,0 +1,38 @@
+[package]
+name = "oidc-wasm-dev"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "oidc-wasm-dev"
+path = "src/main.rs"
+
+[dependencies]
+# Dev orchestration (same as oidc-dev)
+rustainers = "0.15"
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "signal", "time"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Database
+wasi-pg-client = { workspace = true, features = ["tokio-transport", "uuid", "chrono", "serde-json"] }
+
+# Repository & API key layers
+oidc-repository = { path = "../oidc-repository" }
+oidc-apikey = { path = "../oidc-apikey" }
+
+# HTTP client for health checks
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+
+# Port scanning
+portpicker = "0.1"
+
+# Workspace
+oidc-core = { path = "../oidc-core" }
+uuid = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
