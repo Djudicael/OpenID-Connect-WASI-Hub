@@ -61,6 +61,26 @@ impl ClientRepo {
         row.map(|r| Self::map_row(&r)).transpose()
     }
 
+    /// Find a client by its client_id within a specific realm.
+    ///
+    /// This is the **realm-scoped** variant used by per-realm login flows.
+    /// A client with the same `client_id` can exist in multiple realms.
+    pub async fn find_by_client_id_in_realm(
+        &self,
+        conn: &mut Connection,
+        client_id: &str,
+        realm_id: Uuid,
+    ) -> Result<Option<Client>, OidcError> {
+        let sql = &format!(
+            "SELECT {CLIENT_COLUMNS} FROM clients WHERE client_id = $1 AND realm_id = $2 AND deleted_at IS NULL"
+        );
+        let row = conn
+            .query_one_params(sql, &[&client_id, &realm_id])
+            .await
+            .map_err(mapper::pg_err)?;
+        row.map(|r| Self::map_row(&r)).transpose()
+    }
+
     /// Insert a new client.
     pub async fn create(&self, conn: &mut Connection, entity: &Client) -> Result<(), OidcError> {
         let sql = r#"

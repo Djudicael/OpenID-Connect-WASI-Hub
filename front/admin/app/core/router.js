@@ -16,6 +16,7 @@ const routes = [
   { path: '/api-keys', component: 'apikeys-page' },
   { path: '/api-keys/create', component: 'apikey-create-page' },
   { path: '/api-keys/:id', component: 'apikey-detail-page' },
+  { path: '/scopes', component: 'scopes-page' },
   { path: '/audit', component: 'audit-page' },
 ];
 

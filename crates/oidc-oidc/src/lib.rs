@@ -12,6 +12,6 @@ pub mod state;
 pub mod tokens;
 pub mod validation;
 
-pub use endpoints::discovery::discovery_handler;
+pub use endpoints::discovery::{discovery_handler, realm_discovery_handler};
 pub use endpoints::jwks::jwks_handler;
 pub use endpoints::logout::logout_handler;

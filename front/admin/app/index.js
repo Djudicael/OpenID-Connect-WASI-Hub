@@ -32,5 +32,6 @@ import './pages/sessions-page.js';
 import './pages/apikeys-page.js';
 import './pages/apikey-create-page.js';
 import './pages/apikey-detail-page.js';
+import './pages/scopes-page.js';
 import './pages/audit-page.js';
 import './pages/not-found-page.js';

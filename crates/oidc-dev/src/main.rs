@@ -1231,7 +1231,7 @@ const server = http.createServer((req, res) => {{
         return;
     }}
 
-    const isApi = req.url.startsWith('/api/') || req.url.startsWith('/oidc/') || req.url.startsWith('/.well-known/') || req.url.startsWith('/health') || req.url.startsWith('/admin');
+    const isApi = req.url.startsWith('/api/') || req.url.startsWith('/oidc/') || req.url.startsWith('/.well-known/') || req.url.startsWith('/health') || req.url.startsWith('/admin') || req.url.startsWith('/realms/');
     const target = isApi ? `http://127.0.0.1:${{BACKEND_PORT}}` : `http://127.0.0.1:${{FRONTEND_PORT}}`;
     console.log(`[proxy] ${{req.method}} ${{req.url}} -> ${{isApi ? 'BACKEND' : 'FRONTEND'}} (${{target}})`);
 

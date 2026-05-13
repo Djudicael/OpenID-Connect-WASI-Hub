@@ -17,6 +17,9 @@ pub struct LoginRequest {
     pub email: String,
     pub password: String,
     pub client_id: Option<String>,
+    /// Optional realm name for authentication.
+    /// When omitted, defaults to "master" (backward-compatible).
+    pub realm: Option<String>,
 }
 
 /// Successful login response.
@@ -48,9 +51,15 @@ pub async fn login_handler(
     State(state): State<OidcState>,
     Json(req): Json<LoginRequest>,
 ) -> Result<Response, OidcErrorResponse> {
-    let result = PasswordFlow::execute(&state, &req.email, &req.password, req.client_id.as_deref())
-        .await
-        .map_err(|e| from_oidc_error(&e))?;
+    let result = PasswordFlow::execute(
+        &state,
+        &req.email,
+        &req.password,
+        req.client_id.as_deref(),
+        req.realm.as_deref(),
+    )
+    .await
+    .map_err(|e| from_oidc_error(&e))?;
 
     // Build the JSON response body
     let body = Json(LoginResponse {

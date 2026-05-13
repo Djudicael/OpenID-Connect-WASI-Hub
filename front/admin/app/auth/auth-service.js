@@ -61,11 +61,15 @@ class AuthService {
     return this.tokens.access_token;
   }
 
-  async loginWithPassword(email, password) {
+  async loginWithPassword(email, password, realm) {
+    const body = { email, password, client_id: this.config.client_id };
+    if (realm && realm !== 'master') {
+      body.realm = realm;
+    }
     const response = await fetch(`${this.config.authority}/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, client_id: this.config.client_id }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {

@@ -5,7 +5,7 @@ import { authService } from '../auth/auth-service.js';
 class LoginPage extends BaseComponent {
   constructor() {
     super();
-    this._state = { error: null, loading: false, mode: 'password' };
+    this._state = { error: null, loading: false, mode: 'password', realm: 'master' };
   }
 
   connectedCallback() {
@@ -30,10 +30,11 @@ class LoginPage extends BaseComponent {
     e.preventDefault();
     const email = this.shadowRoot.querySelector('#email').value;
     const password = this.shadowRoot.querySelector('#password').value;
+    const realm = this._state.realm || 'master';
 
     this.setState({ loading: true, error: null });
     try {
-      await authService.loginWithPassword(email, password);
+      await authService.loginWithPassword(email, password, realm);
       window.location.href = '/';
     } catch (err) {
       this.setState({ error: err.message || 'Login failed', loading: false });
@@ -46,7 +47,7 @@ class LoginPage extends BaseComponent {
     const isPassword = input.type === 'password';
     input.type = isPassword ? 'text' : 'password';
     const btn = e.currentTarget;
-    btn.textContent = isPassword ? '\u{1F576}' : '\u{1F441}';  // 🕶 → 👁
+    btn.textContent = isPassword ? '\u{1F576}' : '\u{1F441}';
   }
 
   _toggleMode() {
@@ -54,7 +55,7 @@ class LoginPage extends BaseComponent {
   }
 
   template() {
-    const { error, loading, mode } = this._state;
+    const { error, loading, mode, realm } = this._state;
     return html`
       <style>
         :host { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
@@ -93,7 +94,7 @@ class LoginPage extends BaseComponent {
           margin-bottom: 0.25rem;
           color: var(--color-text);
         }
-        .form-group input {
+        .form-group input, .form-group select {
           width: 100%;
           padding: 0.625rem;
           border: 1px solid var(--color-border);
@@ -103,7 +104,7 @@ class LoginPage extends BaseComponent {
           color: var(--color-text);
           box-sizing: border-box;
         }
-        .form-group input:focus {
+        .form-group input:focus, .form-group select:focus {
           outline: none;
           border-color: var(--color-primary);
           box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
@@ -175,6 +176,12 @@ class LoginPage extends BaseComponent {
 
         ${mode === 'password' ? html`
           <form class="login-form" @submit=${(e) => this._loginWithPassword(e)}>
+            <div class="form-group">
+              <label for="realm">Realm</label>
+              <select id="realm" .value=${realm} @change=${(e) => this.setState({ realm: e.target.value })} ?disabled=${loading}>
+                <option value="master">master</option>
+              </select>
+            </div>
             <div class="form-group">
               <label for="email">Email</label>
               <input id="email" type="email" placeholder="you@example.com" required ?disabled=${loading} />

@@ -8,6 +8,7 @@ const links = [
   { path: '/realms', label: 'Realms' },
   { path: '/sessions', label: 'Sessions' },
   { path: '/api-keys', label: 'API Keys' },
+  { path: '/scopes', label: 'Scopes' },
   { path: '/audit', label: 'Audit' },
 ];
 

@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use oidc_core::models::ClientType;
+use oidc_core::models::Scope;
 use oidc_core::models::audit_event::ActorType;
 
 use oidc_core::utils::{
@@ -20,6 +21,7 @@ use oidc_repository::Connection;
 use oidc_repository::repositories::audit_event_repo::AuditEventRepo;
 use oidc_repository::repositories::client_repo::ClientRepo;
 use oidc_repository::repositories::realm_repo::RealmRepo;
+use oidc_repository::repositories::scope_repo::ScopeRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 
@@ -58,6 +60,12 @@ pub fn router() -> Router<AppState> {
         .route("/api/sessions/{id}/revoke", post(revoke_session))
         // Audit
         .route("/api/audit/events", get(list_audit_events))
+        // Scopes
+        .route("/api/scopes", get(list_scopes))
+        .route("/api/scopes", post(create_scope))
+        .route("/api/scopes/{id}", get(get_scope))
+        .route("/api/scopes/{id}", put(update_scope))
+        .route("/api/scopes/{id}", delete(delete_scope))
 }
 
 async fn admin_index_handler(
@@ -621,6 +629,7 @@ async fn list_realms(
                 "name": r.name,
                 "display_name": r.display_name,
                 "enabled": r.enabled,
+                "config": r.config,
             })
         })
         .collect();
@@ -648,6 +657,7 @@ async fn get_realm(
             "name": r.name,
             "display_name": r.display_name,
             "enabled": r.enabled,
+            "config": r.config,
         }))
         .into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response(),
@@ -667,6 +677,7 @@ struct UpdateRealmRequest {
     name: Option<String>,
     display_name: Option<String>,
     enabled: Option<bool>,
+    config: Option<Value>,
 }
 
 async fn update_realm(
@@ -718,6 +729,9 @@ async fn update_realm(
     }
     if let Some(v) = req.enabled {
         realm.enabled = v;
+    }
+    if let Some(v) = req.config {
+        realm.config = v;
     }
 
     match RealmRepo.update(&mut conn, &realm).await {
@@ -1250,6 +1264,7 @@ struct CreateRealmRequest {
     name: String,
     display_name: String,
     enabled: Option<bool>,
+    config: Option<Value>,
 }
 
 async fn create_realm(State(state): State<AppState>, auth: AdminAuth, body: String) -> Response {
@@ -1290,12 +1305,15 @@ async fn create_realm(State(state): State<AppState>, auth: AdminAuth, body: Stri
     }
 
     let realm_id = generate_uuid_v7();
+    let config = req
+        .config
+        .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
     let realm = oidc_core::models::Realm {
         id: realm_id,
         name: req.name,
         display_name: req.display_name,
         enabled: req.enabled.unwrap_or(true),
-        config: serde_json::Value::Object(serde_json::Map::new()),
+        config,
         deleted_at: None,
     };
 
@@ -1340,6 +1358,236 @@ async fn create_realm(State(state): State<AppState>, auth: AdminAuth, body: Stri
         "name": realm.name,
         "display_name": realm.display_name,
         "enabled": realm.enabled,
+        "config": realm.config,
     }))
     .into_response()
+}
+
+// ─── Scopes ───────────────────────────────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct ScopeListQuery {
+    realm_id: Uuid,
+}
+
+async fn list_scopes(
+    State(state): State<AppState>,
+    Query(query): Query<ScopeListQuery>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let items = match ScopeRepo.list_by_realm(&mut conn, query.realm_id).await {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!("list scopes error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    };
+    Json(json!({
+        "items": items
+            .iter()
+            .map(|s| json!({
+                "id": s.id.to_string(),
+                "realm_id": s.realm_id.to_string(),
+                "name": s.name,
+                "description": s.description,
+                "enabled": s.enabled,
+            }))
+            .collect::<Vec<_>>()
+    }))
+    .into_response()
+}
+
+#[derive(Deserialize)]
+struct CreateScopeRequest {
+    realm_id: Uuid,
+    name: String,
+    description: Option<String>,
+    enabled: Option<bool>,
+}
+
+async fn create_scope(State(state): State<AppState>, auth: AdminAuth, body: String) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let req: CreateScopeRequest = match serde_json::from_str(&body) {
+        Ok(r) => r,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "bad_request"})),
+            )
+                .into_response();
+        }
+    };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    // Check for duplicate name in realm
+    if let Ok(Some(_)) = ScopeRepo
+        .find_by_name(&mut conn, req.realm_id, &req.name)
+        .await
+    {
+        return (StatusCode::CONFLICT, Json(json!({"error": "duplicate"}))).into_response();
+    }
+    let scope = Scope {
+        id: generate_uuid_v7(),
+        realm_id: req.realm_id,
+        name: req.name,
+        description: req.description,
+        enabled: req.enabled.unwrap_or(true),
+    };
+    match ScopeRepo.create(&mut conn, &scope).await {
+        Ok(()) => Json(json!({
+            "id": scope.id.to_string(),
+            "realm_id": scope.realm_id.to_string(),
+            "name": scope.name,
+            "description": scope.description,
+            "enabled": scope.enabled,
+        }))
+        .into_response(),
+        Err(e) => {
+            tracing::error!("create scope error: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn get_scope(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    match ScopeRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(s)) => Json(json!({
+            "id": s.id.to_string(),
+            "realm_id": s.realm_id.to_string(),
+            "name": s.name,
+            "description": s.description,
+            "enabled": s.enabled,
+        }))
+        .into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response(),
+        Err(e) => {
+            tracing::error!("get scope error: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct UpdateScopeRequest {
+    name: Option<String>,
+    description: Option<String>,
+    enabled: Option<bool>,
+}
+
+async fn update_scope(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+    body: String,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let req: UpdateScopeRequest = match serde_json::from_str(&body) {
+        Ok(r) => r,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "bad_request"})),
+            )
+                .into_response();
+        }
+    };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let mut scope = match ScopeRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            return (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response();
+        }
+        Err(e) => {
+            tracing::error!("update scope fetch error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    };
+    if let Some(v) = req.name {
+        scope.name = v;
+    }
+    if req.description.is_some() {
+        scope.description = req.description;
+    }
+    if let Some(v) = req.enabled {
+        scope.enabled = v;
+    }
+    match ScopeRepo.update(&mut conn, &scope).await {
+        Ok(()) => Json(json!({"updated": true})).into_response(),
+        Err(e) => {
+            tracing::error!("update scope error: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn delete_scope(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    match ScopeRepo.delete(&mut conn, id).await {
+        Ok(()) => Json(json!({"deleted": true})).into_response(),
+        Err(e) => {
+            tracing::error!("delete scope error: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response()
+        }
+    }
 }

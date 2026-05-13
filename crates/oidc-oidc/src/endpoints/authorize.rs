@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use oidc_core::models::AuthCode;
 use oidc_core::utils::generate_uuid_v7;
 use oidc_repository::repositories::client_repo::ClientRepo;
+use oidc_repository::repositories::realm_repo::RealmRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 
@@ -29,10 +30,45 @@ pub async fn authorize_handler(
     Query(params): Query<HashMap<String, String>>,
 ) -> Redirect {
     let state_param = params.get("state").cloned();
-    match authorize_inner(state, &headers, params).await {
+    match authorize_inner(state, &headers, params, None).await {
         Ok(redirect_uri) => Redirect::temporary(&redirect_uri),
         Err((redirect_uri, error, description)) => {
             tracing::warn!("authorize failed: {} - {}", error, description);
+            let mut url = format!("{}?error={}", redirect_uri, urlencoding::encode(&error));
+            if !description.is_empty() {
+                url.push_str(&format!(
+                    "&error_description={}",
+                    urlencoding::encode(&description)
+                ));
+            }
+            if let Some(s) = state_param {
+                url.push_str(&format!("&state={}", urlencoding::encode(&s)));
+            }
+            Redirect::temporary(&url)
+        }
+    }
+}
+
+/// Per-realm authorization endpoint handler (Keycloak-compatible).
+///
+/// Resolves the realm by name, then delegates to authorize_inner.
+/// Path: /realms/{realm}/protocol/openid-connect/auth
+pub async fn realm_authorize_handler(
+    state: OidcState,
+    realm: String,
+    headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> Redirect {
+    let state_param = params.get("state").cloned();
+    match authorize_inner(state, &headers, params, Some(&realm)).await {
+        Ok(redirect_uri) => Redirect::temporary(&redirect_uri),
+        Err((redirect_uri, error, description)) => {
+            tracing::warn!(
+                "authorize failed for realm {}: {} - {}",
+                realm,
+                error,
+                description
+            );
             let mut url = format!("{}?error={}", redirect_uri, urlencoding::encode(&error));
             if !description.is_empty() {
                 url.push_str(&format!(
@@ -52,7 +88,25 @@ async fn authorize_inner(
     state: OidcState,
     headers: &HeaderMap,
     params: HashMap<String, String>,
+    realm_name: Option<&str>,
 ) -> Result<String, (String, String, String)> {
+    // Helper to build the correct login URL based on whether a realm is present
+    let build_login_url = |return_to: &str, state: Option<&String>| {
+        let mut url = if let Some(name) = realm_name {
+            format!(
+                "/realms/{}/login?return_to={}",
+                name,
+                urlencoding::encode(return_to)
+            )
+        } else {
+            format!("/login?return_to={}", urlencoding::encode(return_to))
+        };
+        if let Some(s) = state {
+            url.push_str(&format!("&state={}", urlencoding::encode(s)));
+        }
+        url
+    };
+
     // --- Extract redirect_uri early for error responses ---
     let redirect_uri_param = params.get("redirect_uri").cloned();
     let redirect_uri = match redirect_uri_param.as_deref() {
@@ -136,22 +190,69 @@ async fn authorize_inner(
         }
     };
 
-    let client = match ClientRepo.find_by_client_id(&mut conn, client_id_str).await {
-        Ok(Some(c)) => c,
-        Ok(None) => {
+    // Resolve realm if provided, then look up client within that realm
+    let realm_id = if let Some(name) = realm_name {
+        let realm = match RealmRepo.find_by_name(&mut conn, name).await {
+            Ok(Some(r)) => r,
+            _ => {
+                return Err((
+                    redirect_uri.clone(),
+                    "invalid_request".to_string(),
+                    "Realm not found".to_string(),
+                ));
+            }
+        };
+        if !realm.enabled {
             return Err((
                 redirect_uri.clone(),
-                "invalid_client".to_string(),
-                "Client not found".to_string(),
+                "access_denied".to_string(),
+                "Realm is disabled".to_string(),
             ));
         }
-        Err(e) => {
-            tracing::error!("DB error finding client in authorize: {e}");
-            return Err((
-                redirect_uri.clone(),
-                "server_error".to_string(),
-                "An internal error occurred".to_string(),
-            ));
+        realm.id
+    } else {
+        uuid::Uuid::nil()
+    };
+    let client = if realm_id != uuid::Uuid::nil() {
+        match ClientRepo
+            .find_by_client_id_in_realm(&mut conn, client_id_str, realm_id)
+            .await
+        {
+            Ok(Some(c)) => c,
+            Ok(None) => {
+                return Err((
+                    redirect_uri.clone(),
+                    "invalid_client".to_string(),
+                    "Client not found in realm".to_string(),
+                ));
+            }
+            Err(e) => {
+                tracing::error!("DB error finding client in authorize: {}", e);
+                return Err((
+                    redirect_uri.clone(),
+                    "server_error".to_string(),
+                    "An internal error occurred".to_string(),
+                ));
+            }
+        }
+    } else {
+        match ClientRepo.find_by_client_id(&mut conn, client_id_str).await {
+            Ok(Some(c)) => c,
+            Ok(None) => {
+                return Err((
+                    redirect_uri.clone(),
+                    "invalid_client".to_string(),
+                    "Client not found".to_string(),
+                ));
+            }
+            Err(e) => {
+                tracing::error!("DB error finding client in authorize: {}", e);
+                return Err((
+                    redirect_uri.clone(),
+                    "server_error".to_string(),
+                    "An internal error occurred".to_string(),
+                ));
+            }
         }
     };
 
@@ -317,20 +418,14 @@ async fn authorize_inner(
                                     (chrono::Utc::now() - session.created_at).num_seconds();
                                 if auth_age > max_age {
                                     // Session is too old — require re-authentication.
-                                    let mut login_url = format!(
-                                        "/login?return_to={}",
-                                        urlencoding::encode(&format!(
+                                    let login_url = build_login_url(
+                                        &format!(
                                             "/oidc/authorize?{}",
                                             serde_urlencoded::to_string(&params)
                                                 .unwrap_or_default()
-                                        ))
+                                        ),
+                                        state_param.as_ref(),
                                     );
-                                    if let Some(s) = state_param {
-                                        login_url.push_str(&format!(
-                                            "&state={}",
-                                            urlencoding::encode(&s)
-                                        ));
-                                    }
                                     return Ok(login_url);
                                 }
                             }
@@ -341,16 +436,13 @@ async fn authorize_inner(
                     // Otherwise, redirect to login.
                     let login_hint = params.get("login_hint");
                     if login_hint.is_none() {
-                        let mut login_url = format!(
-                            "/login?return_to={}",
-                            urlencoding::encode(&format!(
+                        let login_url = build_login_url(
+                            &format!(
                                 "/oidc/authorize?{}",
                                 serde_urlencoded::to_string(&params).unwrap_or_default()
-                            ))
+                            ),
+                            state_param.as_ref(),
                         );
-                        if let Some(s) = state_param {
-                            login_url.push_str(&format!("&state={}", urlencoding::encode(&s)));
-                        }
                         return Ok(login_url);
                     }
                 }
@@ -387,16 +479,13 @@ async fn authorize_inner(
         }
     } else {
         // No session cookie or login_hint: redirect to login page with return URL
-        let mut login_url = format!(
-            "/login?return_to={}",
-            urlencoding::encode(&format!(
+        let login_url = build_login_url(
+            &format!(
                 "/oidc/authorize?{}",
                 serde_urlencoded::to_string(&params).unwrap_or_default()
-            ))
+            ),
+            state_param.as_ref(),
         );
-        if let Some(s) = state_param {
-            login_url.push_str(&format!("&state={}", urlencoding::encode(&s)));
-        }
         return Ok(login_url);
     };
 

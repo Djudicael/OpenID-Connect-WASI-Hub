@@ -36,11 +36,15 @@ pub struct PasswordFlow;
 
 impl PasswordFlow {
     /// Execute the password flow.
+    ///
+    /// If `realm_name` is provided, authenticates against that realm.
+    /// Defaults to `"master"` (backward-compatible).
     pub async fn execute(
         state: &OidcState,
         email: &str,
         password: &str,
         client_id: Option<&str>,
+        realm_name: Option<&str>,
     ) -> Result<PasswordFlowResult, OidcError> {
         // --- Input validation ---
         if !is_valid_email(email) {
@@ -57,10 +61,15 @@ impl PasswordFlow {
         let mut conn = state.connect().await?;
 
         with_transaction!(conn, pg_err, {
-            // Find master realm
-            let realm = match RealmRepo.find_by_name(&mut conn, "master").await? {
+            // Resolve realm by name (defaults to "master" for backward compat)
+            let realm_name = realm_name.unwrap_or("master");
+            let realm = match RealmRepo.find_by_name(&mut conn, realm_name).await? {
                 Some(r) => r,
-                None => return Err(OidcError::Internal("Master realm not found".to_string())),
+                None => {
+                    return Err(OidcError::AuthenticationFailed(
+                        "Invalid credentials".to_string(),
+                    ));
+                }
             };
 
             if !realm.enabled {
@@ -138,9 +147,12 @@ impl PasswordFlow {
                 ));
             }
 
-            // Find client
+            // Find client using realm-scoped lookup
             let client_id_str = client_id.unwrap_or("admin-ui");
-            let client = match ClientRepo.find_by_client_id(&mut conn, client_id_str).await {
+            let client = match ClientRepo
+                .find_by_client_id_in_realm(&mut conn, client_id_str, realm.id)
+                .await
+            {
                 Ok(Some(c)) if c.enabled => c,
                 Ok(Some(_)) => return Err(OidcError::InvalidClient),
                 Ok(None) => return Err(OidcError::InvalidClient),
