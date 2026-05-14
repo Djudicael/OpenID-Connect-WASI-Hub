@@ -248,6 +248,24 @@ impl TestApp {
         let _ = conn.close().await;
         id
     }
+
+    /// Seed a **public** client (no secret) for implicit/hybrid flow tests.
+    pub async fn seed_public_client(&self, client_id: &str, redirect_uris: &[&str]) -> Uuid {
+        let mut conn = test_conn_no_tx().await;
+        let client = fixtures::test_public_client(
+            self.master_realm_id,
+            client_id,
+            redirect_uris.iter().map(|s| s.to_string()).collect(),
+        );
+
+        let id = client.id;
+        ClientRepo
+            .create(&mut conn, &client)
+            .await
+            .expect("failed to seed public client");
+        let _ = conn.close().await;
+        id
+    }
 }
 
 impl Drop for TestApp {

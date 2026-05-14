@@ -19,7 +19,7 @@ impl AuthCodeRepo {
         let code_hash = oidc_core::utils::sha2_256_hex(code);
         let sql = r#"
             SELECT id, code, client_id, user_id, realm_id, redirect_uri,
-                   scope, code_challenge, code_challenge_method, nonce, used, claims_request, display, expires_at
+                   scope, code_challenge, code_challenge_method, nonce, used, claims_request, display, response_type, expires_at
             FROM authorization_codes
             WHERE code = $1 AND NOT used AND expires_at > NOW() FOR UPDATE
         "#;
@@ -36,8 +36,8 @@ impl AuthCodeRepo {
         let sql = r#"
             INSERT INTO authorization_codes (
                 id, code, client_id, user_id, realm_id, redirect_uri,
-                scope, code_challenge, code_challenge_method, nonce, used, claims_request, display, expires_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                scope, code_challenge, code_challenge_method, nonce, used, claims_request, display, response_type, expires_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         "#;
         conn.execute_params(
             sql,
@@ -55,6 +55,7 @@ impl AuthCodeRepo {
                 &entity.used,
                 &entity.claims_request,
                 &entity.display,
+                &entity.response_type.to_string(),
                 &entity.expires_at,
             ],
         )
@@ -102,7 +103,13 @@ impl AuthCodeRepo {
             used: mapper::bool_(row, 10)?,
             claims_request: row.get::<serde_json::Value>(11).ok(),
             display: mapper::opt_string(row, 12)?,
-            expires_at: mapper::datetime(row, 13)?,
+            response_type: {
+                let rt_str: String = mapper::string(row, 13)?;
+                oidc_core::models::ResponseType::parse(&rt_str).map_err(|_| {
+                    OidcError::Internal(format!("Invalid response_type: {}", rt_str))
+                })?
+            },
+            expires_at: mapper::datetime(row, 14)?,
         })
     }
 }

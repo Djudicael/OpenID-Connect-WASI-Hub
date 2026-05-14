@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::ResponseType;
+
 /// PKCE code challenge method.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "UPPERCASE")]
@@ -83,6 +85,8 @@ pub struct AuthCode {
     pub claims_request: Option<serde_json::Value>,
     /// OIDC Core §3.1.2.1 display parameter from the authorization request.
     pub display: Option<String>,
+    /// OIDC Core §3 response_type from the authorization request.
+    pub response_type: ResponseType,
     /// When the authorization code expires.
     pub expires_at: chrono::DateTime<chrono::Utc>,
 }

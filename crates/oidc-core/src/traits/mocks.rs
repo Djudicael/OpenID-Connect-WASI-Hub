@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::errors::OidcError;
 use crate::models::ApiKey;
+use crate::models::ResponseType;
 use crate::models::audit_event::{ActorType, AuditEvent};
 use crate::models::auth_code::AuthCode;
 use crate::models::client::{Client, ClientType};
@@ -1000,6 +1001,7 @@ mod tests {
             used: false,
             claims_request: None,
             display: None,
+            response_type: ResponseType::CODE,
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
         }
     }

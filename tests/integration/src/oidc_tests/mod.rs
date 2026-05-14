@@ -39,6 +39,15 @@ fn parse_redirect_params(location: &str) -> (String, Option<String>) {
     (code.unwrap_or_default(), state)
 }
 
+/// Extract a query parameter from a redirect Location header.
+fn parse_redirect_query(location: &str, key: &str) -> Option<String> {
+    let url =
+        url::Url::parse(location).unwrap_or_else(|_| panic!("invalid redirect URL: {location}"));
+    url.query_pairs()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.to_string())
+}
+
 /// Login via the direct password grant and return the full response body.
 async fn login(app: &TestApp) -> Value {
     let resp = app
@@ -141,6 +150,12 @@ async fn test_discovery_document_complete() {
 
     let response_types = body["response_types_supported"].as_array().unwrap();
     assert!(response_types.contains(&json!("code")));
+    assert!(response_types.contains(&json!("token")));
+    assert!(response_types.contains(&json!("id_token")));
+    assert!(response_types.contains(&json!("code token")));
+    assert!(response_types.contains(&json!("code id_token")));
+    assert!(response_types.contains(&json!("id_token token")));
+    assert!(response_types.contains(&json!("code id_token token")));
 
     let grant_types = body["grant_types_supported"].as_array().unwrap();
     assert!(grant_types.contains(&json!("authorization_code")));
@@ -1824,5 +1839,205 @@ async fn test_authorize_with_claims_parameter() {
     assert!(
         !code.is_empty(),
         "authorization code must be present with claims parameter"
+    );
+}
+
+// ===================================================================
+// Implicit / Hybrid Flows
+// ===================================================================
+
+#[tokio::test]
+async fn test_implicit_flow_token_response_type() {
+    let app = TestApp::new().await;
+
+    let client_id = "implicit-client";
+    let redirect_uri = "https://app.example.com/callback";
+    app.seed_public_client(client_id, &[redirect_uri]).await;
+
+    let authorize_url = format!(
+        "{}/oidc/authorize?client_id={}&redirect_uri={}&response_type=token&scope=openid+profile&login_hint={}",
+        app.url(),
+        urlencoding::encode(client_id),
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(fixtures::TEST_USER_EMAIL),
+    );
+
+    let resp = app
+        .client()
+        .get(&authorize_url)
+        .send()
+        .await
+        .expect("authorize failed");
+    assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+
+    let access_token = parse_redirect_query(location, "access_token");
+    assert!(
+        access_token.is_some() && !access_token.as_ref().unwrap().is_empty(),
+        "access_token must be present for response_type=token"
+    );
+    assert_eq!(
+        parse_redirect_query(location, "token_type").as_deref(),
+        Some("Bearer")
+    );
+}
+
+#[tokio::test]
+async fn test_implicit_flow_id_token_response_type() {
+    let app = TestApp::new().await;
+
+    let client_id = "implicit-id-client";
+    let redirect_uri = "https://app.example.com/callback";
+    app.seed_public_client(client_id, &[redirect_uri]).await;
+
+    let authorize_url = format!(
+        "{}/oidc/authorize?client_id={}&redirect_uri={}&response_type=id_token&scope=openid+profile&login_hint={}&nonce=testnonce123",
+        app.url(),
+        urlencoding::encode(client_id),
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(fixtures::TEST_USER_EMAIL),
+    );
+
+    let resp = app
+        .client()
+        .get(&authorize_url)
+        .send()
+        .await
+        .expect("authorize failed");
+    assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+
+    let id_token = parse_redirect_query(location, "id_token");
+    assert!(
+        id_token.is_some() && !id_token.as_ref().unwrap().is_empty(),
+        "id_token must be present for response_type=id_token"
+    );
+}
+
+#[tokio::test]
+async fn test_hybrid_flow_code_token_response_type() {
+    let app = TestApp::new().await;
+
+    let client_id = "hybrid-ct-client";
+    let redirect_uri = "https://app.example.com/callback";
+    app.seed_public_client(client_id, &[redirect_uri]).await;
+
+    let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let code_challenge = pkce_s256_challenge(code_verifier);
+
+    let authorize_url = format!(
+        "{}/oidc/authorize?client_id={}&redirect_uri={}&response_type=code+token&scope=openid+profile&code_challenge={}&code_challenge_method=S256&login_hint={}",
+        app.url(),
+        urlencoding::encode(client_id),
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(&code_challenge),
+        urlencoding::encode(fixtures::TEST_USER_EMAIL),
+    );
+
+    let resp = app
+        .client()
+        .get(&authorize_url)
+        .send()
+        .await
+        .expect("authorize failed");
+    assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+
+    let code = parse_redirect_query(location, "code");
+    let access_token = parse_redirect_query(location, "access_token");
+    assert!(
+        code.is_some() && !code.as_ref().unwrap().is_empty(),
+        "code must be present for hybrid code+token"
+    );
+    assert!(
+        access_token.is_some() && !access_token.as_ref().unwrap().is_empty(),
+        "access_token must be present for hybrid code+token"
+    );
+}
+
+#[tokio::test]
+async fn test_hybrid_flow_code_id_token_response_type() {
+    let app = TestApp::new().await;
+
+    let client_id = "hybrid-ci-client";
+    let redirect_uri = "https://app.example.com/callback";
+    app.seed_public_client(client_id, &[redirect_uri]).await;
+
+    let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let code_challenge = pkce_s256_challenge(code_verifier);
+
+    let authorize_url = format!(
+        "{}/oidc/authorize?client_id={}&redirect_uri={}&response_type=code+id_token&scope=openid+profile&code_challenge={}&code_challenge_method=S256&login_hint={}&nonce=testnonce456",
+        app.url(),
+        urlencoding::encode(client_id),
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(&code_challenge),
+        urlencoding::encode(fixtures::TEST_USER_EMAIL),
+    );
+
+    let resp = app
+        .client()
+        .get(&authorize_url)
+        .send()
+        .await
+        .expect("authorize failed");
+    assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+
+    let code = parse_redirect_query(location, "code");
+    let id_token = parse_redirect_query(location, "id_token");
+    assert!(
+        code.is_some() && !code.as_ref().unwrap().is_empty(),
+        "code must be present for hybrid code+id_token"
+    );
+    assert!(
+        id_token.is_some() && !id_token.as_ref().unwrap().is_empty(),
+        "id_token must be present for hybrid code+id_token"
+    );
+}
+
+#[tokio::test]
+async fn test_hybrid_flow_code_id_token_token_response_type() {
+    let app = TestApp::new().await;
+
+    let client_id = "hybrid-cit-client";
+    let redirect_uri = "https://app.example.com/callback";
+    app.seed_public_client(client_id, &[redirect_uri]).await;
+
+    let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let code_challenge = pkce_s256_challenge(code_verifier);
+
+    let authorize_url = format!(
+        "{}/oidc/authorize?client_id={}&redirect_uri={}&response_type=code+id_token+token&scope=openid+profile&code_challenge={}&code_challenge_method=S256&login_hint={}&nonce=testnonce789",
+        app.url(),
+        urlencoding::encode(client_id),
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(&code_challenge),
+        urlencoding::encode(fixtures::TEST_USER_EMAIL),
+    );
+
+    let resp = app
+        .client()
+        .get(&authorize_url)
+        .send()
+        .await
+        .expect("authorize failed");
+    assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+
+    let code = parse_redirect_query(location, "code");
+    let id_token = parse_redirect_query(location, "id_token");
+    let access_token = parse_redirect_query(location, "access_token");
+    assert!(
+        code.is_some() && !code.as_ref().unwrap().is_empty(),
+        "code must be present for hybrid code+id_token+token"
+    );
+    assert!(
+        id_token.is_some() && !id_token.as_ref().unwrap().is_empty(),
+        "id_token must be present for hybrid code+id_token+token"
+    );
+    assert!(
+        access_token.is_some() && !access_token.as_ref().unwrap().is_empty(),
+        "access_token must be present for hybrid code+id_token+token"
     );
 }

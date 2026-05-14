@@ -7,7 +7,7 @@ use chrono::Utc;
 use oidc_core::models::audit_event::{ActorType, AuditEvent};
 use oidc_core::models::auth_code::CodeChallengeMethod;
 use oidc_core::models::signing_key::{Algorithm, SigningKey};
-use oidc_core::models::{ApiKey, AuthCode, Client, ClientType, Realm, Session, User};
+use oidc_core::models::{ApiKey, AuthCode, Client, ClientType, Realm, ResponseType, Session, User};
 use oidc_repository::repositories::{
     api_key_repo::ApiKeyRepo, audit_event_repo::AuditEventRepo, auth_code_repo::AuthCodeRepo,
     client_repo::ClientRepo, realm_repo::RealmRepo, session_repo::SessionRepo,
@@ -419,6 +419,7 @@ async fn test_auth_code_crud() {
         used: false,
         claims_request: None,
         display: None,
+        response_type: ResponseType::CODE,
         expires_at: Utc::now() + chrono::Duration::minutes(10),
     };
 
@@ -1036,6 +1037,7 @@ async fn test_expired_auth_code_cleanup() {
         used: false,
         claims_request: None,
         display: None,
+        response_type: ResponseType::CODE,
         expires_at: Utc::now() - chrono::Duration::minutes(5), // expired 5 minutes ago
     };
     auth_code_repo

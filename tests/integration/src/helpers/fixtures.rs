@@ -113,3 +113,32 @@ pub fn test_client(realm_id: Uuid, client_id: &str, redirect_uris: Vec<String>) 
         deleted_at: None,
     }
 }
+
+/// Create a `Client` configured for implicit/hybrid flows.
+///
+/// Defaults:
+/// - **Public** client type
+/// - PKCE NOT required (implicit flow clients are typically public)
+/// - Allowed scopes: `openid`, `profile`, `email`
+/// - Allowed grant types: `authorization_code`, `implicit`
+/// - Enabled
+pub fn test_public_client(realm_id: Uuid, client_id: &str, redirect_uris: Vec<String>) -> Client {
+    Client {
+        id: Uuid::new_v4(),
+        realm_id,
+        client_id: client_id.to_string(),
+        client_type: ClientType::Public,
+        client_secret_hash: None,
+        name: client_id.to_string(),
+        redirect_uris,
+        allowed_scopes: vec![
+            "openid".to_string(),
+            "profile".to_string(),
+            "email".to_string(),
+        ],
+        allowed_grant_types: vec!["authorization_code".to_string(), "implicit".to_string()],
+        pkce_required: false,
+        enabled: true,
+        deleted_at: None,
+    }
+}

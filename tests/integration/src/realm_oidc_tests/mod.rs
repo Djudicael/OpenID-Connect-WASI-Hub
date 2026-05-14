@@ -142,6 +142,15 @@ async fn test_realm_discovery_document() {
     assert!(body["scopes_supported"].as_array().is_some());
     assert!(body["response_types_supported"].as_array().is_some());
     assert!(body["grant_types_supported"].as_array().is_some());
+
+    let response_types = body["response_types_supported"].as_array().unwrap();
+    assert!(response_types.contains(&json!("code")));
+    assert!(response_types.contains(&json!("token")));
+    assert!(response_types.contains(&json!("id_token")));
+    assert!(response_types.contains(&json!("code token")));
+    assert!(response_types.contains(&json!("code id_token")));
+    assert!(response_types.contains(&json!("id_token token")));
+    assert!(response_types.contains(&json!("code id_token token")));
 }
 
 #[tokio::test]

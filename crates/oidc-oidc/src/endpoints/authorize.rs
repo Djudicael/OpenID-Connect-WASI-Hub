@@ -5,7 +5,8 @@ use axum::http::HeaderMap;
 use axum::response::Redirect;
 use std::collections::HashMap;
 
-use oidc_core::models::AuthCode;
+use oidc_core::models::{AuthCode, ResponseType};
+use oidc_core::traits::TokenService;
 use oidc_core::utils::generate_uuid_v7;
 use oidc_repository::repositories::client_repo::ClientRepo;
 use oidc_repository::repositories::realm_repo::RealmRepo;
@@ -125,7 +126,7 @@ async fn authorize_inner(
     };
 
     // --- Parameter extraction ---
-    let response_type = params.get("response_type").ok_or_else(|| {
+    let response_type_raw = params.get("response_type").ok_or_else(|| {
         (
             redirect_uri.clone(),
             "invalid_request".to_string(),
@@ -133,13 +134,16 @@ async fn authorize_inner(
         )
     })?;
 
-    if response_type != "code" {
-        return Err((
-            redirect_uri.clone(),
-            "unsupported_response_type".to_string(),
-            "Only 'code' is supported".to_string(),
-        ));
-    }
+    let response_type = match ResponseType::parse(response_type_raw) {
+        Ok(rt) => rt,
+        Err(_) => {
+            return Err((
+                redirect_uri.clone(),
+                "unsupported_response_type".to_string(),
+                "Invalid or unsupported response_type".to_string(),
+            ));
+        }
+    };
 
     let client_id_str = params.get("client_id").ok_or_else(|| {
         (
@@ -151,28 +155,34 @@ async fn authorize_inner(
 
     let scope = params.get("scope").unwrap_or(&"openid".to_string()).clone();
     let state_param = params.get("state").cloned();
-    let code_challenge = params.get("code_challenge").ok_or_else(|| {
-        (
-            redirect_uri.clone(),
-            "invalid_request".to_string(),
-            "Missing code_challenge".to_string(),
-        )
-    })?;
+    // PKCE is required for authorization-code and hybrid flows (with code).
+    // It is optional for pure implicit flows (no code), but we require it
+    // for all flows that issue a code.
+    let code_challenge = params.get("code_challenge").cloned();
+    let code_challenge_method = params.get("code_challenge_method").cloned();
 
-    let code_challenge_method = params.get("code_challenge_method").ok_or_else(|| {
-        (
-            redirect_uri.clone(),
-            "invalid_request".to_string(),
-            "Missing code_challenge_method".to_string(),
-        )
-    })?;
-
-    if code_challenge_method != "S256" {
-        return Err((
-            redirect_uri.clone(),
-            "invalid_request".to_string(),
-            "Only S256 code_challenge_method is supported".to_string(),
-        ));
+    if response_type.has_code() {
+        let _cc = code_challenge.as_ref().ok_or_else(|| {
+            (
+                redirect_uri.clone(),
+                "invalid_request".to_string(),
+                "Missing code_challenge".to_string(),
+            )
+        })?;
+        let ccm = code_challenge_method.as_ref().ok_or_else(|| {
+            (
+                redirect_uri.clone(),
+                "invalid_request".to_string(),
+                "Missing code_challenge_method".to_string(),
+            )
+        })?;
+        if ccm != "S256" {
+            return Err((
+                redirect_uri.clone(),
+                "invalid_request".to_string(),
+                "Only S256 code_challenge_method is supported".to_string(),
+            ));
+        }
     }
 
     let nonce = params.get("nonce").cloned();
@@ -282,12 +292,15 @@ async fn authorize_inner(
         ));
     }
 
-    if client.pkce_required && code_challenge_method != "S256" {
-        return Err((
-            redirect_uri.clone(),
-            "invalid_request".to_string(),
-            "PKCE S256 required".to_string(),
-        ));
+    if client.pkce_required {
+        let ccm = code_challenge_method.as_deref().unwrap_or("");
+        if ccm != "S256" {
+            return Err((
+                redirect_uri.clone(),
+                "invalid_request".to_string(),
+                "PKCE S256 required".to_string(),
+            ));
+        }
     }
 
     // --- Scope validation ---
@@ -509,44 +522,182 @@ async fn authorize_inner(
     let code_value = generate_auth_code();
     let expires_at = chrono::Utc::now() + chrono::Duration::seconds(60); // 60 seconds per plan
 
-    let auth_code = AuthCode {
-        id: generate_uuid_v7(),
-        code: code_value.clone(),
-        client_id: client.id,
-        user_id: user.id,
-        realm_id: client.realm_id,
-        redirect_uri: redirect_uri.clone(),
-        scope: requested_scopes,
-        code_challenge: code_challenge.clone(),
-        code_challenge_method: oidc_core::models::CodeChallengeMethod::S256,
-        nonce,
-        used: false,
-        claims_request,
-        display,
-        expires_at,
-    };
+    // --- For implicit/hybrid flows, issue tokens directly ---
+    // For pure authorization code flow, persist a code.
+    let mut redirect_fragments: Vec<String> = Vec::new();
 
-    match oidc_repository::repositories::auth_code_repo::AuthCodeRepo
-        .create(&mut conn, &auth_code)
-        .await
-    {
-        Ok(()) => {}
-        Err(e) => {
-            tracing::error!("DB error creating auth code in authorize: {e}");
-            return Err((
-                redirect_uri.clone(),
-                "server_error".to_string(),
-                "An internal error occurred".to_string(),
-            ));
-        }
-    };
+    if response_type.has_code() {
+        let auth_code = AuthCode {
+            id: generate_uuid_v7(),
+            code: code_value.clone(),
+            client_id: client.id,
+            user_id: user.id,
+            realm_id: client.realm_id,
+            redirect_uri: redirect_uri.clone(),
+            scope: requested_scopes.clone(),
+            code_challenge: code_challenge.clone().unwrap_or_default(),
+            code_challenge_method: oidc_core::models::CodeChallengeMethod::S256,
+            nonce: nonce.clone(),
+            used: false,
+            claims_request,
+            display,
+            response_type,
+            expires_at,
+        };
 
-    // --- Build redirect URL ---
-    let mut redirect = format!("{}?code={}", redirect_uri, urlencoding::encode(&code_value));
-    if let Some(s) = state_param {
-        redirect.push_str(&format!("&state={}", urlencoding::encode(&s)));
+        match oidc_repository::repositories::auth_code_repo::AuthCodeRepo
+            .create(&mut conn, &auth_code)
+            .await
+        {
+            Ok(()) => {}
+            Err(e) => {
+                tracing::error!("DB error creating auth code in authorize: {e}");
+                return Err((
+                    redirect_uri.clone(),
+                    "server_error".to_string(),
+                    "An internal error occurred".to_string(),
+                ));
+            }
+        };
+
+        redirect_fragments.push(format!("code={}", urlencoding::encode(&code_value)));
     }
 
+    if response_type.is_implicit_or_hybrid() {
+        let token_svc = match state.token_service_for_realm(client.realm_id).await {
+            Ok(svc) => svc,
+            Err(e) => {
+                tracing::error!("Token service error in authorize: {e}");
+                return Err((
+                    redirect_uri.clone(),
+                    "server_error".to_string(),
+                    "An internal error occurred".to_string(),
+                ));
+            }
+        };
+
+        let subject = user.id.to_string();
+        let audience = client.client_id.clone();
+
+        if response_type.has_token() {
+            let access_token = match token_svc
+                .issue_access_token(&subject, &audience, &requested_scopes)
+                .await
+            {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::error!("Failed to issue access token in authorize: {e}");
+                    return Err((
+                        redirect_uri.clone(),
+                        "server_error".to_string(),
+                        "An internal error occurred".to_string(),
+                    ));
+                }
+            };
+
+            let access_hash = oidc_core::utils::sha2_256_hex(&access_token);
+            let session = oidc_core::models::Session {
+                id: oidc_core::utils::generate_uuid_v7(),
+                user_id: Some(user.id),
+                realm_id: client.realm_id,
+                client_id: client.id,
+                grant_type: "implicit".to_string(),
+                access_token_hash: access_hash,
+                refresh_token_hash: None,
+                id_token_jti: None,
+                scope: requested_scopes.clone(),
+                revoked: false,
+                expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
+                refresh_expires_at: None,
+                created_at: chrono::Utc::now(),
+                last_used_at: None,
+                token_family_id: None,
+                previous_session_id: None,
+                rotated_at: None,
+                reused_at: None,
+                family_revoked: false,
+            };
+
+            if let Err(e) = oidc_repository::repositories::session_repo::SessionRepo
+                .create(&mut conn, &session)
+                .await
+            {
+                tracing::error!("DB error creating implicit session: {e}");
+                return Err((
+                    redirect_uri.clone(),
+                    "server_error".to_string(),
+                    "An internal error occurred".to_string(),
+                ));
+            }
+
+            redirect_fragments.push(format!(
+                "access_token={}&token_type=Bearer&expires_in=900",
+                urlencoding::encode(&access_token)
+            ));
+        }
+
+        if response_type.has_id_token() {
+            let at_hash = if response_type.has_token() && !redirect_fragments.is_empty() {
+                redirect_fragments.iter().find_map(|frag| {
+                    frag.strip_prefix("access_token=").map(|at| {
+                        oidc_core::utils::compute_at_hash(
+                            &urlencoding::decode(at).unwrap_or_default(),
+                        )
+                    })
+                })
+            } else {
+                None
+            };
+
+            let id_token_extra = oidc_core::traits::token_service::IdTokenExtraClaims {
+                nonce: nonce.clone(),
+                at_hash,
+                c_hash: None,
+                auth_time: Some(chrono::Utc::now().timestamp()),
+                email: Some(user.email.clone()),
+                email_verified: Some(user.email_verified),
+                name: user.username.clone(),
+                given_name: user.given_name.clone(),
+                family_name: user.family_name.clone(),
+                middle_name: user.middle_name.clone(),
+                nickname: user.nickname.clone(),
+                preferred_username: user.preferred_username.clone(),
+                profile: user.profile.clone(),
+                picture: user.picture.clone(),
+                website: user.website.clone(),
+                gender: user.gender.clone(),
+                birthdate: user.birthdate.clone(),
+                zoneinfo: user.zoneinfo.clone(),
+                locale: Some(user.locale.clone()),
+                phone_number: user.phone_number.clone(),
+                phone_number_verified: user.phone_number_verified,
+                updated_at: Some(user.updated_at.timestamp()),
+            };
+
+            let id_token = match token_svc
+                .issue_id_token(&subject, &audience, Some(id_token_extra))
+                .await
+            {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::error!("Failed to issue ID token in authorize: {e}");
+                    return Err((
+                        redirect_uri.clone(),
+                        "server_error".to_string(),
+                        "An internal error occurred".to_string(),
+                    ));
+                }
+            };
+
+            redirect_fragments.push(format!("id_token={}", urlencoding::encode(&id_token)));
+        }
+    }
+
+    if let Some(s) = state_param {
+        redirect_fragments.push(format!("state={}", urlencoding::encode(&s)));
+    }
+
+    let redirect = format!("{}?{}", redirect_uri, redirect_fragments.join("&"));
     Ok(redirect)
 }
 
