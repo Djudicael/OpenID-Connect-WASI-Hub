@@ -82,8 +82,48 @@ pub async fn userinfo_handler(
             if let Some(ref name) = user.family_name {
                 obj.insert("family_name".to_string(), json!(name));
             }
+            if let Some(ref name) = user.middle_name {
+                obj.insert("middle_name".to_string(), json!(name));
+            }
             if let Some(ref name) = user.username {
                 obj.insert("name".to_string(), json!(name));
+            }
+            if let Some(ref v) = user.nickname {
+                obj.insert("nickname".to_string(), json!(v));
+            }
+            if let Some(ref v) = user.preferred_username {
+                obj.insert("preferred_username".to_string(), json!(v));
+            }
+            if let Some(ref v) = user.profile {
+                obj.insert("profile".to_string(), json!(v));
+            }
+            if let Some(ref v) = user.picture {
+                obj.insert("picture".to_string(), json!(v));
+            }
+            if let Some(ref v) = user.website {
+                obj.insert("website".to_string(), json!(v));
+            }
+            if let Some(ref v) = user.gender {
+                obj.insert("gender".to_string(), json!(v));
+            }
+            if let Some(ref v) = user.birthdate {
+                obj.insert("birthdate".to_string(), json!(v));
+            }
+            if let Some(ref v) = user.zoneinfo {
+                obj.insert("zoneinfo".to_string(), json!(v));
+            }
+            obj.insert("locale".to_string(), json!(user.locale));
+            obj.insert("updated_at".to_string(), json!(user.updated_at.timestamp()));
+        }
+    }
+
+    if scopes.contains("phone") {
+        if let Some(obj) = claims.as_object_mut() {
+            if let Some(ref v) = user.phone_number {
+                obj.insert("phone_number".to_string(), json!(v));
+            }
+            if let Some(v) = user.phone_number_verified {
+                obj.insert("phone_number_verified".to_string(), json!(v));
             }
         }
     }

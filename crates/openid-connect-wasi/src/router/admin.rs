@@ -1069,11 +1069,22 @@ async fn create_user(State(state): State<AppState>, auth: AdminAuth, body: Strin
         password_hash: Some(password_hash),
         given_name: req.given_name,
         family_name: req.family_name,
+        middle_name: None,
+        nickname: None,
+        preferred_username: None,
+        profile: None,
+        picture: None,
+        website: None,
+        gender: None,
+        birthdate: None,
+        zoneinfo: None,
         phone_number: None,
-        locale: None,
+        phone_number_verified: None,
+        locale: "en".into(),
         attributes: serde_json::Value::Object(serde_json::Map::new()),
         enabled: req.enabled.unwrap_or(true),
         deleted_at: None,
+        updated_at: chrono::Utc::now(),
     };
 
     match UserRepo.create(&mut conn, &user).await {

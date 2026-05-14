@@ -36,16 +36,48 @@ pub struct IdTokenClaims {
     pub exp: i64,
     pub iat: i64,
     pub auth_time: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub nonce: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub at_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub c_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub email_verified: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub given_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub family_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub middle_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nickname: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preferred_username: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub picture: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub website: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gender: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub birthdate: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zoneinfo: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phone_number: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phone_number_verified: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
 }
 
 /// A JWK (JSON Web Key) entry for JWKS endpoint — supports RSA and OKP (Ed25519).
@@ -564,6 +596,19 @@ impl TokenService for JwtTokenService {
             name: extra.name,
             given_name: extra.given_name,
             family_name: extra.family_name,
+            middle_name: extra.middle_name,
+            nickname: extra.nickname,
+            preferred_username: extra.preferred_username,
+            profile: extra.profile,
+            picture: extra.picture,
+            website: extra.website,
+            gender: extra.gender,
+            birthdate: extra.birthdate,
+            zoneinfo: extra.zoneinfo,
+            locale: extra.locale,
+            phone_number: extra.phone_number,
+            phone_number_verified: extra.phone_number_verified,
+            updated_at: extra.updated_at,
         };
         self.encode_jwt(&claims)
     }
@@ -925,6 +970,19 @@ mod tests {
             name: None,
             given_name: None,
             family_name: None,
+            middle_name: None,
+            nickname: None,
+            preferred_username: None,
+            profile: None,
+            picture: None,
+            website: None,
+            gender: None,
+            birthdate: None,
+            zoneinfo: None,
+            locale: None,
+            phone_number: None,
+            phone_number_verified: None,
+            updated_at: None,
         };
 
         let token = service.sign_eddsa(&claims).unwrap();

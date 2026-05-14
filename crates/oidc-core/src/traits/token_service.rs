@@ -24,6 +24,32 @@ pub struct IdTokenExtraClaims {
     pub given_name: Option<String>,
     /// User family name.
     pub family_name: Option<String>,
+    /// User middle name.
+    pub middle_name: Option<String>,
+    /// User nickname.
+    pub nickname: Option<String>,
+    /// User preferred username.
+    pub preferred_username: Option<String>,
+    /// User profile URL.
+    pub profile: Option<String>,
+    /// User picture URL.
+    pub picture: Option<String>,
+    /// User website URL.
+    pub website: Option<String>,
+    /// User gender.
+    pub gender: Option<String>,
+    /// User birthdate (ISO-8601).
+    pub birthdate: Option<String>,
+    /// User zoneinfo (IANA TZ).
+    pub zoneinfo: Option<String>,
+    /// User locale.
+    pub locale: Option<String>,
+    /// User phone number.
+    pub phone_number: Option<String>,
+    /// Whether phone number is verified.
+    pub phone_number_verified: Option<bool>,
+    /// When the user record was last updated (Unix seconds).
+    pub updated_at: Option<i64>,
 }
 
 /// Verified access token claims returned by the token service.

@@ -47,8 +47,8 @@ impl ClientCredentialsFlow {
                 None => return Err(OidcError::InvalidClient),
             }
 
-            let access_token = state
-                .token_service
+            let token_svc = state.token_service_for_realm(client.realm_id).await?;
+            let access_token = token_svc
                 .issue_access_token(&client.client_id, &client.client_id, &client.allowed_scopes)
                 .await?;
 

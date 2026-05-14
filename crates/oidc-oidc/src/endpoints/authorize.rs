@@ -177,6 +177,14 @@ async fn authorize_inner(
 
     let nonce = params.get("nonce").cloned();
 
+    // --- display parameter handling (OIDC Core §3.1.2.1) ---
+    let display = params.get("display").cloned();
+
+    // --- claims parameter handling (OIDC Core §5.5) ---
+    let claims_request: Option<serde_json::Value> = params
+        .get("claims")
+        .and_then(|c| serde_json::from_str(c).ok());
+
     // --- Client validation ---
     let mut conn = match state.connect().await {
         Ok(c) => c,
@@ -513,6 +521,8 @@ async fn authorize_inner(
         code_challenge_method: oidc_core::models::CodeChallengeMethod::S256,
         nonce,
         used: false,
+        claims_request,
+        display,
         expires_at,
     };
 

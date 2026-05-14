@@ -70,6 +70,11 @@ pub fn bool_(row: &Row, idx: usize) -> Result<bool, OidcError> {
     row.get::<bool>(idx).map_err(pg_err)
 }
 
+/// Extract an optional `bool` from a row column.
+pub fn opt_bool(row: &Row, idx: usize) -> Result<Option<bool>, OidcError> {
+    row.get::<Option<bool>>(idx).map_err(pg_err)
+}
+
 /// Extract a required `i64` from a row column.
 pub fn i64_(row: &Row, idx: usize) -> Result<i64, OidcError> {
     row.get::<i64>(idx).map_err(pg_err)

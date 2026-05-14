@@ -79,6 +79,10 @@ pub struct AuthCode {
     pub nonce: Option<String>,
     /// Whether the code has been exchanged.
     pub used: bool,
+    /// OIDC Core §5.5 claims request from the authorization request.
+    pub claims_request: Option<serde_json::Value>,
+    /// OIDC Core §3.1.2.1 display parameter from the authorization request.
+    pub display: Option<String>,
     /// When the authorization code expires.
     pub expires_at: chrono::DateTime<chrono::Utc>,
 }

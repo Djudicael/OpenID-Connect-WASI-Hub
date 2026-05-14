@@ -58,6 +58,7 @@ pub fn router() -> Router<AppState> {
         .route("/realms/{realm}/protocol/openid-connect/token", post(per_realm_token_handler))
         .route("/realms/{realm}/protocol/openid-connect/auth", get(per_realm_authorize_handler))
         .route("/realms/{realm}/.well-known/openid-configuration", get(per_realm_discovery_handler))
+        .route("/realms/{realm}/protocol/openid-connect/certs", get(per_realm_certs_handler))
         .route("/realms/{realm}/login", get(per_realm_login_page_handler))
         .route("/realms/{realm}/login", post(per_realm_login_handler))
         .route("/oidc/error", get(error_handler))
@@ -122,6 +123,24 @@ async fn per_realm_discovery_handler(
     Path(realm): Path<String>,
 ) -> Json<serde_json::Value> {
     oidc_oidc::realm_discovery_handler(state.oidc_state(), realm).await
+}
+
+/// Per-realm JWKS (certs) handler.
+async fn per_realm_certs_handler(
+    State(state): State<AppState>,
+    Path(realm): Path<String>,
+) -> axum::response::Response {
+    match oidc_oidc::endpoints::jwks::realm_jwks_handler(state.oidc_state(), realm).await {
+        Ok(json) => json.into_response(),
+        Err(e) => {
+            let status = match e {
+                oidc_core::OidcError::NotFound(_) => axum::http::StatusCode::NOT_FOUND,
+                _ => axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            let body = serde_json::json!({"error": e.to_string()});
+            (status, axum::Json(body)).into_response()
+        }
+    }
 }
 
 /// Simple error page for OIDC authorization failures.

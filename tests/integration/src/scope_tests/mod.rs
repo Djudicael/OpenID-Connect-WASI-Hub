@@ -153,12 +153,32 @@ async fn test_scope_unauthorized_without_admin_token() {
 
     let resp = app
         .client()
-        .get(&format!("{}/api/scopes?realm_id=any", app.url()))
+        .get(&format!(
+            "{}/api/scopes?realm_id={}",
+            app.url(),
+            uuid::Uuid::new_v4()
+        ))
         .send()
         .await
         .expect("request failed");
 
+    // With realm_id but no auth token: should be 401 Unauthorized
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn test_scope_missing_realm_id_returns_bad_request() {
+    let app = TestApp::new().await;
+
+    let resp = app
+        .client()
+        .get(&format!("{}/api/scopes", app.url()))
+        .send()
+        .await
+        .expect("request failed");
+
+    // Without realm_id query param: 400 Bad Request (param missing before auth check)
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

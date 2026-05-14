@@ -63,11 +63,22 @@ pub fn test_user(realm_id: Uuid, email: &str, password: &str) -> User {
         password_hash: Some(password_hash),
         given_name: None,
         family_name: None,
+        middle_name: None,
+        nickname: None,
+        preferred_username: None,
+        profile: None,
+        picture: None,
+        website: None,
+        gender: None,
+        birthdate: None,
+        zoneinfo: None,
         phone_number: None,
-        locale: None,
+        phone_number_verified: Some(false),
+        locale: "en".into(),
         attributes: serde_json::Value::Object(serde_json::Map::new()),
         enabled: true,
         deleted_at: None,
+        updated_at: chrono::Utc::now(),
     }
 }
 

@@ -85,8 +85,8 @@ impl RefreshTokenFlow {
             let audience = session.client_id.to_string();
             let scopes = session.scope.clone();
 
-            let access_token = state
-                .token_service
+            let token_svc = state.token_service_for_realm(session.realm_id).await?;
+            let access_token = token_svc
                 .issue_access_token(&subject, &audience, &scopes)
                 .await?;
 
@@ -103,8 +103,7 @@ impl RefreshTokenFlow {
                 ..Default::default()
             };
 
-            let id_token = state
-                .token_service
+            let id_token = token_svc
                 .issue_id_token(&subject, &audience, Some(id_token_extra))
                 .await?;
 

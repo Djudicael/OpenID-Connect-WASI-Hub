@@ -17,11 +17,22 @@ mod tests {
             password_hash: Some("$argon2id$...".into()),
             given_name: Some("Alice".into()),
             family_name: Some("Smith".into()),
+            middle_name: None,
+            nickname: None,
+            preferred_username: None,
+            profile: None,
+            picture: None,
+            website: None,
+            gender: None,
+            birthdate: None,
+            zoneinfo: None,
             phone_number: None,
-            locale: Some("en".into()),
+            phone_number_verified: None,
+            locale: "en".into(),
             attributes: serde_json::Value::Object(serde_json::Map::new()),
             enabled: true,
             deleted_at: None,
+            updated_at: chrono::Utc::now(),
         }
     }
 
@@ -75,16 +86,38 @@ pub struct User {
     pub given_name: Option<String>,
     /// Family (last) name.
     pub family_name: Option<String>,
+    /// Middle name.
+    pub middle_name: Option<String>,
+    /// Nickname.
+    pub nickname: Option<String>,
+    /// Preferred username.
+    pub preferred_username: Option<String>,
+    /// Profile URL.
+    pub profile: Option<String>,
+    /// Picture URL.
+    pub picture: Option<String>,
+    /// Website URL.
+    pub website: Option<String>,
+    /// Gender.
+    pub gender: Option<String>,
+    /// Birthdate (ISO-8601).
+    pub birthdate: Option<String>,
+    /// Zoneinfo (IANA TZ).
+    pub zoneinfo: Option<String>,
     /// Phone number.
     pub phone_number: Option<String>,
-    /// Locale preference (e.g., "en", "fr").
-    pub locale: Option<String>,
+    /// Whether the phone number has been verified.
+    pub phone_number_verified: Option<bool>,
+    /// Locale preference (e.g., "en", "fr"). Defaults to "en".
+    pub locale: String,
     /// Arbitrary key-value attributes.
     pub attributes: serde_json::Value,
     /// Whether the account is enabled.
     pub enabled: bool,
     /// When the user was soft-deleted.
     pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// When the user record was last updated.
+    pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl User {

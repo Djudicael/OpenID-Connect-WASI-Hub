@@ -896,11 +896,22 @@ mod tests {
             password_hash: Some("$argon2id$...".into()),
             given_name: Some("Alice".into()),
             family_name: Some("Smith".into()),
+            middle_name: None,
+            nickname: None,
+            preferred_username: None,
+            profile: None,
+            picture: None,
+            website: None,
+            gender: None,
+            birthdate: None,
+            zoneinfo: None,
             phone_number: None,
-            locale: Some("en".into()),
+            phone_number_verified: None,
+            locale: "en".into(),
             attributes: serde_json::Value::Object(serde_json::Map::new()),
             enabled: true,
             deleted_at: None,
+            updated_at: chrono::Utc::now(),
         }
     }
 
@@ -987,6 +998,8 @@ mod tests {
             code_challenge_method: CodeChallengeMethod::S256,
             nonce: Some("nonce_123".into()),
             used: false,
+            claims_request: None,
+            display: None,
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
         }
     }

@@ -693,11 +693,22 @@ async fn seed_data(db_url: &str, _proxy_port: u16) -> Result<()> {
                     password_hash: Some(password_hash),
                     given_name: Some("Admin".into()),
                     family_name: Some("User".into()),
+                    middle_name: None,
+                    nickname: None,
+                    preferred_username: None,
+                    profile: None,
+                    picture: None,
+                    website: None,
+                    gender: None,
+                    birthdate: None,
+                    zoneinfo: None,
                     phone_number: None,
-                    locale: None,
+                    phone_number_verified: None,
+                    locale: "en".into(),
                     attributes: serde_json::Value::Object(serde_json::Map::new()),
                     enabled: true,
                     deleted_at: None,
+                    updated_at: chrono::Utc::now(),
                 };
                 repo.create(&mut conn, &user)
                     .await

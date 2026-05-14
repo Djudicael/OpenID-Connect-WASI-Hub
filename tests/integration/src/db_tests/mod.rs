@@ -42,11 +42,22 @@ fn test_user(realm_id: Uuid, email: &str) -> User {
         password_hash: None,
         given_name: None,
         family_name: None,
+        middle_name: None,
+        nickname: None,
+        preferred_username: None,
+        profile: None,
+        picture: None,
+        website: None,
+        gender: None,
+        birthdate: None,
+        zoneinfo: None,
         phone_number: None,
-        locale: None,
+        phone_number_verified: None,
+        locale: "en".into(),
         attributes: serde_json::Value::Object(serde_json::Map::new()),
         enabled: true,
         deleted_at: None,
+        updated_at: chrono::Utc::now(),
     }
 }
 
@@ -128,11 +139,22 @@ async fn test_user_crud_and_soft_delete() {
         password_hash: Some("$argon2id$...".to_string()),
         given_name: Some("Test".to_string()),
         family_name: Some("User".to_string()),
+        middle_name: None,
+        nickname: None,
+        preferred_username: None,
+        profile: None,
+        picture: None,
+        website: None,
+        gender: None,
+        birthdate: None,
+        zoneinfo: None,
         phone_number: None,
-        locale: None,
+        phone_number_verified: None,
+        locale: "en".into(),
         attributes: serde_json::Value::Object(serde_json::Map::new()),
         enabled: true,
         deleted_at: None,
+        updated_at: chrono::Utc::now(),
     };
 
     repo.create(&mut conn, &user).await.unwrap();
@@ -395,6 +417,8 @@ async fn test_auth_code_crud() {
         code_challenge_method: CodeChallengeMethod::S256,
         nonce: Some("test-nonce".to_string()),
         used: false,
+        claims_request: None,
+        display: None,
         expires_at: Utc::now() + chrono::Duration::minutes(10),
     };
 
@@ -538,11 +562,22 @@ async fn test_user_email_index_performance() {
             password_hash: Some("hash".to_string()),
             given_name: None,
             family_name: None,
+            middle_name: None,
+            nickname: None,
+            preferred_username: None,
+            profile: None,
+            picture: None,
+            website: None,
+            gender: None,
+            birthdate: None,
+            zoneinfo: None,
             phone_number: None,
-            locale: None,
+            phone_number_verified: None,
+            locale: "en".into(),
             attributes: serde_json::Value::Object(serde_json::Map::new()),
             enabled: true,
             deleted_at: None,
+            updated_at: chrono::Utc::now(),
         };
         user_repo.create(&mut conn, &user).await.unwrap();
     }
@@ -999,6 +1034,8 @@ async fn test_expired_auth_code_cleanup() {
         code_challenge_method: CodeChallengeMethod::S256,
         nonce: None,
         used: false,
+        claims_request: None,
+        display: None,
         expires_at: Utc::now() - chrono::Duration::minutes(5), // expired 5 minutes ago
     };
     auth_code_repo

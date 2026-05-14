@@ -17,7 +17,7 @@ use crate::helpers::fixtures;
 
 /// Compute a PKCE S256 code challenge from a verifier:
 ///   challenge = base64url_no_pad(sha256(verifier))
-fn pkce_s256_challenge(verifier: &str) -> String {
+pub fn pkce_s256_challenge(verifier: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(verifier.as_bytes());
     let hash = hasher.finalize();
@@ -1558,5 +1558,271 @@ async fn test_discovery_document_fields() {
             .unwrap()
             .is_empty(),
         "id_token_signing_alg_values_supported must not be empty"
+    );
+}
+
+// ===================================================================
+// Group 17: Standard Claims & display/claims Parameter
+// ===================================================================
+
+#[tokio::test]
+async fn test_discovery_claims_parameter_supported() {
+    let app = TestApp::new().await;
+    let resp = app
+        .client()
+        .get(&format!("{}/.well-known/openid-configuration", app.url()))
+        .send()
+        .await
+        .expect("discovery request failed");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.expect("discovery should be JSON");
+
+    // Verify new discovery fields
+    assert_eq!(body["claims_parameter_supported"], true);
+    let display_values = body["display_values_supported"]
+        .as_array()
+        .expect("display_values_supported must be array");
+    assert!(display_values.contains(&json!("page")));
+    assert!(display_values.contains(&json!("popup")));
+    assert!(display_values.contains(&json!("touch")));
+    assert!(display_values.contains(&json!("wap")));
+
+    // Verify expanded claims_supported
+    let claims = body["claims_supported"]
+        .as_array()
+        .expect("claims_supported must be array");
+    for claim in &[
+        "middle_name",
+        "nickname",
+        "preferred_username",
+        "profile",
+        "picture",
+        "website",
+        "gender",
+        "birthdate",
+        "zoneinfo",
+        "locale",
+        "phone_number",
+        "phone_number_verified",
+        "updated_at",
+    ] {
+        assert!(
+            claims.contains(&json!(claim)),
+            "claims_supported should contain {}",
+            claim
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_userinfo_profile_scope_returns_standard_claims() {
+    let app = TestApp::new().await;
+
+    // Seed a client that allows profile+email+phone scope
+    let client_id = "claims-test-client";
+    let client_secret = "ClaimsSecret123!";
+    let redirect_uri = "https://app.example.com/callback";
+    app.seed_client_with_secret(client_id, client_secret, &[redirect_uri])
+        .await;
+
+    // Update client to allow phone scope
+    {
+        let mut conn = crate::harness::test_conn_no_tx().await;
+        let scopes = serde_json::json!(["openid", "profile", "email", "phone"]);
+        conn.execute_params(
+            "UPDATE clients SET allowed_scopes = $1 WHERE client_id = $2",
+            &[&scopes, &client_id],
+        )
+        .await
+        .expect("update scopes");
+        let _ = conn.close().await;
+    }
+
+    // Seed a user with all the new claims populated
+    {
+        let mut conn = crate::harness::test_conn_no_tx().await;
+        let mut user = fixtures::test_user(
+            app.master_realm_id(),
+            "claimsuser@example.com",
+            "ClaimsPass1!",
+        );
+        user.given_name = Some("Claims".to_string());
+        user.family_name = Some("User".to_string());
+        user.middle_name = Some("M".to_string());
+        user.nickname = Some("claimsy".to_string());
+        user.preferred_username = Some("claimsuser".to_string());
+        user.profile = Some("https://example.com/profile".to_string());
+        user.picture = Some("https://example.com/pic.png".to_string());
+        user.website = Some("https://example.com".to_string());
+        user.gender = Some("female".to_string());
+        user.birthdate = Some("1990-01-15".to_string());
+        user.zoneinfo = Some("Europe/Paris".to_string());
+        user.locale = "fr".to_string();
+        user.phone_number = Some("+33612345678".to_string());
+        user.phone_number_verified = Some(true);
+        user.updated_at = chrono::Utc::now();
+        let _ = oidc_repository::repositories::user_repo::UserRepo
+            .create(&mut conn, &user)
+            .await;
+        let _ = conn.close().await;
+    }
+
+    // Full auth code + PKCE flow with profile+email+phone scope
+    let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let code_challenge = pkce_s256_challenge(code_verifier);
+
+    let authorize_url = format!(
+        "{}/oidc/authorize?client_id={}&redirect_uri={}&response_type=code&scope=openid+profile+email+phone&code_challenge={}&code_challenge_method=S256&login_hint={}",
+        app.url(),
+        urlencoding::encode(client_id),
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(&code_challenge),
+        urlencoding::encode("claimsuser@example.com"),
+    );
+
+    let resp = app
+        .client()
+        .get(&authorize_url)
+        .send()
+        .await
+        .expect("authorize failed");
+    assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+    let (code, _) = parse_redirect_params(location);
+    assert!(!code.is_empty());
+
+    let token_resp = app
+        .client()
+        .post(&format!("{}/oidc/token", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&client_secret={}&code_verifier={}",
+            urlencoding::encode(&code),
+            urlencoding::encode(redirect_uri),
+            urlencoding::encode(client_id),
+            urlencoding::encode(client_secret),
+            urlencoding::encode(code_verifier),
+        ))
+        .send()
+        .await
+        .expect("token request failed");
+
+    assert_eq!(token_resp.status(), StatusCode::OK);
+    let token_body: Value = token_resp.json().await.expect("token should be JSON");
+    let access_token = token_body["access_token"]
+        .as_str()
+        .expect("access_token must be present");
+
+    // Get UserInfo
+    let userinfo_resp = app
+        .client()
+        .get(&format!("{}/oidc/userinfo", app.url()))
+        .header("authorization", format!("Bearer {access_token}"))
+        .send()
+        .await
+        .expect("userinfo request failed");
+
+    assert_eq!(userinfo_resp.status(), StatusCode::OK);
+    let userinfo: Value = userinfo_resp.json().await.expect("userinfo should be JSON");
+
+    // Verify profile claims
+    assert_eq!(userinfo["given_name"], "Claims");
+    assert_eq!(userinfo["family_name"], "User");
+    assert_eq!(userinfo["middle_name"], "M");
+    assert_eq!(userinfo["nickname"], "claimsy");
+    assert_eq!(userinfo["preferred_username"], "claimsuser");
+    assert_eq!(userinfo["profile"], "https://example.com/profile");
+    assert_eq!(userinfo["picture"], "https://example.com/pic.png");
+    assert_eq!(userinfo["website"], "https://example.com");
+    assert_eq!(userinfo["gender"], "female");
+    assert_eq!(userinfo["birthdate"], "1990-01-15");
+    assert_eq!(userinfo["zoneinfo"], "Europe/Paris");
+    assert_eq!(userinfo["locale"], "fr");
+    assert!(userinfo["updated_at"].is_number());
+
+    // Verify phone claims
+    assert_eq!(userinfo["phone_number"], "+33612345678");
+    assert_eq!(userinfo["phone_number_verified"], true);
+
+    // Verify email claims
+    assert_eq!(userinfo["email"], "claimsuser@example.com");
+}
+
+#[tokio::test]
+async fn test_authorize_with_display_parameter() {
+    let app = TestApp::new().await;
+
+    let client_id = "display-test-client";
+    let client_secret = "DisplaySecret123!";
+    let redirect_uri = "https://app.example.com/callback";
+    app.seed_client_with_secret(client_id, client_secret, &[redirect_uri])
+        .await;
+
+    let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let code_challenge = pkce_s256_challenge(code_verifier);
+
+    for display in &["page", "popup", "touch", "wap"] {
+        let authorize_url = format!(
+            "{}/oidc/authorize?client_id={}&redirect_uri={}&response_type=code&scope=openid&display={}&code_challenge={}&code_challenge_method=S256&login_hint={}",
+            app.url(),
+            urlencoding::encode(client_id),
+            urlencoding::encode(redirect_uri),
+            urlencoding::encode(display),
+            urlencoding::encode(&code_challenge),
+            urlencoding::encode(fixtures::TEST_USER_EMAIL),
+        );
+
+        let resp = app
+            .client()
+            .get(&authorize_url)
+            .send()
+            .await
+            .expect("authorize failed");
+        assert_eq!(
+            resp.status(),
+            StatusCode::TEMPORARY_REDIRECT,
+            "display={} should succeed",
+            display
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_authorize_with_claims_parameter() {
+    let app = TestApp::new().await;
+
+    let client_id = "claims-param-client";
+    let client_secret = "ClaimsParamSecret1!";
+    let redirect_uri = "https://app.example.com/callback";
+    app.seed_client_with_secret(client_id, client_secret, &[redirect_uri])
+        .await;
+
+    let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let code_challenge = pkce_s256_challenge(code_verifier);
+    let claims_json = r#"{"userinfo":{"given_name":{"essential":true}}}"#;
+
+    let authorize_url = format!(
+        "{}/oidc/authorize?client_id={}&redirect_uri={}&response_type=code&scope=openid+profile&claims={}&code_challenge={}&code_challenge_method=S256&login_hint={}",
+        app.url(),
+        urlencoding::encode(client_id),
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(claims_json),
+        urlencoding::encode(&code_challenge),
+        urlencoding::encode(fixtures::TEST_USER_EMAIL),
+    );
+
+    let resp = app
+        .client()
+        .get(&authorize_url)
+        .send()
+        .await
+        .expect("authorize failed");
+    assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
+    let (code, _) = parse_redirect_params(location);
+    assert!(
+        !code.is_empty(),
+        "authorization code must be present with claims parameter"
     );
 }

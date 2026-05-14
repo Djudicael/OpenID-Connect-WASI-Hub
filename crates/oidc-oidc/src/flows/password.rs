@@ -172,8 +172,8 @@ impl PasswordFlow {
                 "admin".to_string(),
             ];
 
-            let access_token = state
-                .token_service
+            let token_svc = state.token_service_for_realm(user.realm_id).await?;
+            let access_token = token_svc
                 .issue_access_token(&subject, &audience, &scopes)
                 .await?;
 
@@ -189,10 +189,22 @@ impl PasswordFlow {
                 name: user.username.clone(),
                 given_name: user.given_name.clone(),
                 family_name: user.family_name.clone(),
+                middle_name: user.middle_name.clone(),
+                nickname: user.nickname.clone(),
+                preferred_username: user.preferred_username.clone(),
+                profile: user.profile.clone(),
+                picture: user.picture.clone(),
+                website: user.website.clone(),
+                gender: user.gender.clone(),
+                birthdate: user.birthdate.clone(),
+                zoneinfo: user.zoneinfo.clone(),
+                locale: Some(user.locale.clone()),
+                phone_number: user.phone_number.clone(),
+                phone_number_verified: user.phone_number_verified,
+                updated_at: Some(user.updated_at.timestamp()),
             };
 
-            let id_token = state
-                .token_service
+            let id_token = token_svc
                 .issue_id_token(&subject, &audience, Some(id_token_extra))
                 .await?;
 

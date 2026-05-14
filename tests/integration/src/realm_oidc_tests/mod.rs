@@ -152,11 +152,15 @@ async fn test_realm_authorize_redirects_to_realm_login() {
     let client_id = fixtures::TEST_CLIENT_ID;
     let redirect_uri = "http://localhost:3000/callback";
 
+    let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let code_challenge = crate::oidc_tests::pkce_s256_challenge(code_verifier);
+
     let authorize_url = format!(
-        "{}/realms/master/protocol/openid-connect/auth?client_id={}&redirect_uri={}&response_type=code&scope=openid&state=xyz",
+        "{}/realms/master/protocol/openid-connect/auth?client_id={}&redirect_uri={}&response_type=code&scope=openid&state=xyz&code_challenge={}&code_challenge_method=S256",
         app.url(),
         urlencoding::encode(client_id),
         urlencoding::encode(redirect_uri),
+        urlencoding::encode(&code_challenge),
     );
 
     let resp = app
@@ -189,12 +193,15 @@ async fn test_realm_authorize_with_login_hint_success() {
     let redirect_uri = "http://localhost:3000/callback";
 
     // Build the realm-scoped authorize URL with login_hint
+    let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let code_challenge = crate::oidc_tests::pkce_s256_challenge(code_verifier);
     let authorize_url = format!(
-        "{}/realms/master/protocol/openid-connect/auth?client_id={}&redirect_uri={}&response_type=code&scope=openid&state=abc&login_hint={}",
+        "{}/realms/master/protocol/openid-connect/auth?client_id={}&redirect_uri={}&response_type=code&scope=openid&state=abc&login_hint={}&code_challenge={}&code_challenge_method=S256",
         app.url(),
         urlencoding::encode(client_id),
         urlencoding::encode(redirect_uri),
         urlencoding::encode(fixtures::TEST_USER_EMAIL),
+        urlencoding::encode(&code_challenge),
     );
 
     let resp = app
@@ -274,7 +281,7 @@ async fn test_realm_login_page_disabled_realm() {
     // Seed a new realm and disable it
     let mut conn = crate::harness::test_conn_no_tx().await;
     let disabled_realm = crate::helpers::fixtures::test_realm("disabled-realm");
-    let realm_id = disabled_realm.id;
+    let _realm_id = disabled_realm.id;
     oidc_repository::repositories::realm_repo::RealmRepo
         .create(&mut conn, &disabled_realm)
         .await
@@ -381,4 +388,55 @@ async fn test_realm_login_page_theming() {
         body.contains("#000000"),
         "login page should contain custom bg color"
     );
+}
+
+#[tokio::test]
+async fn test_realm_certs_endpoint() {
+    let app = TestApp::new().await;
+
+    let resp = app
+        .client()
+        .get(&format!(
+            "{}/realms/master/protocol/openid-connect/certs",
+            app.url()
+        ))
+        .send()
+        .await
+        .expect("realm certs request failed");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.expect("certs should be JSON");
+
+    let keys = body["keys"].as_array().expect("JWKS must have keys array");
+    assert_eq!(
+        keys.len(),
+        2,
+        "realm JWKS should contain 2 keys (RSA + EdDSA)"
+    );
+
+    let has_rsa = keys
+        .iter()
+        .any(|k| k["kty"] == "RSA" && k["alg"] == "RS256");
+    let has_okp = keys
+        .iter()
+        .any(|k| k["kty"] == "OKP" && k["alg"] == "EdDSA");
+    assert!(has_rsa, "realm certs should contain RSA key");
+    assert!(has_okp, "realm certs should contain EdDSA key");
+}
+
+#[tokio::test]
+async fn test_realm_certs_unknown_realm() {
+    let app = TestApp::new().await;
+
+    let resp = app
+        .client()
+        .get(&format!(
+            "{}/realms/nonexistent/protocol/openid-connect/certs",
+            app.url()
+        ))
+        .send()
+        .await
+        .expect("realm certs request failed");
+
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }

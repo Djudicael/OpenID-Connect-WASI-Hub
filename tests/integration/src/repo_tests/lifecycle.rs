@@ -45,11 +45,22 @@ fn make_user(realm_id: Uuid, email: &str) -> User {
         password_hash: None,
         given_name: None,
         family_name: None,
+        middle_name: None,
+        nickname: None,
+        preferred_username: None,
+        profile: None,
+        picture: None,
+        website: None,
+        gender: None,
+        birthdate: None,
+        zoneinfo: None,
         phone_number: None,
-        locale: None,
+        phone_number_verified: None,
+        locale: "en".into(),
         attributes: serde_json::Value::Object(serde_json::Map::new()),
         enabled: true,
         deleted_at: None,
+        updated_at: chrono::Utc::now(),
     }
 }
 
@@ -150,6 +161,8 @@ fn make_auth_code(client_id: Uuid, user_id: Uuid, realm_id: Uuid, code: &str) ->
         code_challenge_method: CodeChallengeMethod::S256,
         nonce: None,
         used: false,
+        claims_request: None,
+        display: None,
         expires_at: Utc::now() + chrono::Duration::minutes(10),
     }
 }
@@ -308,11 +321,22 @@ async fn test_user_optional_fields() {
         password_hash: Some("$argon2id$test".to_string()),
         given_name: Some("Full".to_string()),
         family_name: Some("User".to_string()),
+        middle_name: Some("M".to_string()),
+        nickname: Some("fullie".to_string()),
+        preferred_username: Some("fulluser".to_string()),
+        profile: Some("https://example.com/profile".to_string()),
+        picture: Some("https://example.com/picture".to_string()),
+        website: Some("https://example.com".to_string()),
+        gender: Some("male".to_string()),
+        birthdate: Some("1990-01-01".to_string()),
+        zoneinfo: Some("America/New_York".to_string()),
         phone_number: Some("+1234567890".to_string()),
-        locale: Some("en".to_string()),
+        phone_number_verified: Some(true),
+        locale: "en".into(),
         attributes: serde_json::json!({"key": "value"}),
         enabled: true,
         deleted_at: None,
+        updated_at: chrono::Utc::now(),
     };
     UserRepo
         .create(&mut conn, &user)
@@ -328,7 +352,7 @@ async fn test_user_optional_fields() {
     assert_eq!(found.given_name, Some("Full".to_string()));
     assert_eq!(found.family_name, Some("User".to_string()));
     assert_eq!(found.phone_number, Some("+1234567890".to_string()));
-    assert_eq!(found.locale, Some("en".to_string()));
+    assert_eq!(found.locale, "en".to_string());
     assert_eq!(found.password_hash, Some("$argon2id$test".to_string()));
 }
 

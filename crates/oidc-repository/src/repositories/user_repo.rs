@@ -25,7 +25,10 @@ pub struct UserRepo;
 /// Column list for user SELECT queries (order must match map_row indices).
 const USER_COLUMNS: &str = r#"
     id, realm_id, email, email_verified, username, password_hash,
-    given_name, family_name, phone_number, locale, attributes, enabled, deleted_at
+    given_name, family_name, middle_name, nickname, preferred_username,
+    profile, picture, website, gender, birthdate, zoneinfo,
+    phone_number, phone_number_verified, locale, attributes, enabled,
+    deleted_at, updated_at
 "#;
 
 impl UserRepo {
@@ -65,8 +68,10 @@ impl UserRepo {
         let sql = r#"
             INSERT INTO users (
                 id, realm_id, email, email_verified, username, password_hash,
-                given_name, family_name, phone_number, locale, attributes, enabled
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                given_name, family_name, middle_name, nickname, preferred_username,
+                profile, picture, website, gender, birthdate, zoneinfo,
+                phone_number, phone_number_verified, locale, attributes, enabled, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
         "#;
         conn.execute_params(
             sql,
@@ -79,10 +84,21 @@ impl UserRepo {
                 &entity.password_hash,
                 &entity.given_name,
                 &entity.family_name,
+                &entity.middle_name,
+                &entity.nickname,
+                &entity.preferred_username,
+                &entity.profile,
+                &entity.picture,
+                &entity.website,
+                &entity.gender,
+                &entity.birthdate,
+                &entity.zoneinfo,
                 &entity.phone_number,
+                &entity.phone_number_verified.unwrap_or(false),
                 &entity.locale,
                 &entity.attributes,
                 &entity.enabled,
+                &entity.updated_at,
             ],
         )
         .await
@@ -100,12 +116,22 @@ impl UserRepo {
                 password_hash = $4,
                 given_name = $5,
                 family_name = $6,
-                phone_number = $7,
-                locale = $8,
-                attributes = $9,
-                enabled = $10,
+                middle_name = $7,
+                nickname = $8,
+                preferred_username = $9,
+                profile = $10,
+                picture = $11,
+                website = $12,
+                gender = $13,
+                birthdate = $14,
+                zoneinfo = $15,
+                phone_number = $16,
+                phone_number_verified = $17,
+                locale = $18,
+                attributes = $19,
+                enabled = $20,
                 updated_at = NOW()
-            WHERE id = $11 AND deleted_at IS NULL
+            WHERE id = $21 AND deleted_at IS NULL
         "#;
         conn.execute_params(
             sql,
@@ -116,7 +142,17 @@ impl UserRepo {
                 &entity.password_hash,
                 &entity.given_name,
                 &entity.family_name,
+                &entity.middle_name,
+                &entity.nickname,
+                &entity.preferred_username,
+                &entity.profile,
+                &entity.picture,
+                &entity.website,
+                &entity.gender,
+                &entity.birthdate,
+                &entity.zoneinfo,
                 &entity.phone_number,
+                &entity.phone_number_verified.unwrap_or(false),
                 &entity.locale,
                 &entity.attributes,
                 &entity.enabled,
@@ -236,11 +272,22 @@ impl UserRepo {
             password_hash: mapper::opt_string(row, 5)?,
             given_name: mapper::opt_string(row, 6)?,
             family_name: mapper::opt_string(row, 7)?,
-            phone_number: mapper::opt_string(row, 8)?,
-            locale: mapper::opt_string(row, 9)?,
-            attributes: row.get::<serde_json::Value>(10).map_err(mapper::pg_err)?,
-            enabled: mapper::bool_(row, 11)?,
-            deleted_at: mapper::opt_datetime(row, 12)?,
+            middle_name: mapper::opt_string(row, 8)?,
+            nickname: mapper::opt_string(row, 9)?,
+            preferred_username: mapper::opt_string(row, 10)?,
+            profile: mapper::opt_string(row, 11)?,
+            picture: mapper::opt_string(row, 12)?,
+            website: mapper::opt_string(row, 13)?,
+            gender: mapper::opt_string(row, 14)?,
+            birthdate: mapper::opt_string(row, 15)?,
+            zoneinfo: mapper::opt_string(row, 16)?,
+            phone_number: mapper::opt_string(row, 17)?,
+            phone_number_verified: mapper::opt_bool(row, 18)?,
+            locale: mapper::string(row, 19)?,
+            attributes: row.get::<serde_json::Value>(20).map_err(mapper::pg_err)?,
+            enabled: mapper::bool_(row, 21)?,
+            deleted_at: mapper::opt_datetime(row, 22)?,
+            updated_at: mapper::datetime(row, 23)?,
         })
     }
 }
