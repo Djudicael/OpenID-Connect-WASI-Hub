@@ -166,6 +166,68 @@ impl JwtTokenService {
         })
     }
 
+    /// Create a token service from explicit PEM keys (for a specific realm).
+    pub fn from_pems(
+        issuer: impl Into<String>,
+        rsa_private_pem: &str,
+        rsa_kid: &str,
+        ed25519_private_pem: &str,
+        ed25519_kid: &str,
+    ) -> Result<Self, OidcError> {
+        let issuer = issuer.into();
+
+        use rsa::pkcs1::DecodeRsaPrivateKey;
+        let rsa_private_key = RsaPrivateKey::from_pkcs1_pem(rsa_private_pem)
+            .map_err(|e| OidcError::Internal(format!("invalid RSA PEM: {e}")))?;
+
+        use pkcs8::DecodePrivateKey;
+        let ed_signing_key = SigningKey::from_pkcs8_pem(ed25519_private_pem)
+            .map_err(|e| OidcError::Internal(format!("invalid Ed25519 PEM: {e}")))?;
+
+        Ok(Self {
+            issuer,
+            rsa_private_key,
+            rsa_kid: rsa_kid.to_string(),
+            ed_signing_key,
+            ed_kid: ed25519_kid.to_string(),
+            access_token_ttl_secs: 900,
+            id_token_ttl_secs: 3600,
+            clock: Arc::new(oidc_core::traits::clock::SystemClock),
+        })
+    }
+
+    /// Build a JWKS from public key components (no private key needed).
+    /// Used by the per-realm certs endpoint.
+    pub fn jwks_from_public_keys(
+        rsa_kid: &str,
+        rsa_n_b64: &str,
+        rsa_e_b64: &str,
+        ed_kid: &str,
+        ed_x_b64: &str,
+    ) -> Jwks {
+        let rsa_jwk = Jwk::Rsa {
+            kty: "RSA".to_string(),
+            kid: rsa_kid.to_string(),
+            alg: "RS256".to_string(),
+            key_use: "sig".to_string(),
+            n: rsa_n_b64.to_string(),
+            e: rsa_e_b64.to_string(),
+        };
+
+        let ed_jwk = Jwk::Okp {
+            kty: "OKP".to_string(),
+            kid: ed_kid.to_string(),
+            alg: "EdDSA".to_string(),
+            key_use: "sig".to_string(),
+            crv: "Ed25519".to_string(),
+            x: ed_x_b64.to_string(),
+        };
+
+        Jwks {
+            keys: vec![rsa_jwk, ed_jwk],
+        }
+    }
+
     /// Build a JWKS document from the public keys (RSA + Ed25519).
     pub fn jwks(&self) -> Result<Jwks, OidcError> {
         let public_key = RsaPublicKey::from(&self.rsa_private_key);

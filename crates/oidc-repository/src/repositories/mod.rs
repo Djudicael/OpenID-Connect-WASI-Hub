@@ -5,6 +5,7 @@ pub mod audit_event_repo;
 pub mod auth_code_repo;
 pub mod client_repo;
 pub mod realm_repo;
+pub mod realm_signing_keys_repo;
 pub mod scope_repo;
 pub mod session_repo;
 pub mod signing_key_repo;

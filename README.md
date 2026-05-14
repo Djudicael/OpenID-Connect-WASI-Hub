@@ -83,10 +83,10 @@ cargo build --release -p openid-connect-wasi --target wasm32-wasip2
 | `OIDC_ISSUER` | `http://localhost:8080` | Base URL for OIDC issuer |
 | `OIDC_ENCRYPTION_KEY` | *(required)* | 32-byte hex key for session cookie HMAC |
 | `OIDC_CORS_ORIGINS` | *(none)* | Comma-separated allowed CORS origins |
-| `OIDC_SIGNING_KEY` | *(auto-generated)* | RSA private key in PKCS#1 PEM format |
-| `OIDC_SIGNING_KID` | `key-1` | Key ID for the RSA signing key |
-| `OIDC_ED25519_KEY` | *(auto-generated)* | Ed25519 private key in PKCS#8 PEM format |
-| `OIDC_ED25519_KID` | `ed-key-1` | Key ID for the Ed25519 signing key |
+| `OIDC_SIGNING_KEY` | *(auto-generated)* | RSA private key in PKCS#1 PEM format (global fallback; per-realm keys preferred in production) |
+| `OIDC_SIGNING_KID` | `key-1` | Key ID for the global RSA signing key |
+| `OIDC_ED25519_KEY` | *(auto-generated)* | Ed25519 private key in PKCS#8 PEM format (global fallback; per-realm keys preferred in production) |
+| `OIDC_ED25519_KID` | `ed-key-1` | Key ID for the global Ed25519 signing key |
 
 ## API Overview
 
@@ -112,6 +112,12 @@ cargo build --release -p openid-connect-wasi --target wasm32-wasip2
 | `POST /realms/{realm}/protocol/openid-connect/token` | Realm-scoped token |
 | `GET /realms/{realm}/login` | Branded HTML login page |
 | `POST /realms/{realm}/login` | Realm-scoped JSON login |
+
+### Per-Realm JWKS (Keycloak-compatible)
+
+| Endpoint | Auth Required | Description |
+|----------|---------------|-------------|
+| `GET /realms/{realm}/protocol/openid-connect/certs` | **No** | Realm-specific public signing keys (RSA + Ed25519). Each realm has its own isolated keypair. Tokens from `realm-a` will **fail** signature verification against `realm-b`'s certs. |
 
 ### Admin API
 
@@ -181,18 +187,49 @@ wasmtime serve \
   target/wasm32-wasip2/release/openid_connect_wasi.wasm
 ```
 
+### Per-Realm Signing Keys (Recommended for Multi-Tenant)
+
+For **enterprise multi-tenancy**, each realm should have its own isolated RSA + Ed25519 keypair. This provides **cryptographic isolation**: a compromised `realm-a` key does not affect `realm-b`, and an API gateway can reject cross-realm tokens at the signature layer.
+
+**How it works:**
+- When a realm is created (via `POST /api/realms`), the hub auto-generates a unique keypair and stores it in the `realm_signing_keys` table.
+- Tokens issued for that realm are signed with the realm's private keys.
+- The `iss` claim in the JWT becomes `https://hub.example.com/realms/{realm}`.
+- The public keys are served at `/realms/{realm}/protocol/openid-connect/certs`.
+
+**Gateway validation:**
+```nginx
+# Example: Nginx JWT validation for a downstream portfolio app
+auth_jwt "Portfolio App";
+auth_jwt_key_request https://hub.example.com/realms/portfolio/protocol/openid-connect/certs;
+```
+
+If per-realm keys are **not** set for a realm, the hub falls back to the global `OIDC_SIGNING_KEY` / `OIDC_ED25519_KEY` for backward compatibility.
+
 ### Native Binary
 
 The native binary (`cargo build --release -p openid-connect-wasi`) runs as a single long-lived process, so random key generation at startup is safe. However, for high-availability deployments with multiple replicas, you should still share the same signing keys across all instances so tokens remain valid after load-balancer routing.
+
+## Multi-Tenant Architecture
+
+Realms (tenants) are fully isolated:
+- **Users** — per-realm user directories with independent email namespaces
+- **Clients** — OAuth2/OIDC clients scoped to a single realm
+- **Sessions** — login sessions tied to a realm
+- **Scopes** — realm-specific permission definitions
+- **API Keys** — realm-scoped admin keys
+- **Signing Keys** — each realm can have its own RSA + Ed25519 keypair for cryptographic isolation
+- **Branding** — per-realm login page theming (`login_title`, `logo_url`, `primary_color`, `bg_color`)
 
 ## Security Notes
 
 - **Session cookies** are HMAC-SHA256 protected (`session_id.hmac_hex`). Tampered cookies are rejected.
 - **CSRF protection** uses a double-submit cookie pattern (`oidc_csrf_token` cookie + `X-CSRF-Token` header).
 - **Passwords** are hashed with Argon2id (pure Rust, WASM-compatible).
-- **Tokens** use RS256 (RSA) and EdDSA (Ed25519) for signing. Keys are auto-generated on first startup.
+- **Tokens** use RS256 (RSA) and EdDSA (Ed25519) for signing. Global keys are auto-generated on first startup; per-realm keys are auto-generated when a realm is created.
 - **Brute-force protection** locks accounts after 5 failed login attempts within a short window.
-- **No filesystem access** in WASM mode — all configuration and theming lives in PostgreSQL JSONB columns.
+- **No filesystem access** in WASM mode — all configuration, theming, and signing keys live in PostgreSQL.
+- **Key isolation** — per-realm signing keys prevent cross-tenant token forgery at the cryptographic layer.
 
 ## License
 

@@ -66,8 +66,12 @@ class Button extends BaseComponent {
   _onClick(e) {
     if (this._state.disabled) {
       e.preventDefault();
+      e.stopPropagation();
       return;
     }
+    // Stop the native click from bubbling so parent lit-html @click
+    // handlers don't fire twice (once from native, once from custom).
+    e.stopPropagation();
     this.dispatchEvent(new CustomEvent('click', { bubbles: true, composed: true }));
   }
 }

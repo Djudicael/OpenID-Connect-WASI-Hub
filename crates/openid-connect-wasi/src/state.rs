@@ -78,6 +78,9 @@ impl AppState {
             db_config: wasi_pg_client::Config::from_uri(&self.config.database_url)
                 .unwrap_or_else(|_| wasi_pg_client::Config::new()),
             encryption_key: self.config.encryption_key.clone(),
+            realm_token_services: std::sync::Arc::new(std::sync::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
         }
     }
 }

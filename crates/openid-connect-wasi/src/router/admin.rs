@@ -21,6 +21,7 @@ use oidc_repository::Connection;
 use oidc_repository::repositories::audit_event_repo::AuditEventRepo;
 use oidc_repository::repositories::client_repo::ClientRepo;
 use oidc_repository::repositories::realm_repo::RealmRepo;
+use oidc_repository::repositories::realm_signing_keys_repo::RealmSigningKeysRepo;
 use oidc_repository::repositories::scope_repo::ScopeRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
@@ -761,6 +762,11 @@ async fn delete_realm(
         Err(r) => return r,
     };
 
+    // Hard-delete signing keys before soft-deleting the realm
+    if let Err(e) = RealmSigningKeysRepo.delete_by_realm_id(&mut conn, id).await {
+        tracing::warn!("delete realm signing keys error: {e}");
+    }
+
     match RealmRepo.delete(&mut conn, id).await {
         Ok(()) => Json(json!({"deleted": true})).into_response(),
         Err(e) => {
@@ -1327,6 +1333,28 @@ async fn create_realm(State(state): State<AppState>, auth: AdminAuth, body: Stri
             )
                 .into_response();
         }
+    }
+
+    // Generate and store per-realm signing keys
+    let keys = match oidc_oidc::tokens::generate_realm_keys(realm.id) {
+        Ok(k) => k,
+        Err(e) => {
+            tracing::error!("generate realm keys error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    };
+
+    if let Err(e) = RealmSigningKeysRepo.create(&mut conn, &keys).await {
+        tracing::error!("store realm keys error: {e}");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "internal"})),
+        )
+            .into_response();
     }
 
     // Audit event
