@@ -78,6 +78,11 @@ fn make_client(realm_id: Uuid, client_id: &str) -> Client {
         pkce_required: true,
         enabled: true,
         deleted_at: None,
+        token_endpoint_auth_method: "none".into(),
+        jwks_uri: None,
+        jwks: None,
+        request_uris: vec![],
+        client_secret_encrypted: None,
     }
 }
 
@@ -459,6 +464,11 @@ async fn test_client_confidential_with_secret() {
         pkce_required: false,
         enabled: true,
         deleted_at: None,
+        token_endpoint_auth_method: "client_secret_basic".into(),
+        jwks_uri: None,
+        jwks: None,
+        request_uris: vec![],
+        client_secret_encrypted: None,
     };
     ClientRepo
         .create(&mut conn, &client)

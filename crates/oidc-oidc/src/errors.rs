@@ -182,6 +182,9 @@ pub fn from_oidc_error(e: &oidc_core::OidcError) -> OidcErrorResponse {
         OidcError::InvalidInput(msg) => {
             OidcErrorResponse::invalid_request(format!("Invalid input: {msg}"))
         }
+        OidcError::InvalidClientAssertion(_) => {
+            OidcErrorResponse::invalid_client("Invalid client assertion")
+        }
         OidcError::Internal(msg) => OidcErrorResponse::from_internal(msg),
         _ => OidcErrorResponse::from_internal("unknown error"),
     }

@@ -4,6 +4,8 @@
 //! PostgreSQL database, seeds baseline test data, and provides a
 //! `reqwest` client for making HTTP requests in integration tests.
 
+use std::sync::OnceLock;
+
 use oidc_core::traits::Hasher;
 use oidc_repository::repositories::{
     client_repo::ClientRepo, realm_repo::RealmRepo, user_repo::UserRepo,
@@ -17,10 +19,27 @@ use crate::helpers::fixtures;
 // TestApp
 // ===================================================================
 
+/// Global singleton test server — spawned once and reused by every `TestApp`.
+/// This removes the per-test server startup overhead (~200-500 ms).
+///
+/// The server runs on a **dedicated background thread** with its own Tokio
+/// runtime so it survives the end of individual `#[tokio::test]` functions.
+struct GlobalServer {
+    base_url: String,
+    client: reqwest::Client,
+    /// Keep the background runtime alive for the whole test run.
+    _runtime: std::thread::JoinHandle<()>,
+    /// Owned sender so we can signal shutdown if desired.
+    _shutdown_tx: tokio::sync::oneshot::Sender<()>,
+}
+
+static GLOBAL_SERVER: OnceLock<GlobalServer> = OnceLock::new();
+
 /// A running test application instance.
 ///
-/// Spawns the full OIDC Hub on a random port, seeds baseline data, and
-/// provides an HTTP client for making requests.
+/// Uses a **globally shared** OIDC Hub server to avoid spawning a new
+/// Axum instance for every test.  Each test still gets its own clean
+/// database state (via `clean_database` + `seed_baseline_data`).
 ///
 /// # Example
 ///
@@ -38,98 +57,99 @@ pub struct TestApp {
     master_realm_id: Uuid,
     /// The admin user email seeded during setup.
     master_user_email: String,
-    /// Sender half of a oneshot channel — when dropped, signals the
-    /// server task to shut down, releasing its DB connections.
-    shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
-    /// Handle to the server task so we can await its shutdown.
-    server_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl TestApp {
     /// Create a new test application.
     ///
     /// This will:
-    /// 1. Get the database URL from the test harness
-    /// 2. Clean the database
-    /// 3. Seed a master realm, admin user, and `admin-ui` client
-    /// 4. Set env vars and build the Axum router
-    /// 5. Spawn the server on `127.0.0.1:0` (random port)
-    /// 6. Return a `TestApp` with the base URL and HTTP client
+    /// 1. Get (or spawn) the **global** shared server.
+    /// 2. Clean the database.
+    /// 3. Seed a master realm, admin user, and `admin-ui` client.
+    /// 4. Return a `TestApp` with the global base URL and HTTP client.
     pub async fn new() -> Self {
         let db_url = database_url().await;
 
-        // Clean leftover data from previous tests.
-        {
+        // -----------------------------------------------------------------
+        // Global server — spawned once on a background thread, reused by all tests
+        // -----------------------------------------------------------------
+        if GLOBAL_SERVER.get().is_none() {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("failed to bind random port");
+            let port = listener
+                .local_addr()
+                .expect("failed to get local addr")
+                .port();
+
+            let issuer = format!("http://localhost:{port}");
+
+            // SAFETY: Tests run single-threaded (--test-threads=1).
+            unsafe {
+                std::env::set_var("RUST_LOG", "oidc_oidc=trace,oidc_repository=trace,trace");
+                std::env::set_var("OIDC_DATABASE_URL", &db_url);
+                std::env::set_var("OIDC_ENCRYPTION_KEY", fixtures::TEST_ENCRYPTION_KEY);
+                std::env::set_var("OIDC_ISSUER", &issuer);
+                std::env::set_var("OIDC_SERVER_PORT", port.to_string());
+                std::env::set_var("OIDC_SERVER_BIND_ADDRESS", "127.0.0.1");
+                std::env::set_var("OIDC_CORS_ORIGINS", "http://localhost:3000");
+            }
+
+            let app = openid_connect_wasi::app_router();
+            let base_url = format!("http://127.0.0.1:{port}");
+            let client = reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("failed to build reqwest client");
+
+            // Use a tokio oneshot channel for shutdown — the receiver is !Send,
+            // but we only use it inside the async block on the background thread.
+            let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+            // Wrap the receiver in a std::sync::Mutex so it can be moved into the thread
+            let shutdown_rx = std::sync::Mutex::new(Some(shutdown_rx));
+
+            let bg_thread = std::thread::spawn(move || {
+                let rt =
+                    tokio::runtime::Runtime::new().expect("failed to create background runtime");
+                rt.block_on(async move {
+                    let rx = shutdown_rx.lock().unwrap().take().unwrap();
+                    axum::serve(listener, app)
+                        .with_graceful_shutdown(async {
+                            let _ = rx.await;
+                        })
+                        .await
+                        .expect("test server failed");
+                });
+            });
+
+            let _ = GLOBAL_SERVER.set(GlobalServer {
+                base_url,
+                client,
+                _runtime: bg_thread,
+                _shutdown_tx: shutdown_tx,
+            });
+        }
+
+        let global = GLOBAL_SERVER.get().unwrap();
+
+        // -----------------------------------------------------------------
+        // Per-test database reset (single connection for TRUNCATE + seed)
+        // -----------------------------------------------------------------
+        let (master_realm_id, master_user_email) = {
             let mut conn = test_conn_no_tx().await;
             clean_database(&mut conn)
                 .await
                 .expect("clean_database failed");
-            let _ = conn.close().await;
-        }
-
-        // Seed baseline data (unique per test — no need to clean the DB).
-        // Each test gets its own realm/user/client with fresh UUIDs,
-        // so there's no cross-test contamination even without TRUNCATE.
-        let (master_realm_id, master_user_email) = {
-            let mut conn = test_conn_no_tx().await;
             let (id, email) = seed_baseline_data(&mut conn).await;
             let _ = conn.close().await;
             (id, email)
         };
 
-        // Set env vars so that `AppState::from_env()` picks up the test config.
-        // We must set these before calling `app_router()`.
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("failed to bind random port");
-        let port = listener
-            .local_addr()
-            .expect("failed to get local addr")
-            .port();
-
-        let issuer = format!("http://localhost:{port}");
-
-        // SAFETY: These env vars are set before any concurrent access in tests.
-        // Tests run single-threaded (--test-threads=1).
-        unsafe {
-            std::env::set_var("RUST_LOG", "oidc_oidc=trace,oidc_repository=trace,trace");
-            std::env::set_var("OIDC_DATABASE_URL", &db_url);
-            std::env::set_var("OIDC_ENCRYPTION_KEY", fixtures::TEST_ENCRYPTION_KEY);
-            std::env::set_var("OIDC_ISSUER", &issuer);
-            std::env::set_var("OIDC_SERVER_PORT", port.to_string());
-            std::env::set_var("OIDC_SERVER_BIND_ADDRESS", "127.0.0.1");
-            std::env::set_var("OIDC_CORS_ORIGINS", "http://localhost:3000");
-        }
-
-        let app = openid_connect_wasi::app_router();
-
-        // Create a oneshot channel to signal server shutdown.
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-
-        // Spawn the server with graceful shutdown.
-        let server_handle = tokio::spawn(async move {
-            axum::serve(listener, app)
-                .with_graceful_shutdown(async {
-                    let _ = shutdown_rx.await;
-                })
-                .await
-                .expect("test server failed");
-        });
-
-        let base_url = format!("http://127.0.0.1:{port}");
-
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .expect("failed to build reqwest client");
-
         Self {
-            base_url,
-            client,
+            base_url: global.base_url.clone(),
+            client: global.client.clone(),
             master_realm_id,
             master_user_email,
-            shutdown_tx: Some(shutdown_tx),
-            server_handle: Some(server_handle),
         }
     }
 
@@ -270,16 +290,8 @@ impl TestApp {
 
 impl Drop for TestApp {
     fn drop(&mut self) {
-        // Signal the server to shut down by dropping the sender.
-        // This closes the oneshot channel, causing the server's
-        // `with_graceful_shutdown` to fire.
-        if let Some(tx) = self.shutdown_tx.take() {
-            drop(tx);
-        }
-        // Abort the server task to ensure it doesn't hold DB connections.
-        if let Some(handle) = self.server_handle.take() {
-            handle.abort();
-        }
+        // No-op: the server is global and stays alive for the whole test run.
+        // This avoids the ~50-100 ms abort/shutdown overhead per test.
     }
 }
 // ===================================================================

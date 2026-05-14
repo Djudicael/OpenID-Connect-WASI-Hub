@@ -1242,6 +1242,14 @@ async fn create_client(State(state): State<AppState>, auth: AdminAuth, body: Str
         pkce_required,
         enabled,
         deleted_at: None,
+        token_endpoint_auth_method: match client_type {
+            oidc_core::models::ClientType::Confidential => "client_secret_basic".into(),
+            oidc_core::models::ClientType::Public => "none".into(),
+        },
+        jwks_uri: None,
+        jwks: None,
+        request_uris: vec![],
+        client_secret_encrypted: None,
     };
 
     match ClientRepo.create(&mut conn, &client).await {

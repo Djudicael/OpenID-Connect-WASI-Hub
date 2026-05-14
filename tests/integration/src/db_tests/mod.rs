@@ -76,6 +76,11 @@ fn test_client(realm_id: Uuid, client_id: &str, name: &str) -> Client {
         pkce_required: true,
         enabled: true,
         deleted_at: None,
+        token_endpoint_auth_method: "none".into(),
+        jwks_uri: None,
+        jwks: None,
+        request_uris: vec![],
+        client_secret_encrypted: None,
     }
 }
 
@@ -208,6 +213,11 @@ async fn test_client_crud() {
         pkce_required: true,
         enabled: true,
         deleted_at: None,
+        token_endpoint_auth_method: "client_secret_basic".into(),
+        jwks_uri: None,
+        jwks: None,
+        request_uris: vec![],
+        client_secret_encrypted: None,
     };
 
     repo.create(&mut conn, &client).await.unwrap();
@@ -401,6 +411,11 @@ async fn test_auth_code_crud() {
         pkce_required: true,
         enabled: true,
         deleted_at: None,
+        token_endpoint_auth_method: "none".into(),
+        jwks_uri: None,
+        jwks: None,
+        request_uris: vec![],
+        client_secret_encrypted: None,
     };
     client_repo.create(&mut conn, &client).await.unwrap();
 

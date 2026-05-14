@@ -41,6 +41,13 @@ pub fn router() -> Router<AppState> {
         .route("/oidc/revoke", post(|State(state): State<AppState>, form: Form<HashMap<String, String>>| async move {
             oidc_oidc::endpoints::revoke::revoke_handler(State(state.oidc_state()), form).await
         }))
+        .route("/oidc/par", post(|State(state): State<AppState>, headers: axum::http::HeaderMap, Form(params): Form<HashMap<String, String>>| async move {
+            let oidc_state = state.oidc_state();
+            match oidc_oidc::endpoints::par::par_handler(oidc_state, headers, params).await {
+                Ok(json) => (axum::http::StatusCode::CREATED, json).into_response(),
+                Err(e) => oidc_oidc::errors::from_oidc_error(&e).into_response(),
+            }
+        }))
         .route("/oidc/logout", get(|State(state): State<AppState>, Query(params): Query<HashMap<String, String>>| async move {
             oidc_oidc::endpoints::logout::logout_handler(state.oidc_state(), Query(params)).await
         }))

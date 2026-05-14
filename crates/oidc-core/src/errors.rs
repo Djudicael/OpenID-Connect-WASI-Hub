@@ -52,6 +52,18 @@ pub enum OidcError {
     #[error("invalid scope: {0}")]
     InvalidScope(String),
 
+    /// Invalid request object.
+    #[error("invalid request object: {0}")]
+    InvalidRequestObject(String),
+
+    /// Invalid client assertion.
+    #[error("invalid client assertion: {0}")]
+    InvalidClientAssertion(String),
+
+    /// Invalid DPoP proof.
+    #[error("invalid DPoP proof: {0}")]
+    InvalidDPoPProof(String),
+
     /// Internal server error.
     #[error("internal error: {0}")]
     Internal(String),
@@ -71,7 +83,10 @@ impl OidcError {
             OidcError::InvalidInput(_)
             | OidcError::InvalidRequest
             | OidcError::UnsupportedGrantType
-            | OidcError::UnauthorizedClient => 400,
+            | OidcError::UnauthorizedClient
+            | OidcError::InvalidRequestObject(_)
+            | OidcError::InvalidClientAssertion(_)
+            | OidcError::InvalidDPoPProof(_) => 400,
 
             OidcError::NotFound(_) => 404,
             OidcError::Conflict(_) => 409,

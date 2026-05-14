@@ -46,6 +46,8 @@ mod http_tests {
     use serde_json::Value;
     use tower::ServiceExt;
 
+    use crate::helpers::fixtures::TEST_ENCRYPTION_KEY;
+
     async fn read_json_body(response: axum::response::Response) -> Value {
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         serde_json::from_slice(&bytes).unwrap()
@@ -53,6 +55,10 @@ mod http_tests {
 
     #[tokio::test]
     async fn test_health_endpoint() {
+        // app_router() reads OIDC_ENCRYPTION_KEY from env
+        unsafe {
+            std::env::set_var("OIDC_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY);
+        }
         let app = app_router();
         let response = app
             .oneshot(
@@ -72,6 +78,9 @@ mod http_tests {
 
     #[tokio::test]
     async fn test_openid_configuration() {
+        unsafe {
+            std::env::set_var("OIDC_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY);
+        }
         let app = app_router();
         let response = app
             .oneshot(
@@ -103,6 +112,9 @@ mod http_tests {
 
     #[tokio::test]
     async fn test_jwks_endpoint() {
+        unsafe {
+            std::env::set_var("OIDC_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY);
+        }
         let app = app_router();
         let response = app
             .oneshot(

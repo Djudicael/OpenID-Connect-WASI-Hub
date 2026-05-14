@@ -26,7 +26,9 @@ pub struct ClientRepo;
 const CLIENT_COLUMNS: &str = r#"
     id, realm_id, client_id, client_type, client_secret_hash,
     name, redirect_uris, allowed_scopes, allowed_grant_types,
-    pkce_required, enabled, deleted_at
+    pkce_required, enabled, deleted_at,
+    token_endpoint_auth_method, jwks_uri, jwks, request_uris,
+    client_secret_encrypted
 "#;
 
 impl ClientRepo {
@@ -87,8 +89,10 @@ impl ClientRepo {
             INSERT INTO clients (
                 id, realm_id, client_id, client_type, client_secret_hash,
                 name, redirect_uris, allowed_scopes, allowed_grant_types,
-                pkce_required, enabled
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                pkce_required, enabled,
+                token_endpoint_auth_method, jwks_uri, jwks, request_uris,
+                client_secret_encrypted
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         "#;
         let client_type_str = match entity.client_type {
             ClientType::Confidential => "confidential",
@@ -108,6 +112,11 @@ impl ClientRepo {
                 &mapper::to_json_value_vec(&entity.allowed_grant_types),
                 &entity.pkce_required,
                 &entity.enabled,
+                &entity.token_endpoint_auth_method,
+                &entity.jwks_uri,
+                &entity.jwks,
+                &mapper::to_json_value_vec(&entity.request_uris),
+                &entity.client_secret_encrypted,
             ],
         )
         .await
@@ -128,8 +137,13 @@ impl ClientRepo {
                 allowed_grant_types = $7,
                 pkce_required = $8,
                 enabled = $9,
+                token_endpoint_auth_method = $10,
+                jwks_uri = $11,
+                jwks = $12,
+                request_uris = $13,
+                client_secret_encrypted = $14,
                 updated_at = NOW()
-            WHERE id = $10 AND deleted_at IS NULL
+            WHERE id = $15 AND deleted_at IS NULL
         "#;
         let client_type_str = match entity.client_type {
             ClientType::Confidential => "confidential",
@@ -147,6 +161,11 @@ impl ClientRepo {
                 &mapper::to_json_value_vec(&entity.allowed_grant_types),
                 &entity.pkce_required,
                 &entity.enabled,
+                &entity.token_endpoint_auth_method,
+                &entity.jwks_uri,
+                &entity.jwks,
+                &mapper::to_json_value_vec(&entity.request_uris),
+                &entity.client_secret_encrypted,
                 &entity.id,
             ],
         )
@@ -272,6 +291,11 @@ impl ClientRepo {
             pkce_required: mapper::bool_(row, 9)?,
             enabled: mapper::bool_(row, 10)?,
             deleted_at: mapper::opt_datetime(row, 11)?,
+            token_endpoint_auth_method: mapper::string(row, 12)?,
+            jwks_uri: mapper::opt_string(row, 13)?,
+            jwks: row.get::<Option<serde_json::Value>>(14).ok().flatten(),
+            request_uris: mapper::json_string_vec(row, 15)?,
+            client_secret_encrypted: mapper::opt_string(row, 16)?,
         })
     }
 }

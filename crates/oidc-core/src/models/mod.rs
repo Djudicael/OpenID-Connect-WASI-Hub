@@ -4,6 +4,7 @@ pub mod api_key;
 pub mod audit_event;
 pub mod auth_code;
 pub mod client;
+pub mod pushed_authorization_request;
 
 pub mod realm;
 pub mod realm_signing_keys;
@@ -17,6 +18,7 @@ pub use api_key::ApiKey;
 pub use audit_event::{ActorType, AuditEvent};
 pub use auth_code::{AuthCode, CodeChallengeMethod};
 pub use client::{Client, ClientType};
+pub use pushed_authorization_request::PushedAuthorizationRequest;
 
 pub use realm::Realm;
 pub use realm_signing_keys::RealmSigningKeys;

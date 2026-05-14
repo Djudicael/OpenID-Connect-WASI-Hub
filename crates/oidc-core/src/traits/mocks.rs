@@ -941,6 +941,11 @@ mod tests {
             pkce_required: true,
             enabled: true,
             deleted_at: None,
+            token_endpoint_auth_method: "client_secret_basic".into(),
+            jwks_uri: None,
+            jwks: None,
+            request_uris: vec![],
+            client_secret_encrypted: None,
         }
     }
 

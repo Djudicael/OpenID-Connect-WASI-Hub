@@ -111,6 +111,11 @@ pub fn test_client(realm_id: Uuid, client_id: &str, redirect_uris: Vec<String>) 
         pkce_required: true,
         enabled: true,
         deleted_at: None,
+        token_endpoint_auth_method: "client_secret_basic".into(),
+        jwks_uri: None,
+        jwks: None,
+        request_uris: vec![],
+        client_secret_encrypted: None,
     }
 }
 
@@ -140,5 +145,10 @@ pub fn test_public_client(realm_id: Uuid, client_id: &str, redirect_uris: Vec<St
         pkce_required: false,
         enabled: true,
         deleted_at: None,
+        token_endpoint_auth_method: "none".into(),
+        jwks_uri: None,
+        jwks: None,
+        request_uris: vec![],
+        client_secret_encrypted: None,
     }
 }

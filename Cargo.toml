@@ -60,6 +60,8 @@ password-hash = "0.5"
 
 # JWT (manual RS256 implementation for WASM compatibility)
 base64 = "0.22"
+hmac = "0.12"
+subtle = "2"
 
 # Dev
 tokio = { version = "1", features = ["rt", "macros", "time"] }

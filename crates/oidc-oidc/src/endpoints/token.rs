@@ -12,9 +12,11 @@ use crate::flows::authorization_code::AuthorizationCodeFlow;
 use crate::flows::client_credentials::ClientCredentialsFlow;
 use crate::flows::refresh_token::RefreshTokenFlow;
 use crate::state::OidcState;
+use crate::tokens::JwtTokenService;
 
 /// Token endpoint handler.
-/// Supports `client_secret_basic` (Authorization header) and `client_secret_post` (form body).
+/// Supports `client_secret_basic` (Authorization header), `client_secret_post`
+/// (form body), and `private_key_jwt` (client_assertion JWT) per RFC 7523.
 pub async fn token_handler(
     state: OidcState,
     headers: axum::http::HeaderMap,
@@ -46,26 +48,8 @@ pub async fn token_handler(
         .ok_or(OidcError::InvalidRequest)?
         .as_str();
 
-    // Validate grant_type against client's allowed_grant_types
-    let client_id = params.get("client_id").ok_or(OidcError::InvalidClient)?;
-    let mut conn = state.connect().await?;
-    let client = ClientRepo
-        .find_by_client_id(&mut conn, client_id)
-        .await?
-        .ok_or(OidcError::InvalidClient)?;
-
-    if !client.enabled {
-        return Err(OidcError::InvalidClient);
-    }
-
-    // Validate client secret for confidential clients
-    if let Some(client_secret) = params.get("client_secret") {
-        if let Some(ref hash) = client.client_secret_hash {
-            if !state.hasher.verify(client_secret, hash)? {
-                return Err(OidcError::InvalidClient);
-            }
-        }
-    }
+    // ── Client authentication ──────────────────────────────────────────
+    let (client, client_id) = authenticate_client(&state, &params).await?;
 
     // Check grant type is allowed
     if !client.allowed_grant_types.contains(&grant_type.to_string()) {
@@ -78,21 +62,19 @@ pub async fn token_handler(
             let redirect_uri = params
                 .get("redirect_uri")
                 .ok_or(OidcError::InvalidRequest)?;
-            let client_id = params.get("client_id").ok_or(OidcError::InvalidClient)?;
             let code_verifier = params
                 .get("code_verifier")
                 .ok_or(OidcError::InvalidRequest)?;
 
-            AuthorizationCodeFlow::execute(&state, code, redirect_uri, client_id, code_verifier)
+            AuthorizationCodeFlow::execute(&state, code, redirect_uri, &client_id, code_verifier)
                 .await?
         }
         "client_credentials" => {
-            let client_id = params.get("client_id").ok_or(OidcError::InvalidClient)?;
             let client_secret = params
                 .get("client_secret")
                 .ok_or(OidcError::InvalidClient)?;
 
-            ClientCredentialsFlow::execute(&state, client_id, client_secret).await?
+            ClientCredentialsFlow::execute(&state, &client_id, client_secret).await?
         }
         "refresh_token" => {
             let refresh_token = params
@@ -105,4 +87,85 @@ pub async fn token_handler(
     };
 
     Ok(Json(result))
+}
+
+/// Authenticate the client using one of the supported methods.
+///
+/// Priority:
+/// 1. `private_key_jwt` via `client_assertion` + `client_assertion_type`
+/// 2. `client_secret_basic` / `client_secret_post` via `client_id` + `client_secret`
+///
+/// Returns the authenticated `Client` and its `client_id` string.
+async fn authenticate_client(
+    state: &OidcState,
+    params: &HashMap<String, String>,
+) -> Result<(oidc_core::models::Client, String), OidcError> {
+    // --- private_key_jwt ---
+    if let Some(assertion) = params.get("client_assertion") {
+        let assertion_type = params
+            .get("client_assertion_type")
+            .ok_or(OidcError::InvalidClient)?;
+        if assertion_type != "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" {
+            return Err(OidcError::InvalidClient);
+        }
+
+        let (_, claims, _, _) = JwtTokenService::parse_client_assertion_unverified(assertion)?;
+        let client_id = claims.iss;
+
+        let mut conn = state.connect().await?;
+        let client = ClientRepo
+            .find_by_client_id(&mut conn, &client_id)
+            .await?
+            .ok_or(OidcError::InvalidClient)?;
+
+        if !client.enabled {
+            return Err(OidcError::InvalidClient);
+        }
+        if client.token_endpoint_auth_method != "private_key_jwt" {
+            return Err(OidcError::InvalidClient);
+        }
+
+        let jwks = client
+            .jwks
+            .as_ref()
+            .ok_or_else(|| OidcError::InvalidClientAssertion("client has no jwks".into()))?;
+
+        let token_endpoint = format!("{}/oidc/token", state.issuer);
+        let now = chrono::Utc::now().timestamp();
+        JwtTokenService::verify_client_assertion(
+            assertion,
+            jwks,
+            &token_endpoint,
+            &client_id,
+            now,
+        )?;
+
+        return Ok((client, client_id));
+    }
+
+    // --- client_secret_basic / client_secret_post ---
+    let client_id = params
+        .get("client_id")
+        .ok_or(OidcError::InvalidClient)?
+        .clone();
+
+    let mut conn = state.connect().await?;
+    let client = ClientRepo
+        .find_by_client_id(&mut conn, &client_id)
+        .await?
+        .ok_or(OidcError::InvalidClient)?;
+
+    if !client.enabled {
+        return Err(OidcError::InvalidClient);
+    }
+
+    if let Some(client_secret) = params.get("client_secret") {
+        if let Some(ref hash) = client.client_secret_hash {
+            if !state.hasher.verify(client_secret, hash)? {
+                return Err(OidcError::InvalidClient);
+            }
+        }
+    }
+
+    Ok((client, client_id))
 }

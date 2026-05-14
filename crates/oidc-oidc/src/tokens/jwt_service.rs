@@ -10,10 +10,23 @@ use std::sync::Arc;
 
 /// JWT header.
 #[derive(Debug, Serialize, Deserialize)]
-struct JwtHeader {
-    alg: String,
-    typ: String,
-    kid: String,
+pub struct JwtHeader {
+    pub alg: String,
+    pub typ: String,
+    pub kid: String,
+}
+
+/// Claims expected inside a client assertion JWT per RFC 7523.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ClientAssertionClaims {
+    pub iss: String,
+    pub sub: String,
+    pub aud: String,
+    pub exp: i64,
+    #[serde(default)]
+    pub iat: i64,
+    #[serde(default)]
+    pub jti: Option<String>,
 }
 
 /// JWT claims for an access token.
@@ -467,9 +480,188 @@ impl JwtTokenService {
 
         Ok(claims)
     }
+
+    /// Parse a client assertion JWT without verifying the signature.
+    /// Returns `(header, claims, signing_input, signature_bytes)`.
+    pub fn parse_client_assertion_unverified(
+        token: &str,
+    ) -> Result<(JwtHeader, ClientAssertionClaims, String, Vec<u8>), OidcError> {
+        let parts: Vec<&str> = token.split('.').collect();
+        if parts.len() != 3 {
+            return Err(OidcError::InvalidClientAssertion(
+                "invalid JWT format".into(),
+            ));
+        }
+        let header_json = b64_decode(parts[0])
+            .map_err(|_| OidcError::InvalidClientAssertion("invalid header encoding".into()))?;
+        let header: JwtHeader = serde_json::from_slice(&header_json)
+            .map_err(|_| OidcError::InvalidClientAssertion("invalid header JSON".into()))?;
+        let claims_json = b64_decode(parts[1])
+            .map_err(|_| OidcError::InvalidClientAssertion("invalid claims encoding".into()))?;
+        let claims: ClientAssertionClaims = serde_json::from_slice(&claims_json)
+            .map_err(|_| OidcError::InvalidClientAssertion("invalid claims JSON".into()))?;
+        let signing_input = format!("{}.{}", parts[0], parts[1]);
+        let signature = b64_decode(parts[2])
+            .map_err(|_| OidcError::InvalidClientAssertion("invalid signature encoding".into()))?;
+        Ok((header, claims, signing_input, signature))
+    }
+
+    /// Verify a client assertion JWT (`private_key_jwt`) per RFC 7523.
+    ///
+    /// Validates:
+    /// - `iss` == `sub` == `expected_iss` (client_id)
+    /// - `aud` == `expected_aud` (token endpoint URL)
+    /// - `exp` is in the future
+    /// - `iat` is not too far in the future (≤ 5 minutes)
+    /// - Signature verifies against a public key from the client's `jwks`
+    pub fn verify_client_assertion(
+        token: &str,
+        jwks: &serde_json::Value,
+        expected_aud: &str,
+        expected_iss: &str,
+        now: i64,
+    ) -> Result<ClientAssertionClaims, OidcError> {
+        let (header, claims, signing_input, signature) =
+            Self::parse_client_assertion_unverified(token)?;
+
+        if claims.iss != expected_iss {
+            return Err(OidcError::InvalidClientAssertion(
+                "iss does not match client_id".into(),
+            ));
+        }
+        if claims.sub != expected_iss {
+            return Err(OidcError::InvalidClientAssertion(
+                "sub does not match client_id".into(),
+            ));
+        }
+        if claims.aud != expected_aud {
+            return Err(OidcError::InvalidClientAssertion(
+                "aud does not match token endpoint".into(),
+            ));
+        }
+        if claims.exp < now {
+            return Err(OidcError::InvalidClientAssertion(
+                "client assertion expired".into(),
+            ));
+        }
+        if claims.iat > now + 300 {
+            return Err(OidcError::InvalidClientAssertion(
+                "client assertion issued too far in the future".into(),
+            ));
+        }
+
+        let jwk = find_jwk_in_jwks(jwks, &header.kid, &header.alg)?;
+        verify_signature_with_jwk(signing_input.as_bytes(), &signature, &jwk)?;
+
+        Ok(claims)
+    }
 }
 
 /// Load the RSA private key from `OIDC_SIGNING_KEY` env var, or generate a fresh one.
+/// Find a JWK in a JWKS document by `kid` and `alg`.
+fn find_jwk_in_jwks(
+    jwks: &serde_json::Value,
+    kid: &str,
+    alg: &str,
+) -> Result<serde_json::Value, OidcError> {
+    let keys = jwks
+        .get("keys")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| OidcError::InvalidClientAssertion("jwks has no keys array".into()))?;
+    for key in keys {
+        let key_kid = key.get("kid").and_then(|v| v.as_str()).unwrap_or("");
+        let key_alg = key.get("alg").and_then(|v| v.as_str()).unwrap_or("");
+        if key_kid == kid && (key_alg == alg || key_alg.is_empty()) {
+            return Ok(key.clone());
+        }
+    }
+    Err(OidcError::InvalidClientAssertion(format!(
+        "no JWK found for kid={kid} alg={alg}"
+    )))
+}
+
+/// Reconstruct an RSA public key from JWK `n` and `e` (base64url-encoded big-endian integers).
+fn reconstruct_rsa_public_key(n_b64: &str, e_b64: &str) -> Result<RsaPublicKey, OidcError> {
+    use rsa::BigUint;
+    let n_bytes =
+        b64_decode(n_b64).map_err(|_| OidcError::InvalidClientAssertion("invalid RSA n".into()))?;
+    let e_bytes =
+        b64_decode(e_b64).map_err(|_| OidcError::InvalidClientAssertion("invalid RSA e".into()))?;
+    let n = BigUint::from_bytes_be(&n_bytes);
+    let e = BigUint::from_bytes_be(&e_bytes);
+    RsaPublicKey::new(n, e)
+        .map_err(|e| OidcError::InvalidClientAssertion(format!("invalid RSA key: {e}")))
+}
+
+/// Reconstruct an Ed25519 verifying key from JWK `x` (base64url-encoded 32-byte public key).
+fn reconstruct_ed25519_public_key(x_b64: &str) -> Result<ed25519_dalek::VerifyingKey, OidcError> {
+    let x_bytes = b64_decode(x_b64)
+        .map_err(|_| OidcError::InvalidClientAssertion("invalid Ed25519 x".into()))?;
+    let bytes: [u8; 32] = x_bytes
+        .try_into()
+        .map_err(|_| OidcError::InvalidClientAssertion("Ed25519 x must be 32 bytes".into()))?;
+    ed25519_dalek::VerifyingKey::from_bytes(&bytes)
+        .map_err(|_| OidcError::InvalidClientAssertion("invalid Ed25519 public key".into()))
+}
+
+/// Verify a JWT signature using a single JWK value.
+fn verify_signature_with_jwk(
+    signing_input: &[u8],
+    signature: &[u8],
+    jwk: &serde_json::Value,
+) -> Result<(), OidcError> {
+    use rsa::signature::Verifier;
+    let alg = jwk.get("alg").and_then(|v| v.as_str()).unwrap_or("");
+    let kty = jwk.get("kty").and_then(|v| v.as_str()).unwrap_or("");
+
+    match alg {
+        "RS256" => {
+            let n = jwk
+                .get("n")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| OidcError::InvalidClientAssertion("RSA JWK missing n".into()))?;
+            let e = jwk
+                .get("e")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| OidcError::InvalidClientAssertion("RSA JWK missing e".into()))?;
+            let public_key = reconstruct_rsa_public_key(n, e)?;
+            let verifying_key = rsa::pkcs1v15::VerifyingKey::<Sha256>::new(public_key);
+            let sig = rsa::pkcs1v15::Signature::try_from(signature).map_err(|e| {
+                OidcError::InvalidClientAssertion(format!("invalid RSA signature: {e}"))
+            })?;
+            verifying_key.verify(signing_input, &sig).map_err(|_| {
+                OidcError::InvalidClientAssertion("RSA signature verification failed".into())
+            })?;
+        }
+        "EdDSA" => {
+            use ed25519_dalek::Verifier;
+            let crv = jwk.get("crv").and_then(|v| v.as_str()).unwrap_or("");
+            if kty != "OKP" || crv != "Ed25519" {
+                return Err(OidcError::InvalidClientAssertion(
+                    "unsupported OKP curve for EdDSA".into(),
+                ));
+            }
+            let x = jwk
+                .get("x")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| OidcError::InvalidClientAssertion("Ed25519 JWK missing x".into()))?;
+            let public_key = reconstruct_ed25519_public_key(x)?;
+            let sig = ed25519_dalek::Signature::try_from(signature).map_err(|e| {
+                OidcError::InvalidClientAssertion(format!("invalid EdDSA signature: {e}"))
+            })?;
+            public_key.verify(signing_input, &sig).map_err(|_| {
+                OidcError::InvalidClientAssertion("EdDSA signature verification failed".into())
+            })?;
+        }
+        _ => {
+            return Err(OidcError::InvalidClientAssertion(format!(
+                "unsupported JWK alg: {alg}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn load_rsa_key() -> Result<(RsaPrivateKey, String), OidcError> {
     match std::env::var("OIDC_SIGNING_KEY") {
         Ok(pem) => {
@@ -1035,5 +1227,209 @@ mod tests {
         // Try to verify with verify_eddsa_token (which requires alg: EdDSA)
         let result: Result<AccessTokenClaims, OidcError> = service.verify_eddsa_token(&rs256_token);
         assert!(result.is_err(), "EdDSA verifier should reject RS256 token");
+    }
+
+    // ---- private_key_jwt client assertion tests ----
+
+    #[test]
+    fn test_verify_client_assertion_ed25519_roundtrip() {
+        use ed25519_dalek::Signer;
+        let now = chrono::Utc::now().timestamp();
+
+        // 1. Generate a client Ed25519 key pair
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&rand::random());
+        let verifying_key = signing_key.verifying_key();
+
+        // 2. Build the JWKS
+        let jwks = serde_json::json!({
+            "keys": [{
+                "kty": "OKP",
+                "kid": "client-ed-key-1",
+                "alg": "EdDSA",
+                "use": "sig",
+                "crv": "Ed25519",
+                "x": b64_encode(&verifying_key.to_bytes())
+            }]
+        });
+
+        // 3. Manually sign a client assertion JWT
+        let header = serde_json::json!({"alg":"EdDSA","typ":"JWT","kid":"client-ed-key-1"});
+        let claims = serde_json::json!({
+            "iss": "client-123",
+            "sub": "client-123",
+            "aud": "https://issuer.example.com/oidc/token",
+            "exp": now + 60,
+            "iat": now
+        });
+        let header_b64 = b64_encode(header.to_string().as_bytes());
+        let claims_b64 = b64_encode(claims.to_string().as_bytes());
+        let signing_input = format!("{}.{}", header_b64, claims_b64);
+        let signature = signing_key.sign(signing_input.as_bytes());
+        let sig_b64 = b64_encode(&signature.to_vec());
+        let token = format!("{}.{}", signing_input, sig_b64);
+
+        // 4. Verify via verify_client_assertion
+        let verified = JwtTokenService::verify_client_assertion(
+            &token,
+            &jwks,
+            "https://issuer.example.com/oidc/token",
+            "client-123",
+            now,
+        );
+        assert!(
+            verified.is_ok(),
+            "Expected valid client assertion: {:?}",
+            verified
+        );
+        let verified_claims = verified.unwrap();
+        assert_eq!(verified_claims.iss, "client-123");
+        assert_eq!(verified_claims.sub, "client-123");
+        assert_eq!(verified_claims.aud, "https://issuer.example.com/oidc/token");
+    }
+
+    #[test]
+    fn test_verify_client_assertion_rsa_roundtrip() {
+        use rand::rngs::OsRng;
+        use rsa::pkcs1v15::SigningKey as RsaSigningKey;
+        use rsa::signature::{SignatureEncoding, Signer as RsaSigner};
+        let now = chrono::Utc::now().timestamp();
+
+        // 1. Generate a client RSA key pair
+        let mut rng = OsRng;
+        let rsa_private_key = RsaPrivateKey::new(&mut rng, 2048).unwrap();
+        let rsa_public_key = RsaPublicKey::from(&rsa_private_key);
+        let n = b64_encode(&rsa_public_key.n().to_bytes_be());
+        let e = b64_encode(&rsa_public_key.e().to_bytes_be());
+
+        // 2. Build the JWKS
+        let jwks = serde_json::json!({
+            "keys": [{
+                "kty": "RSA",
+                "kid": "client-rsa-key-1",
+                "alg": "RS256",
+                "use": "sig",
+                "n": n,
+                "e": e
+            }]
+        });
+
+        // 3. Manually sign a client assertion JWT
+        let header = serde_json::json!({"alg":"RS256","typ":"JWT","kid":"client-rsa-key-1"});
+        let claims = serde_json::json!({
+            "iss": "client-456",
+            "sub": "client-456",
+            "aud": "https://issuer.example.com/oidc/token",
+            "exp": now + 60,
+            "iat": now
+        });
+        let header_b64 = b64_encode(header.to_string().as_bytes());
+        let claims_b64 = b64_encode(claims.to_string().as_bytes());
+        let signing_input = format!("{}.{}", header_b64, claims_b64);
+        let rsa_signing_key = RsaSigningKey::<Sha256>::new(rsa_private_key);
+        let signature = rsa_signing_key.sign(signing_input.as_bytes());
+        let sig_b64 = b64_encode(&signature.to_vec());
+        let token = format!("{}.{}", signing_input, sig_b64);
+
+        // 4. Verify via verify_client_assertion
+        let verified = JwtTokenService::verify_client_assertion(
+            &token,
+            &jwks,
+            "https://issuer.example.com/oidc/token",
+            "client-456",
+            now,
+        );
+        assert!(
+            verified.is_ok(),
+            "Expected valid RSA client assertion: {:?}",
+            verified
+        );
+        let verified_claims = verified.unwrap();
+        assert_eq!(verified_claims.iss, "client-456");
+    }
+
+    #[test]
+    fn test_verify_client_assertion_rejects_expired() {
+        let now = chrono::Utc::now().timestamp();
+        let jwks = serde_json::json!({"keys": []});
+
+        // Craft a token with a past exp — we only care about claims validation here,
+        // so the signature can be fake since exp check happens first.
+        let header = serde_json::json!({"alg":"EdDSA","typ":"JWT","kid":"x"});
+        let claims = serde_json::json!({
+            "iss": "client-123",
+            "sub": "client-123",
+            "aud": "https://issuer.example.com/oidc/token",
+            "exp": now - 10,
+            "iat": now - 20
+        });
+        let header_b64 = b64_encode(header.to_string().as_bytes());
+        let claims_b64 = b64_encode(claims.to_string().as_bytes());
+        let token = format!("{}.{}.fake", header_b64, claims_b64);
+
+        let result = JwtTokenService::verify_client_assertion(
+            &token,
+            &jwks,
+            "https://issuer.example.com/oidc/token",
+            "client-123",
+            now,
+        );
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("expired"));
+    }
+
+    #[test]
+    fn test_verify_client_assertion_rejects_wrong_aud() {
+        let now = chrono::Utc::now().timestamp();
+        let jwks = serde_json::json!({"keys": []});
+
+        let header = serde_json::json!({"alg":"EdDSA","typ":"JWT","kid":"x"});
+        let claims = serde_json::json!({
+            "iss": "client-123",
+            "sub": "client-123",
+            "aud": "https://wrong.example.com/oidc/token",
+            "exp": now + 60,
+            "iat": now
+        });
+        let header_b64 = b64_encode(header.to_string().as_bytes());
+        let claims_b64 = b64_encode(claims.to_string().as_bytes());
+        let token = format!("{}.{}.fake", header_b64, claims_b64);
+
+        let result = JwtTokenService::verify_client_assertion(
+            &token,
+            &jwks,
+            "https://issuer.example.com/oidc/token",
+            "client-123",
+            now,
+        );
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("aud"));
+    }
+
+    #[test]
+    fn test_verify_client_assertion_rejects_wrong_iss() {
+        let now = chrono::Utc::now().timestamp();
+        let jwks = serde_json::json!({"keys": []});
+
+        let header = serde_json::json!({"alg":"EdDSA","typ":"JWT","kid":"x"});
+        let claims = serde_json::json!({
+            "iss": "client-999",
+            "sub": "client-999",
+            "aud": "https://issuer.example.com/oidc/token",
+            "exp": now + 60,
+            "iat": now
+        });
+        let header_b64 = b64_encode(header.to_string().as_bytes());
+        let claims_b64 = b64_encode(claims.to_string().as_bytes());
+        let token = format!("{}.{}.fake", header_b64, claims_b64);
+
+        let result = JwtTokenService::verify_client_assertion(
+            &token,
+            &jwks,
+            "https://issuer.example.com/oidc/token",
+            "client-123",
+            now,
+        );
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("iss"));
     }
 }

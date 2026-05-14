@@ -16,7 +16,12 @@ const SUPPORTED_GRANT_TYPES: &[&str] =
     &["authorization_code", "client_credentials", "refresh_token"];
 
 /// Supported token endpoint authentication methods per RFC 7591.
-const SUPPORTED_AUTH_METHODS: &[&str] = &["client_secret_basic", "client_secret_post", "none"];
+const SUPPORTED_AUTH_METHODS: &[&str] = &[
+    "none",
+    "client_secret_basic",
+    "client_secret_post",
+    "private_key_jwt",
+];
 
 /// Request body for dynamic client registration (RFC 7591).
 #[derive(Debug, serde::Deserialize)]
@@ -35,6 +40,10 @@ pub struct RegisterClientRequest {
     /// The realm this client belongs to. Required — the caller must
     /// explicitly specify the target realm.
     pub realm_id: Uuid,
+    /// URL for the client's JSON Web Key Set (optional).
+    pub jwks_uri: Option<String>,
+    /// Client's JSON Web Key Set (inline, optional).
+    pub jwks: Option<serde_json::Value>,
 }
 
 /// Validate a single redirect URI per RFC 7591 §2:
@@ -106,6 +115,15 @@ fn validate_registration_request(req: &RegisterClientRequest) -> Result<(), Oidc
         )));
     }
 
+    // For private_key_jwt, jwks must be present (jwks_uri fetching is not yet supported)
+    if req.token_endpoint_auth_method == "private_key_jwt" {
+        if req.jwks.is_none() {
+            return Err(OidcError::InvalidInput(
+                "jwks is required when token_endpoint_auth_method is private_key_jwt".into(),
+            ));
+        }
+    }
+
     Ok(())
 }
 
@@ -138,7 +156,7 @@ pub async fn register_handler(
     let realm_id = admin_realm_id.unwrap_or(req.realm_id);
     let client_id = format!("client_{}", Uuid::new_v4().to_string().replace("-", ""));
 
-    let (client_type, client_secret, client_secret_hash) =
+    let (client_type, client_secret, client_secret_hash, client_secret_encrypted) =
         match req.token_endpoint_auth_method.as_str() {
             "client_secret_basic" | "client_secret_post" => {
                 let mut secret_bytes = [0u8; 32];
@@ -146,9 +164,9 @@ pub async fn register_handler(
                     .map_err(|e| OidcError::Internal(e.to_string()))?;
                 let secret = base64::engine::general_purpose::STANDARD.encode(&secret_bytes);
                 let hash = state.hasher.hash(&secret)?;
-                (ClientType::Confidential, Some(secret), Some(hash))
+                (ClientType::Confidential, Some(secret), Some(hash), None)
             }
-            _ => (ClientType::Public, None, None),
+            _ => (ClientType::Public, None, None, None),
         };
 
     // ── Persist client ──────────────────────────────────────────────────
@@ -170,6 +188,11 @@ pub async fn register_handler(
         pkce_required: true,
         enabled: true,
         deleted_at: None,
+        token_endpoint_auth_method: req.token_endpoint_auth_method.clone(),
+        jwks_uri: req.jwks_uri,
+        jwks: req.jwks,
+        request_uris: vec![],
+        client_secret_encrypted,
     };
 
     with_transaction!(conn, pg_err, {
@@ -190,6 +213,13 @@ pub async fn register_handler(
         response["client_secret"] = json!(secret);
     }
 
+    if let Some(uri) = client.jwks_uri {
+        response["jwks_uri"] = json!(uri);
+    }
+    if let Some(jwks) = client.jwks {
+        response["jwks"] = jwks;
+    }
+
     Ok(Json(response))
 }
 
@@ -205,6 +235,8 @@ mod tests {
             scope: "openid profile".into(),
             token_endpoint_auth_method: "client_secret_basic".into(),
             realm_id: Uuid::new_v4(),
+            jwks_uri: None,
+            jwks: None,
         }
     }
 
@@ -278,25 +310,45 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_unsupported_auth_method() {
-        let mut req = valid_request();
-        req.token_endpoint_auth_method = "client_secret_jwt".into();
-        let err = validate_registration_request(&req).unwrap_err();
-        assert!(
-            matches!(err, OidcError::InvalidInput(ref s) if s.contains("unsupported token_endpoint_auth_method"))
-        );
-    }
-
-    #[test]
     fn test_validate_supported_auth_methods() {
-        for method in &["client_secret_basic", "client_secret_post", "none"] {
+        for method in &[
+            "none",
+            "client_secret_basic",
+            "client_secret_post",
+            "private_key_jwt",
+        ] {
             let mut req = valid_request();
             req.token_endpoint_auth_method = method.to_string();
             if *method == "none" {
                 req.grant_types = vec!["authorization_code".into()];
             }
-            assert!(validate_registration_request(&req).is_ok());
+            if *method == "private_key_jwt" {
+                req.jwks = Some(json!({"keys": []}));
+            }
+            assert!(
+                validate_registration_request(&req).is_ok(),
+                "auth method {} should be valid",
+                method
+            );
         }
+    }
+
+    #[test]
+    fn test_validate_private_key_jwt_requires_jwks() {
+        let mut req = valid_request();
+        req.token_endpoint_auth_method = "private_key_jwt".into();
+        let err = validate_registration_request(&req).unwrap_err();
+        assert!(matches!(err, OidcError::InvalidInput(ref s) if s.contains("jwks is required")));
+    }
+
+    #[test]
+    fn test_validate_unsupported_auth_method() {
+        let mut req = valid_request();
+        req.token_endpoint_auth_method = "tls_client_auth".into();
+        let err = validate_registration_request(&req).unwrap_err();
+        assert!(
+            matches!(err, OidcError::InvalidInput(ref s) if s.contains("unsupported token_endpoint_auth_method"))
+        );
     }
 
     #[test]

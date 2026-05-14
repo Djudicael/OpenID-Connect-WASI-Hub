@@ -125,6 +125,70 @@ async fn authorize_inner(
         _ => "/oidc/error".to_string(),
     };
 
+    // --- Pushed Authorization Request (PAR) resolution ---
+    let mut params = params;
+    if let Some(request_uri) = params.get("request_uri").cloned() {
+        if let Some(token) = request_uri.strip_prefix("urn:ietf:params:oauth:request_uri:") {
+            let mut conn = match state.connect().await {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!("DB connection failed in authorize PAR lookup: {e}");
+                    return Err((
+                        redirect_uri.clone(),
+                        "server_error".to_string(),
+                        "An internal error occurred".to_string(),
+                    ));
+                }
+            };
+
+            match oidc_repository::repositories::par_repo::ParRepo
+                .find_by_request_uri_token(&mut conn, token)
+                .await
+            {
+                Ok(Some(par)) if !par.used && par.expires_at > chrono::Utc::now() => {
+                    if let Some(stored) = par.request_params.as_object() {
+                        for (k, v) in stored {
+                            if let Some(s) = v.as_str() {
+                                params.entry(k.clone()).or_insert_with(|| s.to_string());
+                            }
+                        }
+                    }
+                    let _ = oidc_repository::repositories::par_repo::ParRepo
+                        .mark_used(&mut conn, par.id)
+                        .await;
+                }
+                Ok(Some(_)) => {
+                    return Err((
+                        redirect_uri.clone(),
+                        "invalid_request".to_string(),
+                        "The request_uri is expired or has already been used".to_string(),
+                    ));
+                }
+                Ok(None) => {
+                    return Err((
+                        redirect_uri.clone(),
+                        "invalid_request".to_string(),
+                        "The request_uri was not found".to_string(),
+                    ));
+                }
+                Err(e) => {
+                    tracing::error!("DB error looking up PAR: {e}");
+                    return Err((
+                        redirect_uri.clone(),
+                        "server_error".to_string(),
+                        "An internal error occurred".to_string(),
+                    ));
+                }
+            }
+        } else {
+            return Err((
+                redirect_uri.clone(),
+                "invalid_request".to_string(),
+                "Invalid request_uri format".to_string(),
+            ));
+        }
+    }
+
     // --- Parameter extraction ---
     let response_type_raw = params.get("response_type").ok_or_else(|| {
         (

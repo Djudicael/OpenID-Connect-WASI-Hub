@@ -752,6 +752,11 @@ async fn seed_data(db_url: &str, _proxy_port: u16) -> Result<()> {
                 pkce_required: true,
                 enabled: true,
                 deleted_at: None,
+                token_endpoint_auth_method: "none".into(),
+                jwks_uri: None,
+                jwks: None,
+                request_uris: vec![],
+                client_secret_encrypted: None,
             };
             repo.create(&mut conn, &client)
                 .await
@@ -782,6 +787,11 @@ async fn seed_data(db_url: &str, _proxy_port: u16) -> Result<()> {
                 pkce_required: false,
                 enabled: true,
                 deleted_at: None,
+                token_endpoint_auth_method: "client_secret_basic".into(),
+                jwks_uri: None,
+                jwks: None,
+                request_uris: vec![],
+                client_secret_encrypted: None,
             };
             repo.create(&mut conn, &client)
                 .await

@@ -30,6 +30,16 @@ pub struct Client {
     pub enabled: bool,
     /// When the client was soft-deleted.
     pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Token endpoint authentication method.
+    pub token_endpoint_auth_method: String,
+    /// URL for the client's JSON Web Key Set.
+    pub jwks_uri: Option<String>,
+    /// Client's JSON Web Key Set (inline).
+    pub jwks: Option<serde_json::Value>,
+    /// Registered request URIs (e.g. for request objects).
+    pub request_uris: Vec<String>,
+    /// Encrypted client secret for `client_secret_jwt` authentication.
+    pub client_secret_encrypted: Option<String>,
 }
 
 /// The type of OAuth2 client.
@@ -60,6 +70,11 @@ mod tests {
             pkce_required: true,
             enabled: true,
             deleted_at: None,
+            token_endpoint_auth_method: "client_secret_basic".into(),
+            jwks_uri: None,
+            jwks: None,
+            request_uris: vec![],
+            client_secret_encrypted: None,
         }
     }
 
