@@ -43,6 +43,25 @@ With that foundation in place, the OpenID Connect WASI Hub was built top to bott
 - **PostgreSQL only** — no filesystem state, no embedded databases, no local storage
 - **Dual entry point** — compiles to both native binary (`#[tokio::main]`) and WASI component (`#[wstd_axum::http_server]`) from the same codebase
 
+### The Frontend: No Framework, No Problem
+
+The same philosophy extends to the admin UI. Most admin panels pull in React, Vue, or Angular — along with hundreds of transitive dependencies, a build pipeline measured in minutes, and a constant stream of breaking changes from the ecosystem churn.
+
+I chose **native Web Components** instead.
+
+The entire frontend runs on:
+
+- Standard `HTMLElement` extended classes
+- `lit-html` for declarative rendering (3 KB, no virtual DOM, no reactivity engine)
+- A custom SPA router (~100 lines)
+- Shadow DOM for style isolation, no CSS-in-JS toolchain
+
+That's it. Two runtime dependencies. The entire bundle builds through `esbuild` in milliseconds. There is no framework to upgrade, no breaking API to migrate, no node_modules black hole. Your browser already ships the Web Components runtime — I just use it directly.
+
+This also means the admin UI is deployable as a **JAMstack architecture**: a static HTML page, a small JavaScript bundle, and a few CSS files. Serve it from a CDN, an S3 bucket, or the same binary as the API — it doesn't care. The frontend talks to the backend exclusively through the OIDC and admin REST APIs, so they are completely decoupled. You can host them on different domains, version them independently, or replace the UI entirely without touching a line of backend code.
+
+The goal was simple: a frontend that will still build and work the same way in five years, with zero maintenance churn.
+
 ### The Bottom Line
 
 This project exists because:
