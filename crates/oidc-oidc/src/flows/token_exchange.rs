@@ -515,6 +515,8 @@ impl TokenExchangeFlow {
             auth_time: Some(chrono::Utc::now().timestamp()),
             acr: Some(oidc_core::utils::ACR_BRONZE.to_string()),
             amr: Some(vec![oidc_core::utils::AMR_TOKEN_EXCHANGE.to_string()]),
+            // Set azp when resource indicator is present (OIDC Core §2, RFC 8707)
+            azp: resource.map(|_| audience.to_string()),
             ..Default::default()
         };
 

@@ -40,7 +40,7 @@ pub async fn discovery_handler(state: OidcState) -> Json<Value> {
         "dpop_signing_alg_values_supported": ["RS256", "EdDSA"],
         "claims_supported": [
             "sub", "iss", "aud", "exp", "iat", "auth_time", "nonce", "at_hash", "c_hash",
-            "sid", "acr", "amr",
+            "sid", "acr", "amr", "azp",
             "name", "given_name", "family_name", "middle_name", "nickname", "preferred_username",
             "profile", "picture", "website", "gender", "birthdate", "zoneinfo", "locale",
             "email", "email_verified",
@@ -105,7 +105,7 @@ pub async fn realm_discovery_handler(state: OidcState, realm: String) -> Json<Va
         "dpop_signing_alg_values_supported": ["RS256", "EdDSA"],
         "claims_supported": [
             "sub", "iss", "aud", "exp", "iat", "auth_time", "nonce", "at_hash", "c_hash",
-            "sid", "acr", "amr",
+            "sid", "acr", "amr", "azp",
             "name", "given_name", "family_name", "middle_name", "nickname", "preferred_username",
             "profile", "picture", "website", "gender", "birthdate", "zoneinfo", "locale",
             "email", "email_verified",

@@ -1193,6 +1193,12 @@ async fn authorize_inner(
                 updated_at: Some(user.updated_at.timestamp()),
                 acr: Some(resolved_acr_amr.acr.clone()),
                 amr: Some(resolved_acr_amr.amr.clone()),
+                // Set azp when resource indicators are present (OIDC Core §2, RFC 8707)
+                azp: if resource_params.is_empty() {
+                    None
+                } else {
+                    Some(client_id_str.to_string())
+                },
             };
 
             let id_token = match token_svc

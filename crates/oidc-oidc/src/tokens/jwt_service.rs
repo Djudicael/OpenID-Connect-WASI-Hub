@@ -154,6 +154,11 @@ pub struct IdTokenClaims {
     pub acr: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub amr: Option<Vec<String>>,
+    /// Authorized party — the party to which the ID Token was issued.
+    /// REQUIRED per OIDC Core §2 when `aud` contains multiple audiences;
+    /// OPTIONAL otherwise. Set to `client_id` when resource indicators are present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub azp: Option<String>,
 }
 
 /// A JWK (JSON Web Key) entry for JWKS endpoint — supports RSA and OKP (Ed25519).
@@ -912,6 +917,7 @@ impl TokenService for JwtTokenService {
             updated_at: extra.updated_at,
             acr: extra.acr,
             amr: extra.amr,
+            azp: extra.azp,
         };
         self.encode_jwt(&claims)
     }
@@ -1309,6 +1315,7 @@ mod tests {
             updated_at: None,
             acr: None,
             amr: None,
+            azp: None,
         };
 
         let token = service.sign_eddsa(&claims).unwrap();

@@ -57,6 +57,10 @@ pub struct IdTokenExtraClaims {
     pub acr: Option<String>,
     /// AMR (Authentication Methods References) — list of methods used.
     pub amr: Option<Vec<String>>,
+    /// Authorized party — the party to which the ID Token was issued.
+    /// REQUIRED per OIDC Core §2 when `aud` contains multiple audiences.
+    /// Set to `client_id` when resource indicators are present (RFC 8707).
+    pub azp: Option<String>,
 }
 
 /// Verified access token claims returned by the token service.

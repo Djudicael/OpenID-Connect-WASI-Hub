@@ -141,6 +141,7 @@ impl DeviceCodeFlow {
                 updated_at: Some(user.updated_at.timestamp()),
                 acr: Some(oidc_core::utils::ACR_BRONZE.to_string()),
                 amr: Some(vec![oidc_core::utils::AMR_DEVICE_CODE.to_string()]),
+                azp: None, // Device code flow does not currently support resource indicators
             };
 
             let id_token = token_svc

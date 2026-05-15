@@ -141,6 +141,12 @@ impl AuthorizationCodeFlow {
                 updated_at: Some(user.updated_at.timestamp()),
                 acr: Some(resolved_acr_amr.acr.clone()),
                 amr: Some(resolved_acr_amr.amr.clone()),
+                // Set azp when resource indicators are present (OIDC Core §2, RFC 8707)
+                azp: if auth_code.resource.is_empty() {
+                    None
+                } else {
+                    Some(client.client_id.clone())
+                },
             };
 
             let id_token = token_svc
