@@ -224,8 +224,8 @@ impl PasswordFlow {
                 phone_number: user.phone_number.clone(),
                 phone_number_verified: user.phone_number_verified,
                 updated_at: Some(user.updated_at.timestamp()),
-                acr: Some("urn:mace:incommon:iap:silver".to_string()),
-                amr: Some(vec!["pwd".to_string()]),
+                acr: Some(oidc_core::utils::ACR_BRONZE.to_string()),
+                amr: Some(vec![oidc_core::utils::AMR_PWD.to_string()]),
             };
 
             let id_token = token_svc

@@ -1,5 +1,6 @@
 //! Utilities shared across the workspace.
 
+pub mod acr;
 pub mod id;
 pub mod jwe;
 pub mod pkce;
@@ -7,6 +8,11 @@ pub mod time;
 pub mod token;
 pub mod validation;
 
+pub use acr::{
+    ACR_BRONZE, ACR_SILVER, AMR_DEVICE_CODE, AMR_MFA, AMR_OTP, AMR_PWD, AMR_SMS, AMR_SOCIAL,
+    AMR_TOKEN_EXCHANGE, ResolvedAcrAmr, SUPPORTED_ACR_VALUES, SUPPORTED_AMR_VALUES,
+    resolve_acr_amr, resolve_locale,
+};
 pub use id::generate_uuid_v7;
 pub use jwe::{encrypt_id_token_if_configured, encrypt_jwe_dir, encrypt_jwe_rsa_oaep_256};
 pub use pkce::{generate_code_verifier, s256_challenge, verify_s256};

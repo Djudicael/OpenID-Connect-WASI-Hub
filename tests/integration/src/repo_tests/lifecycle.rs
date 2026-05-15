@@ -185,6 +185,7 @@ fn make_auth_code(client_id: Uuid, user_id: Uuid, realm_id: Uuid, code: &str) ->
         display: None,
         response_type: ResponseType::CODE,
         acr_values: vec![],
+        claims_locales: vec![],
         expires_at: Utc::now() + chrono::Duration::minutes(10),
         response_mode: None,
         authorization_details: None,

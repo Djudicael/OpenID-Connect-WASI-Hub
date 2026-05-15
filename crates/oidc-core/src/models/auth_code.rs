@@ -89,6 +89,8 @@ pub struct AuthCode {
     pub response_type: ResponseType,
     /// OIDC Core §3.1.2.1 acr_values from the authorization request.
     pub acr_values: Vec<String>,
+    /// OIDC Core §3.1.2.1 / §5.2 claims_locales from the authorization request.
+    pub claims_locales: Vec<String>,
     /// When the authorization code expires.
     pub expires_at: chrono::DateTime<chrono::Utc>,
     /// RFC 9101 JARM response_mode from the authorization request.

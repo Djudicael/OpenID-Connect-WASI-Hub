@@ -513,8 +513,8 @@ impl TokenExchangeFlow {
         let mut id_token_extra = IdTokenExtraClaims {
             at_hash: Some(at_hash),
             auth_time: Some(chrono::Utc::now().timestamp()),
-            acr: Some("urn:mace:incommon:iap:silver".to_string()),
-            amr: Some(vec!["token_exchange".to_string()]),
+            acr: Some(oidc_core::utils::ACR_BRONZE.to_string()),
+            amr: Some(vec![oidc_core::utils::AMR_TOKEN_EXCHANGE.to_string()]),
             ..Default::default()
         };
 

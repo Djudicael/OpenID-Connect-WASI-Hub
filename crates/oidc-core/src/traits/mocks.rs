@@ -1029,6 +1029,7 @@ mod tests {
             display: None,
             response_type: ResponseType::CODE,
             acr_values: vec![],
+            claims_locales: vec![],
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
             response_mode: None,
             authorization_details: None,

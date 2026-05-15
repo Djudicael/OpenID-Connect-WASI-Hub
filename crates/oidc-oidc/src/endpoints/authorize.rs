@@ -503,6 +503,34 @@ async fn authorize_inner(
         .map(|v| v.split(' ').map(|s| s.to_string()).collect())
         .unwrap_or_default();
 
+    // --- claims_locales parameter handling (OIDC Core §3.1.2.1 / §5.2) ---
+    let claims_locales: Vec<String> = params
+        .get("claims_locales")
+        .map(|v| v.split(' ').map(|s| s.to_string()).collect())
+        .unwrap_or_default();
+
+    // --- id_token_hint parameter handling (OIDC Core §3.1.2.1) ---
+    // Per OIDC Core §3.1.2.1: "id_token_hint" is a hint about the identity
+    // of the end-user the RP wants to authenticate. If present, the OP
+    // should check if the authenticated user matches the hint.
+    let id_token_hint_subject: Option<String> = if let Some(hint) =
+        params.get("id_token_hint").cloned()
+    {
+        // Best-effort verification: extract the `sub` claim from the hint.
+        // Per OIDC Core §3.1.2.1, the OP MAY verify the signature.
+        match state.token_service.verify_id_token(&hint).await {
+            Ok(subject) => Some(subject),
+            Err(e) => {
+                tracing::warn!("id_token_hint verification failed (proceeding without hint): {e}");
+                // If verification fails, try to extract sub from the JWT payload
+                // without verification (the hint is advisory per spec)
+                extract_sub_from_jwt_payload(&hint)
+            }
+        }
+    } else {
+        None
+    };
+
     // --- authorization_details parameter handling (RFC 9396 RAR) ---
     let authorization_details: Option<serde_json::Value> = params
         .get("authorization_details")
@@ -766,14 +794,17 @@ async fn authorize_inner(
 
     // prompt=none: If the user is not authenticated, return login_required.
     if prompt_values.contains(&"none") {
-        if cookie_user.is_none() && params.get("login_hint").is_none() {
+        if cookie_user.is_none()
+            && params.get("login_hint").is_none()
+            && id_token_hint_subject.is_none()
+        {
             return Err((
                 redirect_uri.clone(),
                 "login_required".to_string(),
                 "The Authorization Server requires End-User authentication.".to_string(),
             ));
         }
-        // If a valid session cookie or login_hint exists, we proceed.
+        // If a valid session cookie, login_hint, or id_token_hint exists, we proceed.
     }
 
     // prompt=consent: Pass-through — we auto-consent for now.
@@ -829,10 +860,10 @@ async fn authorize_inner(
     }
 
     // --- User authentication ---
-    // Priority: 1) session cookie  2) login_hint  3) redirect to login
+    // Priority: 1) session cookie  2) login_hint  3) id_token_hint  4) redirect to login
     let login_hint = params.get("login_hint").cloned();
-    let user = if let Some(u) = cookie_user {
-        u
+    let user = if let Some(ref u) = cookie_user {
+        u.clone()
     } else if let Some(email) = login_hint {
         match UserRepo
             .find_by_email(&mut conn, client.realm_id, &email)
@@ -855,6 +886,51 @@ async fn authorize_inner(
                 ));
             }
         }
+    } else if let Some(ref hint_subject) = id_token_hint_subject {
+        // Try to look up the user by the subject from id_token_hint
+        match uuid::Uuid::parse_str(hint_subject) {
+            Ok(user_id) => match UserRepo.find_by_id(&mut conn, user_id).await {
+                Ok(Some(u)) if u.enabled => u,
+                Ok(Some(_)) => {
+                    return Err((
+                        redirect_uri.clone(),
+                        "access_denied".to_string(),
+                        "User account is disabled".to_string(),
+                    ));
+                }
+                Ok(None) => {
+                    return Err((
+                        redirect_uri.clone(),
+                        "access_denied".to_string(),
+                        "User not found for id_token_hint subject".to_string(),
+                    ));
+                }
+                Err(e) => {
+                    tracing::error!("DB error finding user from id_token_hint: {e}");
+                    return Err((
+                        redirect_uri.clone(),
+                        "server_error".to_string(),
+                        "An internal error occurred".to_string(),
+                    ));
+                }
+            },
+            Err(_) => {
+                // Subject is not a UUID — try email lookup as fallback
+                match UserRepo
+                    .find_by_email(&mut conn, client.realm_id, hint_subject)
+                    .await
+                {
+                    Ok(Some(u)) => u,
+                    Ok(None) | Err(_) => {
+                        return Err((
+                            redirect_uri.clone(),
+                            "access_denied".to_string(),
+                            "User not found for id_token_hint subject".to_string(),
+                        ));
+                    }
+                }
+            }
+        }
     } else {
         // No session cookie or login_hint: redirect to login page with return URL
         let login_url = build_login_url(
@@ -874,6 +950,60 @@ async fn authorize_inner(
             "User account is disabled".to_string(),
         ));
     }
+
+    // --- id_token_hint validation (OIDC Core §3.1.2.1) ---
+    // If id_token_hint was provided, check if the authenticated user matches the hint.
+    // Per OIDC Core §3.1.2.2: If the end-user identified by the hint is not already
+    // logged in or is logged in with a different account, the OP SHOULD return
+    // login_required or account_selection_required.
+    if let Some(ref hint_subject) = id_token_hint_subject {
+        let user_subject = user.id.to_string();
+        if hint_subject != &user_subject {
+            tracing::warn!(
+                "id_token_hint subject ({}) does not match authenticated user ({})",
+                hint_subject,
+                user_subject
+            );
+            if prompt_values.contains(&"none") {
+                return Err((
+                    redirect_uri.clone(),
+                    "account_selection_required".to_string(),
+                    "The end-user identified by the id_token_hint is not the currently authenticated user.".to_string(),
+                ));
+            }
+            // Without prompt=none, redirect to login so the user can select the correct account
+            let login_url = build_login_url(
+                &format!(
+                    "/oidc/authorize?{}",
+                    serde_urlencoded::to_string(&params).unwrap_or_default()
+                ),
+                state_param.as_ref(),
+            );
+            return Ok(AuthorizeResult::Redirect(login_url));
+        }
+    }
+
+    // --- acr_values validation and resolution (OIDC Core §3.1.2.1 / §3.1.2.2) ---
+    // Determine the authentication method used. For the authorize endpoint,
+    // the user authenticated via session cookie or login_hint (password-based).
+    let auth_method = "pwd";
+    let resolved_acr_amr = match oidc_core::utils::resolve_acr_amr(auth_method, &acr_values) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!("ACR resolution failed: {e}");
+            // Per OIDC Core §3.1.2.2, if the requested ACR cannot be satisfied,
+            // the OP MUST return login_required.
+            return Err((
+                redirect_uri.clone(),
+                "login_required".to_string(),
+                format!("Cannot satisfy requested ACR values: {e}"),
+            ));
+        }
+    };
+
+    // --- claims_locales resolution (OIDC Core §5.2) ---
+    // Select the best matching locale for the user's claims.
+    let resolved_locale = oidc_core::utils::resolve_locale(&user.locale, &claims_locales);
 
     // --- Generate authorization code ---
     let code_value = generate_auth_code();
@@ -900,6 +1030,7 @@ async fn authorize_inner(
             display,
             response_type,
             acr_values,
+            claims_locales,
             expires_at,
             response_mode: response_mode_param.clone(),
             authorization_details: authorization_details.clone(),
@@ -1056,12 +1187,12 @@ async fn authorize_inner(
                 gender: user.gender.clone(),
                 birthdate: user.birthdate.clone(),
                 zoneinfo: user.zoneinfo.clone(),
-                locale: Some(user.locale.clone()),
+                locale: Some(resolved_locale.clone()),
                 phone_number: user.phone_number.clone(),
                 phone_number_verified: user.phone_number_verified,
                 updated_at: Some(user.updated_at.timestamp()),
-                acr: Some("urn:mace:incommon:iap:silver".to_string()),
-                amr: Some(vec!["pwd".to_string()]),
+                acr: Some(resolved_acr_amr.acr.clone()),
+                amr: Some(resolved_acr_amr.amr.clone()),
             };
 
             let id_token = match token_svc
@@ -1353,4 +1484,29 @@ fn build_error_url(
         url.push_str(&format!("&state={}", urlencoding::encode(s)));
     }
     url
+}
+
+// ---------------------------------------------------------------------------
+// JWT payload extraction (for id_token_hint advisory parsing)
+// ---------------------------------------------------------------------------
+
+/// Extract the `sub` claim from a JWT payload without signature verification.
+///
+/// This is used for the `id_token_hint` parameter, which is advisory per
+/// OIDC Core §3.1.2.1. If the token cannot be verified (e.g., expired,
+/// wrong audience), we still want to extract the subject to check if the
+/// currently authenticated user matches the hint.
+fn extract_sub_from_jwt_payload(jwt: &str) -> Option<String> {
+    // JWT format: header.payload.signature
+    let parts: Vec<&str> = jwt.split('.').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+    let payload_bytes = URL_SAFE_NO_PAD.decode(parts[1]).ok()?;
+    let payload: serde_json::Value = serde_json::from_slice(&payload_bytes).ok()?;
+    payload
+        .get("sub")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }

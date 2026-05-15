@@ -468,6 +468,7 @@ async fn test_auth_code_crud() {
         display: None,
         response_type: ResponseType::CODE,
         acr_values: vec![],
+        claims_locales: vec![],
         expires_at: Utc::now() + chrono::Duration::minutes(10),
         response_mode: None,
         authorization_details: None,
@@ -1088,6 +1089,7 @@ async fn test_expired_auth_code_cleanup() {
         display: None,
         response_type: ResponseType::CODE,
         acr_values: vec![],
+        claims_locales: vec![],
         expires_at: Utc::now() - chrono::Duration::minutes(5), // expired 5 minutes ago
         response_mode: None,
         authorization_details: None,

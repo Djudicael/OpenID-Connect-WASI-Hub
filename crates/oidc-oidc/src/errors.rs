@@ -232,6 +232,12 @@ pub fn from_oidc_error(e: &oidc_core::OidcError) -> OidcErrorResponse {
         OidcError::InvalidActorToken(msg) => {
             OidcErrorResponse::invalid_request(format!("Invalid actor token: {msg}"))
         }
+        OidcError::LoginRequired(msg) => {
+            OidcErrorResponse::invalid_request(format!("Login required: {msg}"))
+        }
+        OidcError::AccountSelectionRequired(msg) => {
+            OidcErrorResponse::invalid_request(format!("Account selection required: {msg}"))
+        }
         OidcError::Internal(msg) => OidcErrorResponse::from_internal(msg),
         _ => OidcErrorResponse::from_internal("unknown error"),
     }

@@ -106,6 +106,15 @@ impl AuthorizationCodeFlow {
             let at_hash = oidc_core::utils::compute_at_hash(&access_token);
             let c_hash = oidc_core::utils::compute_c_hash(code);
 
+            // Resolve ACR/AMR based on the authentication method and requested ACR values
+            // For authorization_code flow, the user authenticated via password (pwd)
+            let resolved_acr_amr = oidc_core::utils::resolve_acr_amr("pwd", &auth_code.acr_values)
+                .map_err(|e| OidcError::LoginRequired(e))?;
+
+            // Resolve claims locale based on user preference and requested claims_locales
+            let resolved_locale =
+                oidc_core::utils::resolve_locale(&user.locale, &auth_code.claims_locales);
+
             let id_token_extra = IdTokenExtraClaims {
                 nonce: auth_code.nonce.clone(),
                 at_hash: Some(at_hash),
@@ -126,12 +135,12 @@ impl AuthorizationCodeFlow {
                 gender: user.gender.clone(),
                 birthdate: user.birthdate.clone(),
                 zoneinfo: user.zoneinfo.clone(),
-                locale: Some(user.locale.clone()),
+                locale: Some(resolved_locale),
                 phone_number: user.phone_number.clone(),
                 phone_number_verified: user.phone_number_verified,
                 updated_at: Some(user.updated_at.timestamp()),
-                acr: Some("urn:mace:incommon:iap:silver".to_string()),
-                amr: Some(vec!["pwd".to_string()]),
+                acr: Some(resolved_acr_amr.acr.clone()),
+                amr: Some(resolved_acr_amr.amr.clone()),
             };
 
             let id_token = token_svc

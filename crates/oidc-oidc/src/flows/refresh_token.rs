@@ -133,8 +133,8 @@ impl RefreshTokenFlow {
                 name: user.username.clone(),
                 given_name: user.given_name.clone(),
                 family_name: user.family_name.clone(),
-                acr: Some("urn:mace:incommon:iap:silver".to_string()),
-                amr: Some(vec!["pwd".to_string()]),
+                acr: Some(oidc_core::utils::ACR_BRONZE.to_string()),
+                amr: Some(vec![oidc_core::utils::AMR_PWD.to_string()]),
                 ..Default::default()
             };
 

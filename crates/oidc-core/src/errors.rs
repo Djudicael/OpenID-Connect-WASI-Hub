@@ -84,6 +84,15 @@ pub enum OidcError {
     #[error("invalid actor token: {0}")]
     InvalidActorToken(String),
 
+    /// The end-user could not be authenticated (OIDC Core §3.1.2.2).
+    /// Returned when prompt=none fails or ACR requirements cannot be satisfied.
+    #[error("login required: {0}")]
+    LoginRequired(String),
+
+    /// The end-user must select an account (OIDC Core §3.1.2.2).
+    #[error("account selection required: {0}")]
+    AccountSelectionRequired(String),
+
     /// Internal server error.
     #[error("internal error: {0}")]
     Internal(String),
@@ -111,7 +120,9 @@ impl OidcError {
             | OidcError::SlowDown
             | OidcError::ExpiredToken
             | OidcError::InvalidSubjectToken(_)
-            | OidcError::InvalidActorToken(_) => 400,
+            | OidcError::InvalidActorToken(_)
+            | OidcError::LoginRequired(_)
+            | OidcError::AccountSelectionRequired(_) => 400,
 
             OidcError::NotFound(_) => 404,
             OidcError::Conflict(_) => 409,
