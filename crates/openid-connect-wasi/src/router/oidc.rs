@@ -3,7 +3,7 @@
 use axum::Json;
 use axum::Router;
 use axum::extract::{Form, Path, Query, State};
-use axum::response::{Html, IntoResponse, Redirect};
+use axum::response::{Html, IntoResponse};
 use axum::routing::{get, post};
 use std::collections::HashMap;
 
@@ -15,6 +15,12 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/.well-known/openid-configuration", get(|State(state): State<AppState>| async move {
             oidc_oidc::discovery_handler(state.oidc_state()).await
+        }))
+        .route("/.well-known/webfinger", get(|State(state): State<AppState>, Query(params): Query<oidc_oidc::endpoints::webfinger::WebFingerQuery>| async move {
+            match oidc_oidc::endpoints::webfinger::webfinger_handler(State(state.oidc_state()), Query(params)).await {
+                Ok(json) => json.into_response(),
+                Err(e) => oidc_oidc::errors::from_oidc_error(&e).into_response(),
+            }
         }))
         .route("/oidc/jwks", get(|State(state): State<AppState>| async move {
             oidc_oidc::endpoints::jwks::jwks_handler(state.oidc_state())
@@ -91,6 +97,23 @@ pub fn router() -> Router<AppState> {
                 Err(e) => oidc_oidc::errors::from_oidc_error(&e).into_response(),
             }
         }))
+        // Device Authorization Grant (RFC 8628)
+        .route("/oidc/device/authorize", post(|State(state): State<AppState>, headers: axum::http::HeaderMap, Form(params): Form<HashMap<String, String>>| async move {
+            let oidc_state = state.oidc_state();
+            match oidc_oidc::endpoints::device_authorization::device_authorization_handler(oidc_state, headers, params).await {
+                Ok(json) => (axum::http::StatusCode::OK, json).into_response(),
+                Err(e) => oidc_oidc::errors::from_oidc_error(&e).into_response(),
+            }
+        }))
+        .route("/oidc/device", get(|State(state): State<AppState>, Query(params): Query<oidc_oidc::endpoints::device_authorization::DeviceVerifyParams>| async move {
+            oidc_oidc::endpoints::device_authorization::device_authorization_verify_handler(State(state.oidc_state()), Query(params)).await
+        }))
+        .route("/oidc/device/confirm", post(|State(state): State<AppState>, headers: axum::http::HeaderMap, Form(req): Form<oidc_oidc::endpoints::device_authorization::DeviceConfirmRequest>| async move {
+            match oidc_oidc::endpoints::device_authorization::device_authorization_confirm_handler(State(state.oidc_state()), headers, Form(req)).await {
+                Ok(json) => json.into_response(),
+                Err(e) => e.into_response(),
+            }
+        }))
         // Per-realm login endpoint (Keycloak-compatible path)
         .route("/realms/{realm}/protocol/openid-connect/token", post(per_realm_token_handler))
         .route("/realms/{realm}/protocol/openid-connect/auth", get(per_realm_authorize_handler))
@@ -148,7 +171,7 @@ async fn per_realm_authorize_handler(
     Path(realm): Path<String>,
     headers: axum::http::HeaderMap,
     Query(params): Query<HashMap<String, String>>,
-) -> Redirect {
+) -> axum::response::Response {
     oidc_oidc::endpoints::authorize::realm_authorize_handler(
         state.oidc_state(),
         realm,

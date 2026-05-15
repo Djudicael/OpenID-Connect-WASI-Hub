@@ -57,6 +57,19 @@ pub struct Client {
     /// Sector identifier URI for pairwise subject identifiers (OIDC Core §8).
     /// When set, this is used instead of the redirect_uri host for sector identification.
     pub sector_identifier_uri: Option<String>,
+    /// Supported response modes for this client (RFC 9101 JARM).
+    pub response_modes: Vec<String>,
+    /// JWE encryption algorithm for ID tokens. None = no encryption.
+    /// Supported: "dir" (direct symmetric key), "RSA-OAEP-256" (RSA key wrapping)
+    pub id_token_encrypted_response_alg: Option<String>,
+    /// JWE content encryption algorithm for ID tokens. Default: "A256GCM"
+    pub id_token_encrypted_response_enc: Option<String>,
+    /// Symmetric key for JWE "dir" encryption, encrypted with the server's encryption key.
+    /// At rest, the raw 32-byte key is encrypted (not hashed) because we need it for encryption.
+    pub id_token_encryption_key_encrypted: Option<String>,
+    /// Client's RSA public key for JWE "RSA-OAEP-256" encryption (PEM format).
+    /// Stored as-is (public information, no need to encrypt).
+    pub id_token_encryption_key_pem: Option<String>,
 }
 
 /// The type of OAuth2 client.
@@ -99,6 +112,11 @@ mod tests {
             post_logout_redirect_uris: vec![],
             subject_type: "public".into(),
             sector_identifier_uri: None,
+            response_modes: vec!["query".to_string(), "fragment".to_string()],
+            id_token_encrypted_response_alg: None,
+            id_token_encrypted_response_enc: None,
+            id_token_encryption_key_encrypted: None,
+            id_token_encryption_key_pem: None,
         }
     }
 

@@ -195,7 +195,7 @@ impl PasswordFlow {
 
             let token_svc = state.token_service_for_realm(user.realm_id).await?;
             let access_token = token_svc
-                .issue_access_token(&subject, &audience, &scopes, dpop_jkt)
+                .issue_access_token(&subject, &audience, &scopes, dpop_jkt, None)
                 .await?;
 
             let at_hash = oidc_core::utils::compute_at_hash(&access_token);
@@ -232,6 +232,9 @@ impl PasswordFlow {
                 .issue_id_token(&subject, &audience, Some(id_token_extra))
                 .await?;
 
+            // Optionally encrypt the ID token if the client has JWE configured
+            let id_token = crate::flows::maybe_encrypt_id_token(state, &id_token, &client)?;
+
             let refresh_token = generate_opaque_token()?;
 
             // Store session
@@ -257,6 +260,7 @@ impl PasswordFlow {
                 rotated_at: None,
                 reused_at: None,
                 family_revoked: false,
+                authorization_details: None,
             };
 
             SessionRepo.create(&mut conn, &session).await?;

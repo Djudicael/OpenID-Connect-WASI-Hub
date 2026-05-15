@@ -1,8 +1,11 @@
 //! Authorization endpoint handler.
+//!
+//! Supports RFC 9101 JARM (JWT-Secured Authorization Response Mode) in addition
+//! to the standard OIDC response modes (query, fragment, form_post).
 
 use axum::extract::Query;
 use axum::http::HeaderMap;
-use axum::response::Redirect;
+use axum::response::{Html, IntoResponse, Redirect, Response};
 use std::collections::HashMap;
 
 use oidc_core::models::{AuthCode, ResponseType};
@@ -15,6 +18,96 @@ use oidc_repository::repositories::user_repo::UserRepo;
 
 use crate::session_cookie;
 use crate::state::OidcState;
+
+// ---------------------------------------------------------------------------
+// Response mode types (RFC 9101 JARM)
+// ---------------------------------------------------------------------------
+
+/// The effective delivery mode for an authorization response.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResponseMode {
+    /// Parameters in the query string (default for `code` flow)
+    Query,
+    /// Parameters in the URI fragment (default for implicit/hybrid)
+    Fragment,
+    /// Auto-submitting HTML form POST (OIDC Core §3.1.5.3)
+    FormPost,
+}
+
+/// Parsed `response_mode` parameter from the authorization request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ParsedResponseMode {
+    Query,
+    Fragment,
+    FormPost,
+    Jwt,
+    QueryJwt,
+    FragmentJwt,
+    FormPostJwt,
+}
+
+impl ParsedResponseMode {
+    fn parse(s: &str) -> Option<Self> {
+        match s {
+            "query" => Some(Self::Query),
+            "fragment" => Some(Self::Fragment),
+            "form_post" => Some(Self::FormPost),
+            "jwt" => Some(Self::Jwt),
+            "query.jwt" => Some(Self::QueryJwt),
+            "fragment.jwt" => Some(Self::FragmentJwt),
+            "form_post.jwt" => Some(Self::FormPostJwt),
+            _ => None,
+        }
+    }
+
+    /// Returns true if this is a JARM mode (ends with `.jwt`).
+    fn is_jarm(&self) -> bool {
+        matches!(
+            self,
+            Self::Jwt | Self::QueryJwt | Self::FragmentJwt | Self::FormPostJwt
+        )
+    }
+
+    /// Returns the base delivery mode for a JARM response.
+    /// For non-JARM modes, returns `None`.
+    fn jarm_base_mode(&self) -> Option<ResponseMode> {
+        match self {
+            Self::Jwt => None, // resolved later based on response_type
+            Self::QueryJwt => Some(ResponseMode::Query),
+            Self::FragmentJwt => Some(ResponseMode::Fragment),
+            Self::FormPostJwt => Some(ResponseMode::FormPost),
+            _ => None,
+        }
+    }
+
+    /// Returns the base delivery mode for a non-JARM response.
+    fn base_mode(&self) -> ResponseMode {
+        match self {
+            Self::Query => ResponseMode::Query,
+            Self::Fragment => ResponseMode::Fragment,
+            Self::FormPost => ResponseMode::FormPost,
+            _ => unreachable!("base_mode called on JARM mode"),
+        }
+    }
+}
+
+/// The result of `authorize_inner`: either a redirect URL or an HTML form page.
+#[derive(Debug)]
+enum AuthorizeResult {
+    /// Standard HTTP redirect (query or fragment mode).
+    Redirect(String),
+    /// HTML auto-submitting form (form_post mode).
+    FormPost { html: String },
+}
+
+impl IntoResponse for AuthorizeResult {
+    fn into_response(self) -> Response {
+        match self {
+            Self::Redirect(url) => Redirect::temporary(&url).into_response(),
+            Self::FormPost { html, .. } => Html(html).into_response(),
+        }
+    }
+}
 
 /// Authorization endpoint handler.
 /// Validates the request, generates an authorization code, and redirects back to the client.
@@ -29,23 +122,20 @@ pub async fn authorize_handler(
     state: OidcState,
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
-) -> Redirect {
+) -> Response {
     let state_param = params.get("state").cloned();
     match authorize_inner(state, &headers, params, None).await {
-        Ok(redirect_uri) => Redirect::temporary(&redirect_uri),
+        Ok(result) => result.into_response(),
         Err((redirect_uri, error, description)) => {
             tracing::warn!("authorize failed: {} - {}", error, description);
-            let mut url = format!("{}?error={}", redirect_uri, urlencoding::encode(&error));
-            if !description.is_empty() {
-                url.push_str(&format!(
-                    "&error_description={}",
-                    urlencoding::encode(&description)
-                ));
-            }
-            if let Some(s) = state_param {
-                url.push_str(&format!("&state={}", urlencoding::encode(&s)));
-            }
-            Redirect::temporary(&url)
+            let url = build_error_url(
+                &redirect_uri,
+                &error,
+                &description,
+                state_param.as_deref(),
+                ResponseMode::Query,
+            );
+            Redirect::temporary(&url).into_response()
         }
     }
 }
@@ -59,10 +149,10 @@ pub async fn realm_authorize_handler(
     realm: String,
     headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
-) -> Redirect {
+) -> Response {
     let state_param = params.get("state").cloned();
     match authorize_inner(state, &headers, params, Some(&realm)).await {
-        Ok(redirect_uri) => Redirect::temporary(&redirect_uri),
+        Ok(result) => result.into_response(),
         Err((redirect_uri, error, description)) => {
             tracing::warn!(
                 "authorize failed for realm {}: {} - {}",
@@ -70,17 +160,14 @@ pub async fn realm_authorize_handler(
                 error,
                 description
             );
-            let mut url = format!("{}?error={}", redirect_uri, urlencoding::encode(&error));
-            if !description.is_empty() {
-                url.push_str(&format!(
-                    "&error_description={}",
-                    urlencoding::encode(&description)
-                ));
-            }
-            if let Some(s) = state_param {
-                url.push_str(&format!("&state={}", urlencoding::encode(&s)));
-            }
-            Redirect::temporary(&url)
+            let url = build_error_url(
+                &redirect_uri,
+                &error,
+                &description,
+                state_param.as_deref(),
+                ResponseMode::Query,
+            );
+            Redirect::temporary(&url).into_response()
         }
     }
 }
@@ -90,7 +177,7 @@ async fn authorize_inner(
     headers: &HeaderMap,
     params: HashMap<String, String>,
     realm_name: Option<&str>,
-) -> Result<String, (String, String, String)> {
+) -> Result<AuthorizeResult, (String, String, String)> {
     // Helper to build the correct login URL based on whether a realm is present
     let build_login_url = |return_to: &str, state: Option<&String>| {
         let mut url = if let Some(name) = realm_name {
@@ -312,6 +399,54 @@ async fn authorize_inner(
         }
     };
 
+    // --- response_mode parameter (RFC 9101 JARM) ---
+    let response_mode_param = params.get("response_mode").cloned();
+    let parsed_response_mode = match response_mode_param.as_deref() {
+        Some(rm) => match ParsedResponseMode::parse(rm) {
+            Some(prm) => Some(prm),
+            None => {
+                return Err((
+                    redirect_uri.clone(),
+                    "invalid_request".to_string(),
+                    format!("Unsupported response_mode: {}", rm),
+                ));
+            }
+        },
+        None => None,
+    };
+
+    // Determine whether this is a JARM request
+    let is_jarm = parsed_response_mode
+        .as_ref()
+        .map_or(false, |prm| prm.is_jarm());
+
+    // Determine the effective delivery mode
+    let effective_mode = match &parsed_response_mode {
+        Some(prm) if prm.is_jarm() => {
+            // For JARM, resolve the base delivery mode
+            match prm.jarm_base_mode() {
+                Some(mode) => mode,
+                None => {
+                    // `jwt` without prefix: use default based on response_type
+                    if response_type.is_implicit_or_hybrid() {
+                        ResponseMode::Fragment
+                    } else {
+                        ResponseMode::Query
+                    }
+                }
+            }
+        }
+        Some(prm) => prm.base_mode(),
+        None => {
+            // No response_mode specified: use default based on response_type
+            if response_type.is_implicit_or_hybrid() {
+                ResponseMode::Fragment
+            } else {
+                ResponseMode::Query
+            }
+        }
+    };
+
     let client_id_str = params.get("client_id").ok_or_else(|| {
         (
             redirect_uri.clone(),
@@ -367,6 +502,30 @@ async fn authorize_inner(
         .get("acr_values")
         .map(|v| v.split(' ').map(|s| s.to_string()).collect())
         .unwrap_or_default();
+
+    // --- authorization_details parameter handling (RFC 9396 RAR) ---
+    let authorization_details: Option<serde_json::Value> = params
+        .get("authorization_details")
+        .and_then(|v| serde_json::from_str(v).ok())
+        .filter(|v: &serde_json::Value| v.is_array());
+    if let Some(ref details) = authorization_details {
+        // Validate each element has a "type" field per RFC 9396 §2
+        if let Some(arr) = details.as_array() {
+            for item in arr {
+                if !item.is_object()
+                    || !item.get("type").map_or(false, |t| {
+                        t.is_string() && !t.as_str().unwrap_or_default().is_empty()
+                    })
+                {
+                    return Err((
+                        redirect_uri.clone(),
+                        "invalid_request".to_string(),
+                        "Each authorization_detail must have a non-empty 'type' field".to_string(),
+                    ));
+                }
+            }
+        }
+    }
 
     // --- Client validation ---
     let mut conn = match state.connect().await {
@@ -620,7 +779,7 @@ async fn authorize_inner(
                                         ),
                                         state_param.as_ref(),
                                     );
-                                    return Ok(login_url);
+                                    return Ok(AuthorizeResult::Redirect(login_url));
                                 }
                             }
                         }
@@ -637,7 +796,7 @@ async fn authorize_inner(
                             ),
                             state_param.as_ref(),
                         );
-                        return Ok(login_url);
+                        return Ok(AuthorizeResult::Redirect(login_url));
                     }
                 }
             }
@@ -680,7 +839,7 @@ async fn authorize_inner(
             ),
             state_param.as_ref(),
         );
-        return Ok(login_url);
+        return Ok(AuthorizeResult::Redirect(login_url));
     };
 
     if !user.enabled {
@@ -717,6 +876,8 @@ async fn authorize_inner(
             response_type,
             acr_values,
             expires_at,
+            response_mode: response_mode_param.clone(),
+            authorization_details: authorization_details.clone(),
         };
 
         match oidc_repository::repositories::auth_code_repo::AuthCodeRepo
@@ -771,7 +932,13 @@ async fn authorize_inner(
 
         if response_type.has_token() {
             let access_token = match token_svc
-                .issue_access_token(&subject, &audience, &requested_scopes, None)
+                .issue_access_token(
+                    &subject,
+                    &audience,
+                    &requested_scopes,
+                    None,
+                    authorization_details.as_ref(),
+                )
                 .await
             {
                 Ok(t) => t,
@@ -807,6 +974,7 @@ async fn authorize_inner(
                 rotated_at: None,
                 reused_at: None,
                 family_revoked: false,
+                authorization_details: authorization_details.clone(),
             };
 
             if let Err(e) = oidc_repository::repositories::session_repo::SessionRepo
@@ -883,6 +1051,19 @@ async fn authorize_inner(
                 }
             };
 
+            // Optionally encrypt the ID token if the client has JWE configured
+            let id_token = match crate::flows::maybe_encrypt_id_token(&state, &id_token, &client) {
+                Ok(encrypted) => encrypted,
+                Err(e) => {
+                    tracing::error!("Failed to encrypt ID token in authorize: {e}");
+                    return Err((
+                        redirect_uri.clone(),
+                        "server_error".to_string(),
+                        "An internal error occurred".to_string(),
+                    ));
+                }
+            };
+
             redirect_fragments.push(format!("id_token={}", urlencoding::encode(&id_token)));
         }
     }
@@ -919,8 +1100,81 @@ async fn authorize_inner(
         }
     }
 
-    let redirect = format!("{}?{}", redirect_uri, redirect_fragments.join("&"));
-    Ok(redirect)
+    // --- Build the response based on response_mode ---
+    if is_jarm {
+        // JARM: wrap all response parameters in a JWT signed by the OP
+        let jarm_jwt = match issue_jarm_jwt(
+            &state,
+            client.realm_id,
+            &state.issuer,
+            client_id_str,
+            &redirect_fragments,
+        )
+        .await
+        {
+            Ok(jwt) => jwt,
+            Err(e) => {
+                tracing::error!("Failed to issue JARM JWT: {e}");
+                return Err((
+                    redirect_uri.clone(),
+                    "server_error".to_string(),
+                    "An internal error occurred".to_string(),
+                ));
+            }
+        };
+
+        match effective_mode {
+            ResponseMode::Query => {
+                let redirect = format!(
+                    "{}?response={}",
+                    redirect_uri,
+                    urlencoding::encode(&jarm_jwt)
+                );
+                Ok(AuthorizeResult::Redirect(redirect))
+            }
+            ResponseMode::Fragment => {
+                let redirect = format!(
+                    "{}#response={}",
+                    redirect_uri,
+                    urlencoding::encode(&jarm_jwt)
+                );
+                Ok(AuthorizeResult::Redirect(redirect))
+            }
+            ResponseMode::FormPost => {
+                let html = render_form_post_html(&redirect_uri, "response", &jarm_jwt);
+                Ok(AuthorizeResult::FormPost { html })
+            }
+        }
+    } else {
+        // Non-JARM: deliver parameters directly
+        match effective_mode {
+            ResponseMode::Query => {
+                let redirect = format!("{}?{}", redirect_uri, redirect_fragments.join("&"));
+                Ok(AuthorizeResult::Redirect(redirect))
+            }
+            ResponseMode::Fragment => {
+                let redirect = format!("{}#{}", redirect_uri, redirect_fragments.join("&"));
+                Ok(AuthorizeResult::Redirect(redirect))
+            }
+            ResponseMode::FormPost => {
+                // Build hidden input fields from the response parameters
+                let fields: Vec<(String, String)> = redirect_fragments
+                    .iter()
+                    .filter_map(|frag| {
+                        let mut parts = frag.splitn(2, '=');
+                        let name = parts.next()?;
+                        let value = parts.next()?;
+                        Some((
+                            name.to_string(),
+                            urlencoding::decode(value).unwrap_or_default().to_string(),
+                        ))
+                    })
+                    .collect();
+                let html = render_form_post_multi_html(&redirect_uri, &fields);
+                Ok(AuthorizeResult::FormPost { html })
+            }
+        }
+    }
 }
 
 fn generate_auth_code() -> String {
@@ -932,4 +1186,143 @@ fn generate_auth_code() -> String {
 fn base64_encode_url_safe_no_pad(data: &[u8]) -> String {
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     URL_SAFE_NO_PAD.encode(data)
+}
+
+// ---------------------------------------------------------------------------
+// JARM JWT issuance (RFC 9101)
+// ---------------------------------------------------------------------------
+
+/// Issue a JARM JWT containing all authorization response parameters.
+///
+/// The JWT is signed by the OP using its signing key (RS256 preferred for
+/// broadest compatibility). Claims include:
+/// - All response parameters (code, access_token, id_token, state, etc.)
+/// - `iss` = OP issuer
+/// - `aud` = client_id
+/// - `exp` = now + 5 minutes
+/// - `iat` = now
+async fn issue_jarm_jwt(
+    state: &OidcState,
+    realm_id: uuid::Uuid,
+    issuer: &str,
+    client_id: &str,
+    response_params: &[String],
+) -> Result<String, oidc_core::OidcError> {
+    let token_svc = state.token_service_for_realm(realm_id).await?;
+    let now = chrono::Utc::now().timestamp();
+
+    // Build claims from response parameters
+    let mut claims = serde_json::Map::new();
+    claims.insert(
+        "iss".to_string(),
+        serde_json::Value::String(issuer.to_string()),
+    );
+    claims.insert(
+        "aud".to_string(),
+        serde_json::Value::String(client_id.to_string()),
+    );
+    claims.insert(
+        "exp".to_string(),
+        serde_json::Value::Number((now + 300).into()),
+    );
+    claims.insert("iat".to_string(), serde_json::Value::Number(now.into()));
+
+    // Parse each response parameter (key=value) and add as claim
+    for param in response_params {
+        if let Some((key, value)) = param.split_once('=') {
+            let decoded_value = urlencoding::decode(value).unwrap_or_default();
+            claims.insert(
+                key.to_string(),
+                serde_json::Value::String(decoded_value.to_string()),
+            );
+        }
+    }
+
+    let claims_value = serde_json::Value::Object(claims);
+    token_svc.encode_jwt(&claims_value)
+}
+
+// ---------------------------------------------------------------------------
+// form_post HTML rendering
+// ---------------------------------------------------------------------------
+
+/// Render an auto-submitting HTML form with a single hidden field.
+/// Used for JARM `form_post.jwt` responses.
+fn render_form_post_html(redirect_uri: &str, param_name: &str, value: &str) -> String {
+    let escaped_uri = html_escape(redirect_uri);
+    let escaped_name = html_escape(param_name);
+    let escaped_value = html_escape(value);
+    format!(
+        r#"<!DOCTYPE html>
+<html>
+<head><title>Redirecting...</title></head>
+<body>
+<form method="POST" action="{escaped_uri}">
+<input type="hidden" name="{escaped_name}" value="{escaped_value}" />
+</form>
+<script>document.forms[0].submit();</script>
+</body>
+</html>"#
+    )
+}
+
+/// Render an auto-submitting HTML form with multiple hidden fields.
+/// Used for non-JARM `form_post` responses.
+fn render_form_post_multi_html(redirect_uri: &str, fields: &[(String, String)]) -> String {
+    let escaped_uri = html_escape(redirect_uri);
+    let mut inputs = String::new();
+    for (name, value) in fields {
+        let escaped_name = html_escape(name);
+        let escaped_value = html_escape(value);
+        inputs.push_str(&format!(
+            r#"<input type="hidden" name="{escaped_name}" value="{escaped_value}" />
+"#
+        ));
+    }
+    format!(
+        r#"<!DOCTYPE html>
+<html>
+<head><title>Redirecting...</title></head>
+<body>
+<form method="POST" action="{escaped_uri}">
+{inputs}</form>
+<script>document.forms[0].submit();</script>
+</body>
+</html>"#
+    )
+}
+
+/// Minimal HTML attribute/element escaping to prevent XSS in form_post pages.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
+// ---------------------------------------------------------------------------
+// Error URL builder
+// ---------------------------------------------------------------------------
+
+/// Build an error redirect URL with error, error_description, and state.
+/// For form_post mode this would need a different approach, but errors
+/// are always delivered via query string per spec.
+fn build_error_url(
+    redirect_uri: &str,
+    error: &str,
+    description: &str,
+    state: Option<&str>,
+    _mode: ResponseMode,
+) -> String {
+    let mut url = format!(
+        "{}?error={}&error_description={}",
+        redirect_uri,
+        urlencoding::encode(error),
+        urlencoding::encode(description)
+    );
+    if let Some(s) = state {
+        url.push_str(&format!("&state={}", urlencoding::encode(s)));
+    }
+    url
 }

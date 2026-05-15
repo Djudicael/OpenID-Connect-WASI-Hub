@@ -23,6 +23,7 @@ getrandom = { workspace = true }
 url = "2"
 rsa = { workspace = true }
 subtle = "2"
+aes-gcm = { version = "0.10", features = ["std"] }
 
 [dev-dependencies]
 pretty_assertions = "1"

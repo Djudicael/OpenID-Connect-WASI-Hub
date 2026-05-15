@@ -32,7 +32,10 @@ const CLIENT_COLUMNS: &str = r#"
     frontchannel_logout_uri, frontchannel_logout_session_required,
     backchannel_logout_uri, backchannel_logout_session_required,
     post_logout_redirect_uris,
-    subject_type, sector_identifier_uri
+    subject_type, sector_identifier_uri,
+    response_modes,
+    id_token_encrypted_response_alg, id_token_encrypted_response_enc,
+    id_token_encryption_key_encrypted, id_token_encryption_key_pem
 "#;
 
 impl ClientRepo {
@@ -99,8 +102,11 @@ impl ClientRepo {
                 frontchannel_logout_uri, frontchannel_logout_session_required,
                 backchannel_logout_uri, backchannel_logout_session_required,
                 post_logout_redirect_uris,
-                subject_type, sector_identifier_uri
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+                subject_type, sector_identifier_uri,
+                response_modes,
+                id_token_encrypted_response_alg, id_token_encrypted_response_enc,
+                id_token_encryption_key_encrypted, id_token_encryption_key_pem
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
         "#;
         let client_type_str = match entity.client_type {
             ClientType::Confidential => "confidential",
@@ -132,6 +138,11 @@ impl ClientRepo {
                 &mapper::to_json_value_vec(&entity.post_logout_redirect_uris),
                 &entity.subject_type,
                 &entity.sector_identifier_uri,
+                &mapper::to_json_value_vec(&entity.response_modes),
+                &entity.id_token_encrypted_response_alg,
+                &entity.id_token_encrypted_response_enc,
+                &entity.id_token_encryption_key_encrypted,
+                &entity.id_token_encryption_key_pem,
             ],
         )
         .await
@@ -164,8 +175,13 @@ impl ClientRepo {
                 post_logout_redirect_uris = $19,
                 subject_type = $20,
                 sector_identifier_uri = $21,
+                response_modes = $22,
+                id_token_encrypted_response_alg = $23,
+                id_token_encrypted_response_enc = $24,
+                id_token_encryption_key_encrypted = $25,
+                id_token_encryption_key_pem = $26,
                 updated_at = NOW()
-            WHERE id = $22 AND deleted_at IS NULL
+            WHERE id = $27 AND deleted_at IS NULL
         "#;
         let client_type_str = match entity.client_type {
             ClientType::Confidential => "confidential",
@@ -195,6 +211,11 @@ impl ClientRepo {
                 &mapper::to_json_value_vec(&entity.post_logout_redirect_uris),
                 &entity.subject_type,
                 &entity.sector_identifier_uri,
+                &mapper::to_json_value_vec(&entity.response_modes),
+                &entity.id_token_encrypted_response_alg,
+                &entity.id_token_encrypted_response_enc,
+                &entity.id_token_encryption_key_encrypted,
+                &entity.id_token_encryption_key_pem,
                 &entity.id,
             ],
         )
@@ -332,6 +353,11 @@ impl ClientRepo {
             post_logout_redirect_uris: mapper::json_string_vec(row, 21)?,
             subject_type: mapper::string(row, 22)?,
             sector_identifier_uri: mapper::opt_string(row, 23)?,
+            response_modes: mapper::json_string_vec(row, 24)?,
+            id_token_encrypted_response_alg: mapper::opt_string(row, 25)?,
+            id_token_encrypted_response_enc: mapper::opt_string(row, 26)?,
+            id_token_encryption_key_encrypted: mapper::opt_string(row, 27)?,
+            id_token_encryption_key_pem: mapper::opt_string(row, 28)?,
         })
     }
 }

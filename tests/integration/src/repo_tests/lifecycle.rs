@@ -90,6 +90,11 @@ fn make_client(realm_id: Uuid, client_id: &str) -> Client {
         post_logout_redirect_uris: vec![],
         subject_type: "public".into(),
         sector_identifier_uri: None,
+        response_modes: vec!["query".to_string(), "fragment".to_string()],
+        id_token_encrypted_response_alg: None,
+        id_token_encrypted_response_enc: None,
+        id_token_encryption_key_encrypted: None,
+        id_token_encryption_key_pem: None,
     }
 }
 
@@ -116,6 +121,7 @@ fn make_session(user_id: Uuid, realm_id: Uuid, client_id: Uuid, hash: &str) -> S
         rotated_at: None,
         reused_at: None,
         family_revoked: false,
+        authorization_details: None,
     }
 }
 
@@ -179,6 +185,8 @@ fn make_auth_code(client_id: Uuid, user_id: Uuid, realm_id: Uuid, code: &str) ->
         response_type: ResponseType::CODE,
         acr_values: vec![],
         expires_at: Utc::now() + chrono::Duration::minutes(10),
+        response_mode: None,
+        authorization_details: None,
     }
 }
 
@@ -479,6 +487,11 @@ async fn test_client_confidential_with_secret() {
         post_logout_redirect_uris: vec![],
         subject_type: "public".into(),
         sector_identifier_uri: None,
+        response_modes: vec!["query".to_string(), "fragment".to_string()],
+        id_token_encrypted_response_alg: None,
+        id_token_encrypted_response_enc: None,
+        id_token_encryption_key_encrypted: None,
+        id_token_encryption_key_pem: None,
     };
     ClientRepo
         .create(&mut conn, &client)

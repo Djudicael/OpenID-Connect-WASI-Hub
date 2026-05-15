@@ -1,6 +1,7 @@
 //! OIDC protocol endpoints.
 
 pub mod authorize;
+pub mod device_authorization;
 pub mod discovery;
 pub mod email_verification;
 pub mod introspect;
@@ -15,3 +16,4 @@ pub mod session;
 pub mod social_login;
 pub mod token;
 pub mod userinfo;
+pub mod webfinger;

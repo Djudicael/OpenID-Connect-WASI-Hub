@@ -19,6 +19,7 @@ pub async fn discovery_handler(state: OidcState) -> Json<Value> {
         "userinfo_endpoint": format!("{}/oidc/userinfo", state.issuer),
         "jwks_uri": format!("{}/oidc/jwks", state.issuer),
         "pushed_authorization_request_endpoint": format!("{}/oidc/par", state.issuer),
+        "device_authorization_endpoint": format!("{}/oidc/device/authorize", state.issuer),
         "password_reset_endpoint": format!("{}/oidc/password-reset/request", state.issuer),
         "email_verification_endpoint": format!("{}/oidc/email-verification/request", state.issuer),
         "registration_endpoint": format!("{}/oidc/register", state.issuer),
@@ -30,10 +31,12 @@ pub async fn discovery_handler(state: OidcState) -> Json<Value> {
         "backchannel_logout_session_supported": true,
         "scopes_supported": ["openid", "profile", "email", "phone", "offline_access"],
         "response_types_supported": response_types,
-        "grant_types_supported": ["authorization_code", "client_credentials", "refresh_token"],
+        "grant_types_supported": ["authorization_code", "client_credentials", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code", "urn:ietf:params:oauth:grant-type:jwt-bearer", "urn:ietf:params:oauth:grant-type:token-exchange"],
         "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "private_key_jwt"],
         "subject_types_supported": ["public", "pairwise"],
         "id_token_signing_alg_values_supported": ["RS256", "EdDSA"],
+        "id_token_encryption_alg_values_supported": ["dir", "RSA-OAEP-256"],
+        "id_token_encryption_enc_values_supported": ["A256GCM"],
         "dpop_signing_alg_values_supported": ["RS256", "EdDSA"],
         "claims_supported": [
             "sub", "iss", "aud", "exp", "iat", "auth_time", "nonce", "at_hash", "c_hash",
@@ -50,7 +53,15 @@ pub async fn discovery_handler(state: OidcState) -> Json<Value> {
         "claims_parameter_supported": true,
         "request_parameter_supported": true,
         "request_object_signing_alg_values_supported": ["RS256", "EdDSA"],
+        "token_exchange_endpoint": format!("{}/oidc/token", state.issuer),
+        "token_exchange_subject_token_types_supported": [
+            "urn:ietf:params:oauth:token-type:access_token",
+            "urn:ietf:params:oauth:token-type:refresh_token",
+            "urn:ietf:params:oauth:token-type:id_token"
+        ],
         "code_challenge_methods_supported": ["S256"],
+        "response_modes_supported": ["query", "fragment", "form_post", "jwt", "query.jwt", "fragment.jwt", "form_post.jwt"],
+        "authorization_details_types_supported": ["payment_initiation", "account_information", "custom"],
     }))
 }
 
@@ -71,6 +82,7 @@ pub async fn realm_discovery_handler(state: OidcState, realm: String) -> Json<Va
         "userinfo_endpoint": format!("{}/protocol/openid-connect/userinfo", realm_base),
         "jwks_uri": format!("{}/oidc/jwks", state.issuer),
         "pushed_authorization_request_endpoint": format!("{}/protocol/openid-connect/par", realm_base),
+        "device_authorization_endpoint": format!("{}/protocol/openid-connect/device/authorize", realm_base),
         "password_reset_endpoint": format!("{}/protocol/openid-connect/password-reset/request", realm_base),
         "email_verification_endpoint": format!("{}/protocol/openid-connect/email-verification/request", realm_base),
         "registration_endpoint": format!("{}/protocol/openid-connect/register", realm_base),
@@ -82,10 +94,12 @@ pub async fn realm_discovery_handler(state: OidcState, realm: String) -> Json<Va
         "backchannel_logout_session_supported": true,
         "scopes_supported": ["openid", "profile", "email", "phone", "offline_access"],
         "response_types_supported": response_types,
-        "grant_types_supported": ["authorization_code", "client_credentials", "refresh_token"],
+        "grant_types_supported": ["authorization_code", "client_credentials", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code", "urn:ietf:params:oauth:grant-type:jwt-bearer", "urn:ietf:params:oauth:grant-type:token-exchange"],
         "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "private_key_jwt"],
         "subject_types_supported": ["public", "pairwise"],
         "id_token_signing_alg_values_supported": ["RS256", "EdDSA"],
+        "id_token_encryption_alg_values_supported": ["dir", "RSA-OAEP-256"],
+        "id_token_encryption_enc_values_supported": ["A256GCM"],
         "dpop_signing_alg_values_supported": ["RS256", "EdDSA"],
         "claims_supported": [
             "sub", "iss", "aud", "exp", "iat", "auth_time", "nonce", "at_hash", "c_hash",
@@ -102,6 +116,14 @@ pub async fn realm_discovery_handler(state: OidcState, realm: String) -> Json<Va
         "claims_parameter_supported": true,
         "request_parameter_supported": true,
         "request_object_signing_alg_values_supported": ["RS256", "EdDSA"],
+        "token_exchange_endpoint": format!("{}/protocol/openid-connect/token", realm_base),
+        "token_exchange_subject_token_types_supported": [
+            "urn:ietf:params:oauth:token-type:access_token",
+            "urn:ietf:params:oauth:token-type:refresh_token",
+            "urn:ietf:params:oauth:token-type:id_token"
+        ],
         "code_challenge_methods_supported": ["S256"],
+        "response_modes_supported": ["query", "fragment", "form_post", "jwt", "query.jwt", "fragment.jwt", "form_post.jwt"],
+        "authorization_details_types_supported": ["payment_initiation", "account_information", "custom"],
     }))
 }

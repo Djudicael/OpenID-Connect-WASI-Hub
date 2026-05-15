@@ -108,6 +108,11 @@ mod tests {
             post_logout_redirect_uris: vec![],
             subject_type: "public".into(),
             sector_identifier_uri: None,
+            response_modes: vec!["query".to_string(), "fragment".to_string()],
+            id_token_encrypted_response_alg: None,
+            id_token_encrypted_response_enc: None,
+            id_token_encryption_key_encrypted: None,
+            id_token_encryption_key_pem: None,
         }
     }
 

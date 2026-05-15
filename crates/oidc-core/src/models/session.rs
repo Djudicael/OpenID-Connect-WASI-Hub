@@ -46,4 +46,6 @@ pub struct Session {
     pub reused_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Whether the entire token family has been revoked.
     pub family_revoked: bool,
+    /// RFC 9396 RAR authorization_details granted during authorization.
+    pub authorization_details: Option<serde_json::Value>,
 }

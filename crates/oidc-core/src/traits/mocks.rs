@@ -800,6 +800,7 @@ impl TokenService for MockTokenService {
         audience: &str,
         scopes: &[String],
         _dpop_jkt: Option<&str>,
+        _authorization_details: Option<&serde_json::Value>,
     ) -> Result<String, OidcError> {
         // Generate a deterministic-ish token for testing
         let token = format!("at:{}:{}:{}", subject, audience, scopes.join(","));
@@ -812,6 +813,7 @@ impl TokenService for MockTokenService {
             iat: chrono::Utc::now().timestamp(),
             scope: scopes.join(" "),
             cnf,
+            authorization_details: _authorization_details.cloned(),
         };
         self.access_tokens
             .write()
@@ -956,6 +958,11 @@ mod tests {
             post_logout_redirect_uris: vec![],
             subject_type: "public".into(),
             sector_identifier_uri: None,
+            response_modes: vec!["query".to_string(), "fragment".to_string()],
+            id_token_encrypted_response_alg: None,
+            id_token_encrypted_response_enc: None,
+            id_token_encryption_key_encrypted: None,
+            id_token_encryption_key_pem: None,
         }
     }
 
@@ -981,6 +988,7 @@ mod tests {
             rotated_at: None,
             reused_at: None,
             family_revoked: false,
+            authorization_details: None,
         }
     }
 
@@ -1020,6 +1028,8 @@ mod tests {
             response_type: ResponseType::CODE,
             acr_values: vec![],
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+            response_mode: None,
+            authorization_details: None,
         }
     }
 
@@ -1518,6 +1528,7 @@ mod tests {
                 "user-1",
                 "client-1",
                 &["openid".into(), "profile".into()],
+                None,
                 None,
             )
             .await

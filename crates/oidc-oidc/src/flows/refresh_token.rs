@@ -119,7 +119,7 @@ impl RefreshTokenFlow {
 
             let token_svc = state.token_service_for_realm(session.realm_id).await?;
             let access_token = token_svc
-                .issue_access_token(&subject, &audience, &scopes, dpop_jkt)
+                .issue_access_token(&subject, &audience, &scopes, dpop_jkt, None)
                 .await?;
 
             let at_hash = oidc_core::utils::compute_at_hash(&access_token);
@@ -141,6 +141,9 @@ impl RefreshTokenFlow {
             let id_token = token_svc
                 .issue_id_token(&subject, &audience, Some(id_token_extra))
                 .await?;
+
+            // Optionally encrypt the ID token if the client has JWE configured
+            let id_token = crate::flows::maybe_encrypt_id_token(state, &id_token, &client)?;
 
             // --- Store new session with rotation chain ---
             let new_access_hash = sha2_256_hex(&access_token);
@@ -169,6 +172,7 @@ impl RefreshTokenFlow {
                 rotated_at: None,
                 reused_at: None,
                 family_revoked: false,
+                authorization_details: None,
             };
 
             SessionRepo.create(&mut conn, &new_session).await?;

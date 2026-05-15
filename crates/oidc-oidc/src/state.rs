@@ -1,3 +1,4 @@
+use base64::Engine;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -98,5 +99,82 @@ impl OidcState {
             }
             _ => Ok(self.token_service.clone()), // Fallback to global
         }
+    }
+
+    /// Decrypt a client's JWE symmetric key using the server's encryption key.
+    ///
+    /// The encrypted value is base64-encoded and contains: nonce (12 bytes) + ciphertext + tag.
+    /// This is used to recover the raw symmetric key for JWE `dir` encryption at
+    /// ID token issuance time.
+    pub fn decrypt_client_encryption_key(
+        &self,
+        encrypted: &str,
+    ) -> Result<Vec<u8>, oidc_core::OidcError> {
+        use aes_gcm::aead::Aead;
+        use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
+
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encrypted)
+            .map_err(|e| {
+                oidc_core::OidcError::Internal(format!("Invalid base64 in encryption key: {e}"))
+            })?;
+
+        if bytes.len() < 29 {
+            // 12 (nonce) + 16 (tag) + 1 (minimum ciphertext)
+            return Err(oidc_core::OidcError::Internal(
+                "Encrypted key too short".into(),
+            ));
+        }
+
+        let (nonce_bytes, ct_and_tag) = bytes.split_at(12);
+        let (ct, tag) = ct_and_tag.split_at(ct_and_tag.len() - 16);
+
+        let key_bytes = self.decode_encryption_key()?;
+        let cipher = Aes256Gcm::new_from_slice(&key_bytes)
+            .map_err(|e| oidc_core::OidcError::Internal(format!("AES key error: {e}")))?;
+        let nonce = Nonce::from_slice(nonce_bytes);
+
+        let mut combined = Vec::with_capacity(ct.len() + tag.len());
+        combined.extend_from_slice(ct);
+        combined.extend_from_slice(tag);
+
+        let decrypted = cipher
+            .decrypt(nonce, combined.as_ref())
+            .map_err(|e| oidc_core::OidcError::Internal(format!("Decryption error: {e}")))?;
+
+        Ok(decrypted)
+    }
+
+    /// Encrypt a client's JWE symmetric key using the server's encryption key.
+    ///
+    /// Returns a base64-encoded string containing: nonce (12 bytes) + ciphertext + tag.
+    /// This is used to securely store the raw symmetric key at rest.
+    pub fn encrypt_client_encryption_key(
+        &self,
+        raw_key: &[u8],
+    ) -> Result<String, oidc_core::OidcError> {
+        use aes_gcm::aead::Aead;
+        use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
+
+        let key_bytes = self.decode_encryption_key()?;
+        let cipher = Aes256Gcm::new_from_slice(&key_bytes)
+            .map_err(|e| oidc_core::OidcError::Internal(format!("AES key error: {e}")))?;
+
+        // Generate random nonce
+        let mut nonce_bytes = [0u8; 12];
+        getrandom::fill(&mut nonce_bytes)
+            .map_err(|e| oidc_core::OidcError::Internal(format!("getrandom failed: {e}")))?;
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        let ciphertext = cipher
+            .encrypt(nonce, raw_key)
+            .map_err(|e| oidc_core::OidcError::Internal(format!("AES-GCM encrypt error: {e}")))?;
+
+        // ciphertext includes tag appended (last 16 bytes)
+        let mut result = Vec::with_capacity(12 + ciphertext.len());
+        result.extend_from_slice(&nonce_bytes);
+        result.extend_from_slice(&ciphertext);
+
+        Ok(base64::engine::general_purpose::STANDARD.encode(&result))
     }
 }

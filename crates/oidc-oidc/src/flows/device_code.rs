@@ -1,12 +1,12 @@
-//! Authorization Code + PKCE flow.
+//! Device Authorization Grant flow (RFC 8628).
 
 use oidc_core::OidcError;
 use oidc_core::models::Session;
 use oidc_core::traits::token_service::{IdTokenExtraClaims, TokenService};
-use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, sha2_256_hex, verify_s256};
+use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, sha2_256_hex};
 use oidc_repository::mapper::pg_err;
-use oidc_repository::repositories::auth_code_repo::AuthCodeRepo;
 use oidc_repository::repositories::client_repo::ClientRepo;
+use oidc_repository::repositories::device_code_repo::DeviceCodeRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 use oidc_repository::with_transaction;
@@ -14,63 +14,81 @@ use serde_json::{Value, json};
 
 use crate::state::OidcState;
 
-/// Authorization Code flow handler.
-pub struct AuthorizationCodeFlow;
+/// Device Authorization Grant flow handler.
+pub struct DeviceCodeFlow;
 
-impl AuthorizationCodeFlow {
-    /// Execute the authorization code flow.
+impl DeviceCodeFlow {
+    /// Execute the device code flow.
+    ///
+    /// Per RFC 8628 §3.4, the client polls the token endpoint with the device code.
+    /// Returns:
+    /// - `authorization_pending` if the user has not yet authorized
+    /// - `slow_down` if the client is polling too fast
+    /// - `expired_token` if the device code has expired
+    /// - `access_denied` if the device code was already used
+    /// - Token response on success
     ///
     /// When `dpop_jkt` is provided, the access token is bound to the DPoP
     /// key via a `cnf.jkt` claim and `token_type` is `"DPoP"` (RFC 9449).
     pub async fn execute(
         state: &OidcState,
-        code: &str,
-        redirect_uri: &str,
+        device_code: &str,
         client_id: &str,
-        code_verifier: &str,
         dpop_jkt: Option<&str>,
     ) -> Result<Value, OidcError> {
+        let device_code_hash = sha2_256_hex(device_code);
+
         let mut conn = state.connect().await?;
 
         with_transaction!(conn, pg_err, {
-            // --- Look up and validate the authorization code ---
-            let auth_code = match AuthCodeRepo.find_by_code(&mut conn, code).await? {
-                Some(ac) => ac,
-                None => return Err(OidcError::InvalidRequest),
+            // --- Find the device code by hash ---
+            let dc = match DeviceCodeRepo
+                .find_by_device_code(&mut conn, &device_code_hash)
+                .await?
+            {
+                Some(dc) => dc,
+                None => return Err(OidcError::ExpiredToken),
             };
 
-            if auth_code.used {
-                return Err(OidcError::InvalidRequest);
+            // --- Verify client matches ---
+            if dc.client_id.to_string() != client_id {
+                return Err(OidcError::InvalidClient);
             }
 
-            if auth_code.redirect_uri != redirect_uri {
-                return Err(OidcError::InvalidRequest);
+            // --- Check if expired ---
+            if dc.expires_at < chrono::Utc::now() {
+                return Err(OidcError::ExpiredToken);
             }
 
-            // --- Validate client ---
-            let client = match ClientRepo.find_by_client_id(&mut conn, client_id).await? {
-                Some(c) if c.id == auth_code.client_id && c.enabled => c,
-                Some(_) => return Err(OidcError::InvalidClient),
-                None => return Err(OidcError::InvalidClient),
-            };
-
-            // --- PKCE verification ---
-            // Only S256 is supported — plain method is not allowed
-            if !verify_s256(code_verifier, &auth_code.code_challenge) {
-                return Err(OidcError::InvalidRequest);
+            // --- Check if already used ---
+            if dc.used {
+                return Err(OidcError::AuthorizationDenied(
+                    "Device code already exchanged".into(),
+                ));
             }
 
-            // --- Mark code as used ---
-            AuthCodeRepo.mark_used(&mut conn, auth_code.id).await?;
+            // --- Check if not yet authorized ---
+            if !dc.authorized {
+                return Err(OidcError::AuthorizationPending);
+            }
 
-            // --- Fetch user for ID token claims ---
-            let user = match UserRepo.find_by_id(&mut conn, auth_code.user_id).await? {
+            // --- Fetch the user who authorized ---
+            let user_id = dc.user_id.ok_or_else(|| OidcError::AuthorizationPending)?;
+            let user = match UserRepo.find_by_id(&mut conn, user_id).await? {
                 Some(u) => u,
                 None => return Err(OidcError::NotFound("user".into())),
             };
 
+            // --- Fetch the client for subject type ---
+            let client = match ClientRepo.find_by_client_id(&mut conn, client_id).await? {
+                Some(c) if c.enabled => c,
+                _ => return Err(OidcError::InvalidClient),
+            };
+
+            // --- Mark device code as used ---
+            DeviceCodeRepo.mark_used(&mut conn, dc.id).await?;
+
             // --- Issue tokens ---
-            // Compute subject based on client's subject_type
             let subject = if client.subject_type == "pairwise" {
                 let sector = oidc_core::utils::extract_sector_identifier(
                     client.sector_identifier_uri.as_deref(),
@@ -78,37 +96,29 @@ impl AuthorizationCodeFlow {
                 )
                 .unwrap_or_default();
                 oidc_core::utils::compute_pairwise_sub(
-                    &auth_code.user_id.to_string(),
+                    &user_id.to_string(),
                     &sector,
                     &state.pairwise_salt,
                 )
             } else {
-                auth_code.user_id.to_string()
+                user_id.to_string()
             };
             let audience = client.client_id.clone();
-            let scopes = auth_code.scope.clone();
+            let scopes = dc.scope.clone();
 
-            // Generate sid early so it can be included in both the ID token and session
             let sid = oidc_core::utils::generate_sid().unwrap_or_default();
 
-            let token_svc = state.token_service_for_realm(auth_code.realm_id).await?;
+            let token_svc = state.token_service_for_realm(dc.realm_id).await?;
             let access_token = token_svc
-                .issue_access_token(
-                    &subject,
-                    &audience,
-                    &scopes,
-                    dpop_jkt,
-                    auth_code.authorization_details.as_ref(),
-                )
+                .issue_access_token(&subject, &audience, &scopes, dpop_jkt, None)
                 .await?;
 
             let at_hash = oidc_core::utils::compute_at_hash(&access_token);
-            let c_hash = oidc_core::utils::compute_c_hash(code);
 
             let id_token_extra = IdTokenExtraClaims {
-                nonce: auth_code.nonce.clone(),
+                nonce: None,
                 at_hash: Some(at_hash),
-                c_hash: Some(c_hash),
+                c_hash: None,
                 auth_time: Some(chrono::Utc::now().timestamp()),
                 sid: Some(sid.clone()),
                 email: Some(user.email.clone()),
@@ -130,7 +140,7 @@ impl AuthorizationCodeFlow {
                 phone_number_verified: user.phone_number_verified,
                 updated_at: Some(user.updated_at.timestamp()),
                 acr: Some("urn:mace:incommon:iap:silver".to_string()),
-                amr: Some(vec!["pwd".to_string()]),
+                amr: Some(vec!["device_code".to_string()]),
             };
 
             let id_token = token_svc
@@ -150,10 +160,10 @@ impl AuthorizationCodeFlow {
             let session = Session {
                 id: generate_uuid_v7(),
                 sid,
-                user_id: Some(auth_code.user_id),
-                realm_id: auth_code.realm_id,
+                user_id: Some(user_id),
+                realm_id: dc.realm_id,
                 client_id: client.id,
-                grant_type: "authorization_code".to_string(),
+                grant_type: "urn:ietf:params:oauth:grant-type:device_code".to_string(),
                 access_token_hash: access_hash,
                 refresh_token_hash: refresh_hash,
                 id_token_jti: None,
@@ -168,7 +178,7 @@ impl AuthorizationCodeFlow {
                 rotated_at: None,
                 reused_at: None,
                 family_revoked: false,
-                authorization_details: auth_code.authorization_details.clone(),
+                authorization_details: None,
             };
 
             SessionRepo.create(&mut conn, &session).await?;

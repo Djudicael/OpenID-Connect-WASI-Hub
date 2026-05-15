@@ -77,6 +77,8 @@ pub struct VerifiedAccessToken {
     /// Confirmation claim for DPoP-bound tokens (RFC 9449).
     /// Contains `{"jkt": "<thumbprint>"}` when the token is sender-constrained.
     pub cnf: Option<serde_json::Value>,
+    /// RFC 9396 RAR authorization details granted to this token.
+    pub authorization_details: Option<serde_json::Value>,
 }
 
 /// Abstract token issuance and verification service.
@@ -85,12 +87,15 @@ pub trait TokenService: Send + Sync {
     /// Issue an access token for the given subject and audience.
     /// When `dpop_jkt` is provided, the token is bound to the DPoP key
     /// via a `cnf` claim containing `{"jkt": "<thumbprint>"}` (RFC 9449).
+    /// When `authorization_details` is provided, the RAR details are included
+    /// as a top-level claim in the access token (RFC 9396).
     async fn issue_access_token(
         &self,
         subject: &str,
         audience: &str,
         scopes: &[String],
         dpop_jkt: Option<&str>,
+        authorization_details: Option<&serde_json::Value>,
     ) -> Result<String, OidcError>;
 
     /// Verify an access token and return the subject.

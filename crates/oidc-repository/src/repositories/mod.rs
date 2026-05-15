@@ -4,6 +4,7 @@ pub mod api_key_repo;
 pub mod audit_event_repo;
 pub mod auth_code_repo;
 pub mod client_repo;
+pub mod device_code_repo;
 pub mod email_verification_token_repo;
 pub mod federated_identity_repo;
 pub mod identity_provider_repo;

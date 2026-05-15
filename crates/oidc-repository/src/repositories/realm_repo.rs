@@ -121,6 +121,19 @@ impl RealmRepo {
         mapper::i64_(&row, 0)
     }
 
+    /// Find all enabled realms.
+    pub async fn find_all_enabled(&self, conn: &mut Connection) -> Result<Vec<Realm>, OidcError> {
+        let sql = &format!(
+            "SELECT {REALM_COLUMNS} FROM realms WHERE enabled = TRUE AND deleted_at IS NULL ORDER BY name"
+        );
+        let result = conn.query(sql).await.map_err(mapper::pg_err)?;
+        Ok(result
+            .into_rows()
+            .iter()
+            .filter_map(|r| Self::map_row(r).ok())
+            .collect())
+    }
+
     fn map_row(row: &wasi_pg_client::Row) -> Result<Realm, OidcError> {
         Ok(Realm {
             id: mapper::uuid(row, 0)?,

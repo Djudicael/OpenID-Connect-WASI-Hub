@@ -116,6 +116,13 @@ pub async fn introspect_handler(
             }
         }
 
+        // Include authorization_details for RAR tokens (RFC 9396)
+        if let Some(auth_details) = claims.authorization_details {
+            if let Some(obj) = response.as_object_mut() {
+                obj.insert("authorization_details".to_string(), auth_details);
+            }
+        }
+
         Ok(Json(response))
     });
 

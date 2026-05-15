@@ -64,6 +64,26 @@ pub enum OidcError {
     #[error("invalid DPoP proof: {0}")]
     InvalidDPoPProof(String),
 
+    /// The device code has not been authorized yet (RFC 8628 §3.5).
+    #[error("authorization pending")]
+    AuthorizationPending,
+
+    /// The client is polling too fast (RFC 8628 §3.5).
+    #[error("slow down")]
+    SlowDown,
+
+    /// The device code has expired (RFC 8628 §3.5).
+    #[error("expired token")]
+    ExpiredToken,
+
+    /// Invalid subject token (RFC 8693).
+    #[error("invalid subject token: {0}")]
+    InvalidSubjectToken(String),
+
+    /// Invalid actor token (RFC 8693).
+    #[error("invalid actor token: {0}")]
+    InvalidActorToken(String),
+
     /// Internal server error.
     #[error("internal error: {0}")]
     Internal(String),
@@ -86,7 +106,12 @@ impl OidcError {
             | OidcError::UnauthorizedClient
             | OidcError::InvalidRequestObject(_)
             | OidcError::InvalidClientAssertion(_)
-            | OidcError::InvalidDPoPProof(_) => 400,
+            | OidcError::InvalidDPoPProof(_)
+            | OidcError::AuthorizationPending
+            | OidcError::SlowDown
+            | OidcError::ExpiredToken
+            | OidcError::InvalidSubjectToken(_)
+            | OidcError::InvalidActorToken(_) => 400,
 
             OidcError::NotFound(_) => 404,
             OidcError::Conflict(_) => 409,

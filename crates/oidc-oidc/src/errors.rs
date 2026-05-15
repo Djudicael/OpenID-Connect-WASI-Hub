@@ -101,6 +101,37 @@ impl OidcErrorResponse {
         }
     }
 
+    /// Authorization pending (RFC 8628 §3.5).
+    pub fn authorization_pending() -> Self {
+        Self {
+            error: "authorization_pending".to_string(),
+            error_description: Some(
+                "The authorization request is still pending as the end user has not yet completed the authorization".to_string(),
+            ),
+            error_uri: None,
+        }
+    }
+
+    /// Slow down (RFC 8628 §3.5).
+    pub fn slow_down() -> Self {
+        Self {
+            error: "slow_down".to_string(),
+            error_description: Some(
+                "The client is polling faster than the allowed interval".to_string(),
+            ),
+            error_uri: None,
+        }
+    }
+
+    /// Expired token (RFC 8628 §3.5).
+    pub fn expired_token() -> Self {
+        Self {
+            error: "expired_token".to_string(),
+            error_description: Some("The device code has expired".to_string()),
+            error_uri: None,
+        }
+    }
+
     /// Create a sanitized error response from an internal error.
     ///
     /// Logs the real error with `tracing::error!` and returns a generic
@@ -133,6 +164,7 @@ impl OidcErrorResponse {
             "unauthorized_client" | "access_denied" => 403,
             "server_error" => 500,
             "temporarily_unavailable" => 503,
+            "authorization_pending" | "slow_down" | "expired_token" => 400,
             _ => 500,
         }
     }
@@ -190,6 +222,15 @@ pub fn from_oidc_error(e: &oidc_core::OidcError) -> OidcErrorResponse {
         }
         OidcError::InvalidDPoPProof(msg) => {
             OidcErrorResponse::invalid_request(format!("Invalid DPoP proof: {msg}"))
+        }
+        OidcError::AuthorizationPending => OidcErrorResponse::authorization_pending(),
+        OidcError::SlowDown => OidcErrorResponse::slow_down(),
+        OidcError::ExpiredToken => OidcErrorResponse::expired_token(),
+        OidcError::InvalidSubjectToken(msg) => {
+            OidcErrorResponse::invalid_request(format!("Invalid subject token: {msg}"))
+        }
+        OidcError::InvalidActorToken(msg) => {
+            OidcErrorResponse::invalid_request(format!("Invalid actor token: {msg}"))
         }
         OidcError::Internal(msg) => OidcErrorResponse::from_internal(msg),
         _ => OidcErrorResponse::from_internal("unknown error"),

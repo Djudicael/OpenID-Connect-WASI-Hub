@@ -328,7 +328,7 @@ pub async fn social_login_callback_handler(
     };
 
     let access_token = match token_svc
-        .issue_access_token(&subject, &audience, &scopes, None)
+        .issue_access_token(&subject, &audience, &scopes, None, None)
         .await
     {
         Ok(t) => t,
@@ -398,6 +398,7 @@ pub async fn social_login_callback_handler(
         rotated_at: None,
         reused_at: None,
         family_revoked: false,
+        authorization_details: None,
     };
 
     if let Err(e) = SessionRepo.create(&mut conn, &session).await {

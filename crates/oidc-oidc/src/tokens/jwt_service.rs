@@ -42,6 +42,9 @@ pub struct AccessTokenClaims {
     /// Contains `{"jkt": "<thumbprint>"}` when the token is sender-constrained.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cnf: Option<serde_json::Value>,
+    /// RFC 9396 RAR authorization details granted to this token.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub authorization_details: Option<serde_json::Value>,
 }
 
 /// JWT claims for an ID token.
@@ -321,7 +324,7 @@ impl JwtTokenService {
     }
 
     /// Encode a JWT manually: base64url(header) + "." + base64url(payload) + "." + base64url(signature)
-    fn encode_jwt<Claims: Serialize>(&self, claims: &Claims) -> Result<String, OidcError> {
+    pub fn encode_jwt<Claims: Serialize>(&self, claims: &Claims) -> Result<String, OidcError> {
         let header = JwtHeader {
             alg: "RS256".to_string(),
             typ: "JWT".to_string(),
@@ -729,6 +732,7 @@ impl TokenService for JwtTokenService {
         audience: &str,
         scopes: &[String],
         dpop_jkt: Option<&str>,
+        authorization_details: Option<&serde_json::Value>,
     ) -> Result<String, OidcError> {
         let now = self.now();
         let cnf = dpop_jkt.map(|jkt| serde_json::json!({"jkt": jkt}));
@@ -740,6 +744,7 @@ impl TokenService for JwtTokenService {
             iat: now,
             scope: scopes.join(" "),
             cnf,
+            authorization_details: authorization_details.cloned(),
         };
         self.encode_jwt(&claims)
     }
@@ -776,6 +781,7 @@ impl TokenService for JwtTokenService {
             iat: claims.iat,
             scope: claims.scope,
             cnf: claims.cnf,
+            authorization_details: claims.authorization_details,
         })
     }
 
@@ -854,7 +860,7 @@ mod tests {
     async fn test_jwt_roundtrip() {
         let service = JwtTokenService::new("https://test.example.com").unwrap();
         let token = service
-            .issue_access_token("user-123", "my-client", &["openid".to_string()], None)
+            .issue_access_token("user-123", "my-client", &["openid".to_string()], None, None)
             .await
             .unwrap();
         assert!(!token.is_empty());
@@ -1079,6 +1085,7 @@ mod tests {
             iat: now,
             scope: "openid".to_string(),
             cnf: None,
+            authorization_details: None,
         };
 
         let token = service.sign_eddsa(&claims).unwrap();
@@ -1106,6 +1113,7 @@ mod tests {
             iat: now,
             scope: "openid".to_string(),
             cnf: None,
+            authorization_details: None,
         };
 
         let token = service.sign_eddsa(&claims).unwrap();
@@ -1120,7 +1128,13 @@ mod tests {
         let service = JwtTokenService::new("https://test.example.com").unwrap();
         // issue_access_token uses RS256 by default
         let token = service
-            .issue_access_token("user-rs256", "my-client", &["openid".to_string()], None)
+            .issue_access_token(
+                "user-rs256",
+                "my-client",
+                &["openid".to_string()],
+                None,
+                None,
+            )
             .await
             .unwrap();
 
@@ -1230,6 +1244,7 @@ mod tests {
             iat: now,
             scope: "openid".to_string(),
             cnf: None,
+            authorization_details: None,
         };
 
         let token = service.sign_eddsa(&claims).unwrap();
@@ -1256,6 +1271,7 @@ mod tests {
             iat: now,
             scope: "openid".to_string(),
             cnf: None,
+            authorization_details: None,
         };
 
         // Sign with RS256

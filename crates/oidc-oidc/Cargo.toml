@@ -26,6 +26,7 @@ getrandom = { workspace = true }
 urlencoding = "2"
 serde_urlencoded = "0.7"
 hex = "0.4"
+aes-gcm = { version = "0.10", features = ["std"] }
 url = "2"
 hmac = "0.12"
 subtle = "2"

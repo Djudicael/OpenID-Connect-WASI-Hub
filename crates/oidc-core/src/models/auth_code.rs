@@ -91,4 +91,8 @@ pub struct AuthCode {
     pub acr_values: Vec<String>,
     /// When the authorization code expires.
     pub expires_at: chrono::DateTime<chrono::Utc>,
+    /// RFC 9101 JARM response_mode from the authorization request.
+    pub response_mode: Option<String>,
+    /// RFC 9396 RAR authorization_details from the authorization request.
+    pub authorization_details: Option<serde_json::Value>,
 }

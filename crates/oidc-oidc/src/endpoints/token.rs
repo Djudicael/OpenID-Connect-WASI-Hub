@@ -10,7 +10,10 @@ use oidc_repository::repositories::client_repo::ClientRepo;
 
 use crate::flows::authorization_code::AuthorizationCodeFlow;
 use crate::flows::client_credentials::ClientCredentialsFlow;
+use crate::flows::device_code::DeviceCodeFlow;
+use crate::flows::jwt_bearer::JwtBearerFlow;
 use crate::flows::refresh_token::RefreshTokenFlow;
+use crate::flows::token_exchange::TokenExchangeFlow;
 use crate::state::OidcState;
 use crate::tokens::JwtTokenService;
 use crate::tokens::dpop::verify_dpop_proof;
@@ -112,6 +115,51 @@ pub async fn token_handler(
                 .ok_or(OidcError::InvalidRequest)?;
 
             RefreshTokenFlow::execute(&state, refresh_token, dpop_jkt.as_deref()).await?
+        }
+        "urn:ietf:params:oauth:grant-type:device_code" => {
+            let device_code = params.get("device_code").ok_or(OidcError::InvalidRequest)?;
+
+            DeviceCodeFlow::execute(&state, device_code, &client_id, dpop_jkt.as_deref()).await?
+        }
+        "urn:ietf:params:oauth:grant-type:jwt-bearer" => {
+            let assertion = params.get("assertion").ok_or(OidcError::InvalidRequest)?;
+            let scope = params.get("scope").map(|s| s.as_str());
+
+            JwtBearerFlow::execute(&state, assertion, scope, &client_id, dpop_jkt.as_deref())
+                .await?
+        }
+        "urn:ietf:params:oauth:grant-type:token-exchange" => {
+            let subject_token = params
+                .get("subject_token")
+                .ok_or(OidcError::InvalidRequest)?;
+            let subject_token_type = params
+                .get("subject_token_type")
+                .ok_or(OidcError::InvalidRequest)?;
+            let actor_token = params.get("actor_token").map(|s| s.as_str());
+            let actor_token_type = params.get("actor_token_type").map(|s| s.as_str());
+            let resource = params.get("resource").map(|s| s.as_str());
+            let audience = params.get("audience").map(|s| s.as_str());
+            let scope_str = params.get("scope").map(|s| s.as_str());
+            let requested_token_type = params.get("requested_token_type").map(|s| s.as_str());
+
+            // Parse space-separated scope string into Vec<String>
+            let scopes: Option<Vec<String>> =
+                scope_str.map(|s| s.split_whitespace().map(String::from).collect());
+
+            TokenExchangeFlow::execute(
+                &state,
+                subject_token,
+                subject_token_type,
+                actor_token,
+                actor_token_type,
+                resource,
+                audience,
+                scopes.as_deref(),
+                requested_token_type,
+                &client_id,
+                dpop_jkt.as_deref(),
+            )
+            .await?
         }
         _ => return Err(OidcError::UnsupportedGrantType),
     };

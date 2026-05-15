@@ -174,11 +174,15 @@ fn make_client_with_client_id(client_id: String) -> Client {
         post_logout_redirect_uris: vec![],
         subject_type: "public".into(),
         sector_identifier_uri: None,
+        response_modes: vec!["query".to_string(), "fragment".to_string()],
+        id_token_encrypted_response_alg: None,
+        id_token_encrypted_response_enc: None,
+        id_token_encryption_key_encrypted: None,
+        id_token_encryption_key_pem: None,
     }
 }
 
 proptest! {
-    /// `User::validate` rejects empty emails.
     #[test]
     fn proptest_user_validate_rejects_empty_email(email in "") {
         let user = make_user_with_email(email);

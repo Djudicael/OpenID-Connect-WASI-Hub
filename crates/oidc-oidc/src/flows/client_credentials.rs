@@ -58,6 +58,7 @@ impl ClientCredentialsFlow {
                     &client.client_id,
                     &client.allowed_scopes,
                     dpop_jkt,
+                    None,
                 )
                 .await?;
 
@@ -87,6 +88,7 @@ impl ClientCredentialsFlow {
                 rotated_at: None,
                 reused_at: None,
                 family_revoked: false,
+                authorization_details: None,
             };
 
             SessionRepo.create(&mut conn, &session).await?;

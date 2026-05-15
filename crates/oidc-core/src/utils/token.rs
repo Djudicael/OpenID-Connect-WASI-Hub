@@ -24,6 +24,22 @@ pub fn generate_sid() -> Result<String, OidcError> {
     Ok(hex::encode(buf))
 }
 
+/// Generate a user code for device authorization (RFC 8628 §6.1).
+/// Returns 8 random uppercase consonant characters formatted as "XXXX-XXXX".
+/// Uses consonants only to avoid accidentally generating profanity.
+pub fn generate_user_code() -> Result<String, OidcError> {
+    // Consonants only — no vowels to avoid accidental profanity
+    let charset = b"BCDFGHJKLMNPQRSTVWXYZ";
+    let mut buf = [0u8; 8];
+    getrandom::fill(&mut buf)
+        .map_err(|e| OidcError::Internal(format!("getrandom failed: {}", e)))?;
+    let code: String = buf
+        .iter()
+        .map(|&b| charset[(b as usize) % charset.len()] as char)
+        .collect();
+    Ok(format!("{}-{}", &code[..4], &code[4..]))
+}
+
 /// Compute `session_state` per OIDC Session Management §3.
 ///
 /// The session state value is: `SHA256(client_id + " " + OP browser session ID + " " + origin)`

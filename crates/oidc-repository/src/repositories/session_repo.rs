@@ -13,7 +13,8 @@ const SESSION_COLUMNS: &str = r#"
     access_token_hash, refresh_token_hash, id_token_jti,
     scope, revoked, expires_at, refresh_expires_at,
     created_at, last_used_at,
-    token_family_id, previous_session_id, rotated_at, reused_at, family_revoked
+    token_family_id, previous_session_id, rotated_at, reused_at, family_revoked,
+    authorization_details
 "#;
 
 impl SessionRepo {
@@ -54,8 +55,9 @@ impl SessionRepo {
                 id, sid, user_id, realm_id, client_id, grant_type,
                 access_token_hash, refresh_token_hash, id_token_jti,
                 scope, revoked, expires_at, refresh_expires_at,
-                token_family_id, previous_session_id, rotated_at, reused_at, family_revoked
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                token_family_id, previous_session_id, rotated_at, reused_at, family_revoked,
+                authorization_details
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
         "#;
         conn.execute_params(
             sql,
@@ -78,6 +80,7 @@ impl SessionRepo {
                 &entity.rotated_at,
                 &entity.reused_at,
                 &entity.family_revoked,
+                &entity.authorization_details,
             ],
         )
         .await
@@ -369,6 +372,7 @@ impl SessionRepo {
             rotated_at: mapper::opt_datetime(row, 17)?,
             reused_at: mapper::opt_datetime(row, 18)?,
             family_revoked: mapper::bool_(row, 19)?,
+            authorization_details: row.get::<serde_json::Value>(20).ok(),
         })
     }
 }

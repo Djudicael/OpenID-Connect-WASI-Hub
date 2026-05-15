@@ -88,6 +88,11 @@ fn test_client(realm_id: Uuid, client_id: &str, name: &str) -> Client {
         post_logout_redirect_uris: vec![],
         subject_type: "public".into(),
         sector_identifier_uri: None,
+        response_modes: vec!["query".to_string(), "fragment".to_string()],
+        id_token_encrypted_response_alg: None,
+        id_token_encrypted_response_enc: None,
+        id_token_encryption_key_encrypted: None,
+        id_token_encryption_key_pem: None,
     }
 }
 // ===================================================================
@@ -228,6 +233,11 @@ async fn test_client_crud() {
         post_logout_redirect_uris: vec![],
         subject_type: "public".into(),
         sector_identifier_uri: None,
+        response_modes: vec!["query".to_string(), "fragment".to_string()],
+        id_token_encrypted_response_alg: None,
+        id_token_encrypted_response_enc: None,
+        id_token_encryption_key_encrypted: None,
+        id_token_encryption_key_pem: None,
     };
 
     repo.create(&mut conn, &client).await.unwrap();
@@ -309,6 +319,7 @@ async fn test_session_crud() {
         rotated_at: None,
         reused_at: None,
         family_revoked: false,
+        authorization_details: None,
     };
 
     repo.create(&mut conn, &session).await.unwrap();
@@ -431,6 +442,11 @@ async fn test_auth_code_crud() {
         post_logout_redirect_uris: vec![],
         subject_type: "public".into(),
         sector_identifier_uri: None,
+        response_modes: vec!["query".to_string(), "fragment".to_string()],
+        id_token_encrypted_response_alg: None,
+        id_token_encrypted_response_enc: None,
+        id_token_encryption_key_encrypted: None,
+        id_token_encryption_key_pem: None,
     };
     client_repo.create(&mut conn, &client).await.unwrap();
 
@@ -452,12 +468,13 @@ async fn test_auth_code_crud() {
         response_type: ResponseType::CODE,
         acr_values: vec![],
         expires_at: Utc::now() + chrono::Duration::minutes(10),
+        response_mode: None,
+        authorization_details: None,
     };
 
     repo.create(&mut conn, &code).await.unwrap();
 
     let found = repo.find_by_code(&mut conn, "abc123").await.unwrap();
-    assert!(found.is_some());
     let found = found.unwrap();
     // AuthCodeRepo stores the SHA-256 hash of the code, not the plaintext
     let expected_hash = oidc_core::utils::sha2_256_hex("abc123");
@@ -681,6 +698,7 @@ async fn test_session_token_hash_index_performance() {
             rotated_at: None,
             reused_at: None,
             family_revoked: false,
+            authorization_details: None,
         };
         session_repo.create(&mut conn, &session).await.unwrap();
     }
@@ -888,6 +906,7 @@ async fn test_cascade_delete_sessions_on_user_delete() {
         rotated_at: None,
         reused_at: None,
         family_revoked: false,
+        authorization_details: None,
     };
     session_repo.create(&mut conn, &session).await.unwrap();
 
@@ -984,6 +1003,7 @@ async fn test_expired_session_cleanup() {
         rotated_at: None,
         reused_at: None,
         family_revoked: false,
+        authorization_details: None,
     };
     session_repo
         .create(&mut conn, &expired_session)
@@ -1064,6 +1084,8 @@ async fn test_expired_auth_code_cleanup() {
         response_type: ResponseType::CODE,
         acr_values: vec![],
         expires_at: Utc::now() - chrono::Duration::minutes(5), // expired 5 minutes ago
+        response_mode: None,
+        authorization_details: None,
     };
     auth_code_repo
         .create(&mut conn, &expired_code)
