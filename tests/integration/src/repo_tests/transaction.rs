@@ -1,6 +1,6 @@
 //! Tests for the `with_transaction!` macro with repository operations.
 
-use crate::harness::{clean_database, test_conn};
+use crate::harness::test_conn;
 use oidc_core::OidcError;
 use oidc_core::models::{Realm, User};
 use oidc_repository::repositories::{realm_repo::RealmRepo, user_repo::UserRepo};
@@ -50,7 +50,7 @@ fn make_user(realm_id: Uuid, email: &str) -> User {
 #[tokio::test]
 async fn test_with_transaction_commit() -> Result<(), OidcError> {
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
+    
 
     let realm = make_realm("txn-commit-realm");
     let user = make_user(realm.id, "txn@example.com");
@@ -75,7 +75,7 @@ async fn test_with_transaction_commit() -> Result<(), OidcError> {
 #[tokio::test]
 async fn test_with_transaction_rollback() -> Result<(), OidcError> {
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
+    
 
     let realm = make_realm("txn-rollback-realm");
     RealmRepo.create(&mut conn, &realm).await?;
@@ -99,7 +99,7 @@ async fn test_with_transaction_rollback() -> Result<(), OidcError> {
 #[tokio::test]
 async fn test_with_transaction_multi_operation() -> Result<(), OidcError> {
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
+    
 
     let realm = make_realm("txn-multi-realm");
     RealmRepo.create(&mut conn, &realm).await?;
@@ -126,7 +126,7 @@ async fn test_with_transaction_multi_operation() -> Result<(), OidcError> {
 async fn test_with_transaction_rollback_partial() -> Result<(), OidcError> {
     // Create first user, then fail — first should be rolled back too
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
+    
 
     let realm = make_realm("txn-partial-realm");
     RealmRepo.create(&mut conn, &realm).await?;
@@ -150,7 +150,7 @@ async fn test_with_transaction_rollback_partial() -> Result<(), OidcError> {
 async fn test_with_transaction_with_query_one_params() -> Result<(), OidcError> {
     // Test that query_one_params works correctly inside a transaction
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
+    
 
     let realm = make_realm("txn-qop-realm");
     RealmRepo.create(&mut conn, &realm).await?;

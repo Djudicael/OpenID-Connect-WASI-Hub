@@ -13,9 +13,18 @@ pub mod state;
 
 use axum::Router;
 
-/// Build the application router.
+/// Build the application router from environment variables.
 pub fn app_router() -> Router {
     server::starter::build_router()
+}
+
+/// Build the application router with an explicit configuration.
+///
+/// This is the parallel-safe entry point used by integration tests.
+/// Each `TestApp` passes its own isolated `AppConfig` so there is no
+/// race on `std::env::set_var`.
+pub fn app_router_with_config(config: state::AppConfig) -> Router {
+    server::starter::build_router_with_config(config)
 }
 
 /// WASI P2 HTTP server entry point — only compiled when targeting wasm32.

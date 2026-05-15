@@ -3,12 +3,12 @@
 //! These tests specifically exercise the `query_one_params` method that was
 //! reported to hang after a prior `query_params` call on the same connection.
 
-use crate::harness::{clean_database, test_conn};
+use crate::harness::test_conn;
 
 #[tokio::test]
 async fn test_wrapper_query_one_params_returns_row() {
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
+    
 
     // The simplest possible query_one_params
     let result = conn
@@ -24,7 +24,7 @@ async fn test_wrapper_query_one_params_returns_row() {
 #[tokio::test]
 async fn test_wrapper_query_one_params_returns_none() {
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
+    
 
     // A query that returns no rows
     let result = conn
@@ -40,7 +40,7 @@ async fn test_wrapper_query_one_params_after_query_params() {
     // 1. Call query_params on the connection
     // 2. Call query_one_params on the same connection
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
+    
 
     // Step 1: query_params
     let result = conn
@@ -63,7 +63,7 @@ async fn test_wrapper_query_one_params_after_query_params() {
 async fn test_wrapper_query_one_params_after_query() {
     // query (simple protocol) then query_one_params (extended protocol)
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
+    
 
     // Step 1: simple query
     let result = conn.query("SELECT 1").await.expect("query failed");
@@ -81,7 +81,7 @@ async fn test_wrapper_query_one_params_after_query() {
 async fn test_wrapper_mixed_operations_sequence() {
     // The most thorough test: mix of all connection methods in sequence
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
+    
 
     // 1. Simple query
     let result = conn.query("SELECT 1").await.expect("query failed");
@@ -154,7 +154,7 @@ async fn test_wrapper_mixed_operations_sequence() {
 #[tokio::test]
 async fn test_wrapper_begin_commit_rollback() {
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
+    
 
     // Test begin + commit
     conn.begin().await.expect("begin failed");

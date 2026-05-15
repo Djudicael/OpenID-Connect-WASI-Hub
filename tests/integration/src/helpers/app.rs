@@ -4,42 +4,26 @@
 //! PostgreSQL database, seeds baseline test data, and provides a
 //! `reqwest` client for making HTTP requests in integration tests.
 
-use std::sync::OnceLock;
-
-use oidc_core::traits::Hasher;
 use oidc_repository::repositories::{
     client_repo::ClientRepo, realm_repo::RealmRepo, user_repo::UserRepo,
 };
 use uuid::Uuid;
 
-use crate::harness::{clean_database, database_url, test_conn_no_tx};
+use crate::harness::database_url;
 use crate::helpers::fixtures;
 
 // ===================================================================
 // TestApp
 // ===================================================================
 
-/// Global singleton test server — spawned once and reused by every `TestApp`.
-/// This removes the per-test server startup overhead (~200-500 ms).
-///
-/// The server runs on a **dedicated background thread** with its own Tokio
-/// runtime so it survives the end of individual `#[tokio::test]` functions.
-struct GlobalServer {
-    base_url: String,
-    client: reqwest::Client,
-    /// Keep the background runtime alive for the whole test run.
-    _runtime: std::thread::JoinHandle<()>,
-    /// Owned sender so we can signal shutdown if desired.
-    _shutdown_tx: tokio::sync::oneshot::Sender<()>,
-}
-
-static GLOBAL_SERVER: OnceLock<GlobalServer> = OnceLock::new();
+/// Counter for unique per-test database names.
+static TEST_COUNTER: std::sync::Mutex<u64> = std::sync::Mutex::new(0);
 
 /// A running test application instance.
 ///
-/// Uses a **globally shared** OIDC Hub server to avoid spawning a new
-/// Axum instance for every test.  Each test still gets its own clean
-/// database state (via `clean_database` + `seed_baseline_data`).
+/// Each test gets its own **fresh PostgreSQL database** (created from the
+/// migrated template) and a dedicated Axum server on a random port.
+/// This provides perfect isolation without `TRUNCATE` races.
 ///
 /// # Example
 ///
@@ -57,99 +41,104 @@ pub struct TestApp {
     master_realm_id: Uuid,
     /// The admin user email seeded during setup.
     master_user_email: String,
+    /// The per-test database URL (e.g. `postgresql://.../oidc_hub_test_1`).
+    db_url: String,
+    /// Sender half of a oneshot channel — when dropped, signals the
+    /// server task to shut down.
+    shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    /// Handle to the server task so we can await its shutdown.
+    server_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl TestApp {
     /// Create a new test application.
     ///
     /// This will:
-    /// 1. Get (or spawn) the **global** shared server.
-    /// 2. Clean the database.
+    /// 1. Get the shared database URL from the harness.
+    /// 2. Create a **fresh per-test database** from the migrated template.
     /// 3. Seed a master realm, admin user, and `admin-ui` client.
-    /// 4. Return a `TestApp` with the global base URL and HTTP client.
+    /// 4. Build the Axum router with an explicit config (no env vars).
+    /// 5. Spawn the server on `127.0.0.1:0` (random port).
+    /// 6. Return a `TestApp` with the base URL and HTTP client.
     pub async fn new() -> Self {
         let db_url = database_url().await;
 
         // -----------------------------------------------------------------
-        // Global server — spawned once on a background thread, reused by all tests
+        // 1. Create a fresh per-test database
         // -----------------------------------------------------------------
-        if GLOBAL_SERVER.get().is_none() {
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-                .await
-                .expect("failed to bind random port");
-            let port = listener
-                .local_addr()
-                .expect("failed to get local addr")
-                .port();
+        let db_name = {
+            let mut guard = TEST_COUNTER.lock().unwrap();
+            *guard += 1;
+            format!("oidc_hub_test_{}", *guard)
+        };
 
-            let issuer = format!("http://localhost:{port}");
-
-            // SAFETY: Tests run single-threaded (--test-threads=1).
-            unsafe {
-                std::env::set_var("RUST_LOG", "oidc_oidc=trace,oidc_repository=trace,trace");
-                std::env::set_var("OIDC_DATABASE_URL", &db_url);
-                std::env::set_var("OIDC_ENCRYPTION_KEY", fixtures::TEST_ENCRYPTION_KEY);
-                std::env::set_var("OIDC_ISSUER", &issuer);
-                std::env::set_var("OIDC_SERVER_PORT", port.to_string());
-                std::env::set_var("OIDC_SERVER_BIND_ADDRESS", "127.0.0.1");
-                std::env::set_var("OIDC_CORS_ORIGINS", "http://localhost:3000");
-            }
-
-            let app = openid_connect_wasi::app_router();
-            let base_url = format!("http://127.0.0.1:{port}");
-            let client = reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .expect("failed to build reqwest client");
-
-            // Use a tokio oneshot channel for shutdown — the receiver is !Send,
-            // but we only use it inside the async block on the background thread.
-            let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-            // Wrap the receiver in a std::sync::Mutex so it can be moved into the thread
-            let shutdown_rx = std::sync::Mutex::new(Some(shutdown_rx));
-
-            let bg_thread = std::thread::spawn(move || {
-                let rt =
-                    tokio::runtime::Runtime::new().expect("failed to create background runtime");
-                rt.block_on(async move {
-                    let rx = shutdown_rx.lock().unwrap().take().unwrap();
-                    axum::serve(listener, app)
-                        .with_graceful_shutdown(async {
-                            let _ = rx.await;
-                        })
-                        .await
-                        .expect("test server failed");
-                });
-            });
-
-            let _ = GLOBAL_SERVER.set(GlobalServer {
-                base_url,
-                client,
-                _runtime: bg_thread,
-                _shutdown_tx: shutdown_tx,
-            });
-        }
-
-        let global = GLOBAL_SERVER.get().unwrap();
+        let test_db_url = create_test_database(&db_url, &db_name).await;
 
         // -----------------------------------------------------------------
-        // Per-test database reset (single connection for TRUNCATE + seed)
+        // 2. Seed baseline data
         // -----------------------------------------------------------------
         let (master_realm_id, master_user_email) = {
-            let mut conn = test_conn_no_tx().await;
-            clean_database(&mut conn)
+            let config =
+                wasi_pg_client::Config::from_uri(&test_db_url).expect("invalid test database URL");
+            let pg_conn = wasi_pg_client::Connection::connect(&config)
                 .await
-                .expect("clean_database failed");
+                .expect("failed to connect to test database");
+            let mut conn = oidc_repository::connection::Connection::from_pg_client(pg_conn);
             let (id, email) = seed_baseline_data(&mut conn).await;
             let _ = conn.close().await;
             (id, email)
         };
 
+        // -----------------------------------------------------------------
+        // 3. Spawn server on a random port
+        // -----------------------------------------------------------------
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("failed to bind random port");
+        let port = listener
+            .local_addr()
+            .expect("failed to get local addr")
+            .port();
+
+        let issuer = format!("http://localhost:{port}");
+
+        // Build the router with an explicit config so there is NO env-var
+        // race when tests run in parallel.
+        let config = openid_connect_wasi::state::AppConfig {
+            database_url: test_db_url.clone(),
+            bind_address: "127.0.0.1".to_string(),
+            port,
+            issuer: issuer.clone(),
+            encryption_key: fixtures::TEST_ENCRYPTION_KEY.to_string(),
+        };
+        let app = openid_connect_wasi::app_router_with_config(config);
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+        let server_handle = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .expect("test server failed");
+        });
+
+        let base_url = format!("http://127.0.0.1:{port}");
+
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("failed to build reqwest client");
+
         Self {
-            base_url: global.base_url.clone(),
-            client: global.client.clone(),
+            base_url,
+            client,
             master_realm_id,
             master_user_email,
+            db_url: test_db_url,
+            shutdown_tx: Some(shutdown_tx),
+            server_handle: Some(server_handle),
         }
     }
 
@@ -175,11 +164,23 @@ impl TestApp {
         &self.master_user_email
     }
 
+    /// Open a fresh auto-commit connection to this test's isolated database.
+    ///
+    /// Use this for direct SQL / repo calls that must be visible to the app
+    /// server (e.g. `UPDATE clients SET ...`).
+    pub async fn db_conn(&self) -> oidc_repository::connection::Connection {
+        let config = wasi_pg_client::Config::from_uri(&self.db_url).expect("invalid database URL");
+        let pg_conn = wasi_pg_client::Connection::connect(&config)
+            .await
+            .expect("failed to connect to test database");
+        oidc_repository::connection::Connection::from_pg_client(pg_conn)
+    }
+
     /// Seed a user directly in the database and return its ID.
     ///
     /// The password is hashed using Argon2id.
     pub async fn seed_user(&self, email: &str, password: &str) -> Uuid {
-        let mut conn = test_conn_no_tx().await;
+        let mut conn = self.db_conn().await;
         let user = fixtures::test_user(self.master_realm_id, email, password);
         let id = user.id;
         UserRepo
@@ -195,7 +196,7 @@ impl TestApp {
     /// The password is hashed using Argon2id. The user's `enabled` field
     /// is set to `false`.
     pub async fn seed_disabled_user(&self, email: &str, password: &str) -> Uuid {
-        let mut conn = test_conn_no_tx().await;
+        let mut conn = self.db_conn().await;
         let mut user = fixtures::test_user(self.master_realm_id, email, password);
         user.enabled = false;
         let id = user.id;
@@ -217,7 +218,7 @@ impl TestApp {
         client_type: &str,
         redirect_uris: &[&str],
     ) -> Uuid {
-        let mut conn = test_conn_no_tx().await;
+        let mut conn = self.db_conn().await;
         let mut client = fixtures::test_client(
             self.master_realm_id,
             client_id,
@@ -248,7 +249,7 @@ impl TestApp {
         client_secret: &str,
         redirect_uris: &[&str],
     ) -> Uuid {
-        let mut conn = test_conn_no_tx().await;
+        let mut conn = self.db_conn().await;
         let mut client = fixtures::test_client(
             self.master_realm_id,
             client_id,
@@ -271,7 +272,7 @@ impl TestApp {
 
     /// Seed a **public** client (no secret) for implicit/hybrid flow tests.
     pub async fn seed_public_client(&self, client_id: &str, redirect_uris: &[&str]) -> Uuid {
-        let mut conn = test_conn_no_tx().await;
+        let mut conn = self.db_conn().await;
         let client = fixtures::test_public_client(
             self.master_realm_id,
             client_id,
@@ -290,9 +291,51 @@ impl TestApp {
 
 impl Drop for TestApp {
     fn drop(&mut self) {
-        // No-op: the server is global and stays alive for the whole test run.
-        // This avoids the ~50-100 ms abort/shutdown overhead per test.
+        // Signal the server to shut down by dropping the sender.
+        if let Some(tx) = self.shutdown_tx.take() {
+            drop(tx);
+        }
+        // Abort the server task to ensure it doesn't hold DB connections.
+        if let Some(handle) = self.server_handle.take() {
+            handle.abort();
+        }
     }
+}
+
+/// Create a fresh per-test database from the migrated template.
+///
+/// 1. Connects to the shared server using the admin `postgres` database.
+/// 2. Creates a new database named `db_name` from the `oidc_hub_test` template.
+/// 3. Returns a connection URL pointing to the new database.
+async fn create_test_database(base_url: &str, db_name: &str) -> String {
+    // Parse the base URL to extract host, port, user, password.
+    let parsed = url::Url::parse(base_url).expect("invalid database URL");
+    let host = parsed.host_str().unwrap_or("localhost");
+    let port = parsed.port().unwrap_or(5432);
+    let user = parsed.username();
+    let password = parsed.password().unwrap_or("postgres");
+
+    // Connect to the default `postgres` database to issue CREATE DATABASE.
+    let admin_url = format!("postgresql://{user}:{password}@{host}:{port}/postgres");
+    let config = wasi_pg_client::Config::from_uri(&admin_url).expect("invalid admin URL");
+    let mut conn = wasi_pg_client::Connection::connect(&config)
+        .await
+        .expect("failed to connect to postgres admin database");
+
+    // Drop if exists (cleanup from previous crashed run), then create from template.
+    let drop_sql = format!("DROP DATABASE IF EXISTS \"{db_name}\"");
+    let create_sql =
+        format!("CREATE DATABASE \"{db_name}\" WITH TEMPLATE = 'oidc_hub_test' OWNER = '{user}'");
+
+    let _ = conn.execute(&drop_sql).await;
+    conn.execute(&create_sql)
+        .await
+        .expect("failed to create test database from template");
+
+    let _ = conn.close().await;
+
+    // Return the connection URL for the new database.
+    format!("postgresql://{user}:{password}@{host}:{port}/{db_name}")
 }
 // ===================================================================
 

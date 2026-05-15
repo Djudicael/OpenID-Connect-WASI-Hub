@@ -288,7 +288,7 @@ async fn test_realm_login_page_disabled_realm() {
     let app = TestApp::new().await;
 
     // Seed a new realm and disable it
-    let mut conn = crate::harness::test_conn_no_tx().await;
+    let mut conn = app.db_conn().await;
     let disabled_realm = crate::helpers::fixtures::test_realm("disabled-realm");
     let _realm_id = disabled_realm.id;
     oidc_repository::repositories::realm_repo::RealmRepo

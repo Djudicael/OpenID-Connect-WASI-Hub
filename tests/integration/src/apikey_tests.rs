@@ -9,7 +9,6 @@ use reqwest::StatusCode;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use crate::harness::test_conn_no_tx;
 use crate::helpers::app::TestApp;
 
 // ===================================================================
@@ -26,7 +25,7 @@ async fn seed_api_key(
     scopes: Vec<String>,
     expires_at: Option<chrono::DateTime<Utc>>,
 ) -> (oidc_core::models::ApiKey, String) {
-    let mut conn = test_conn_no_tx().await;
+    let mut conn = app.db_conn().await;
     let (api_key, raw_key) = oidc_apikey::ApiKeyService::generate_key(
         &mut conn,
         app.master_realm_id(),
@@ -63,12 +62,14 @@ async fn seed_api_key(
 }
 
 /// Seed an API key in a *different* realm (not the master realm).
+/// Uses `app.db_conn()` so data lands in the same isolated DB as the server.
 async fn seed_api_key_in_realm(
+    app: &TestApp,
     realm_id: Uuid,
     name: &str,
     scopes: Vec<String>,
 ) -> (oidc_core::models::ApiKey, String) {
-    let mut conn = test_conn_no_tx().await;
+    let mut conn = app.db_conn().await;
     let result = oidc_apikey::ApiKeyService::generate_key(
         &mut conn,
         realm_id,
@@ -87,8 +88,8 @@ async fn seed_api_key_in_realm(
 }
 
 /// Seed a second realm and return its ID.
-async fn seed_second_realm(_app: &TestApp) -> Uuid {
-    let mut conn = test_conn_no_tx().await;
+async fn seed_second_realm(app: &TestApp) -> Uuid {
+    let mut conn = app.db_conn().await;
     let suffix = Uuid::new_v4().to_string()[..8].to_string();
     let realm = crate::helpers::fixtures::test_realm(&format!("other-realm-{suffix}"));
     let id = realm.id;
@@ -399,8 +400,13 @@ async fn test_api_key_cannot_access_other_realm() {
     let other_realm_id = seed_second_realm(&app).await;
 
     // Seed a key in the OTHER realm with admin scope.
-    let (_, other_realm_key) =
-        seed_api_key_in_realm(other_realm_id, "realm-b-admin-key", vec!["admin".into()]).await;
+    let (_, other_realm_key) = seed_api_key_in_realm(
+        &app,
+        other_realm_id,
+        "realm-b-admin-key",
+        vec!["admin".into()],
+    )
+    .await;
 
     // Try to list keys in the MASTER realm using the OTHER realm's key.
     // The key is valid (it authenticates), but it belongs to a different

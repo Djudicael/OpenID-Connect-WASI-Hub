@@ -1,13 +1,23 @@
 //! Server startup logic for native and WASM runtimes.
 
 use crate::router;
-use crate::state::AppState;
+use crate::state::{AppConfig, AppState};
 use axum::Router;
 
-/// Assemble all sub-routers into the application router.
+/// Assemble all sub-routers into the application router from env vars.
 pub fn build_router() -> Router {
     let state = AppState::from_env();
+    build_router_with_state(state)
+}
 
+/// Assemble all sub-routers with an explicitly-provided config.
+/// Used by integration tests so each `TestApp` is fully isolated.
+pub fn build_router_with_config(config: AppConfig) -> Router {
+    let state = AppState::from_config(config);
+    build_router_with_state(state)
+}
+
+fn build_router_with_state(state: AppState) -> Router {
     // Rate limiter shared state (per-IP, in-memory)
     let rate_limiter = std::sync::Arc::new(crate::middleware::rate_limit::RateLimiter::from_env());
 

@@ -18,7 +18,7 @@ use std::net::IpAddr;
 use std::str::FromStr;
 use uuid::Uuid;
 
-use crate::harness::{clean_database, test_conn};
+use crate::harness::test_conn;
 
 // ===================================================================
 // Helpers
@@ -190,25 +190,18 @@ fn make_audit_event(realm_id: Uuid, event_type: &str, actor_id: Option<Uuid>) ->
 }
 
 /// Seed a realm + user + client for tests that need all three.
-async fn seed_realm_user_client() -> (Realm, User, Client) {
-    let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
-
+async fn seed_realm_user_client(
+    conn: &mut oidc_repository::connection::Connection,
+) -> (Realm, User, Client) {
     let realm = make_realm("lifecycle-realm");
-    RealmRepo
-        .create(&mut conn, &realm)
-        .await
-        .expect("realm create");
+    RealmRepo.create(conn, &realm).await.expect("realm create");
 
     let user = make_user(realm.id, "lifecycle@example.com");
-    UserRepo
-        .create(&mut conn, &user)
-        .await
-        .expect("user create");
+    UserRepo.create(conn, &user).await.expect("user create");
 
     let client = make_client(realm.id, "lifecycle-client");
     ClientRepo
-        .create(&mut conn, &client)
+        .create(conn, &client)
         .await
         .expect("client create");
 
@@ -222,7 +215,6 @@ async fn seed_realm_user_client() -> (Realm, User, Client) {
 #[tokio::test]
 async fn test_realm_find_by_name_not_found() {
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
 
     let found = RealmRepo
         .find_by_name(&mut conn, "nonexistent")
@@ -234,11 +226,10 @@ async fn test_realm_find_by_name_not_found() {
 #[tokio::test]
 async fn test_realm_list_and_count() {
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
 
-    // Initially empty
-    let count = RealmRepo.count(&mut conn).await.expect("count failed");
-    assert_eq!(count, 0);
+    // Count existing realms (shared template may have leftovers from
+    // other parallel tests that committed data).
+    let baseline = RealmRepo.count(&mut conn).await.expect("count failed");
 
     // Create 3 realms
     for i in 0..3 {
@@ -250,19 +241,26 @@ async fn test_realm_list_and_count() {
     }
 
     let count = RealmRepo.count(&mut conn).await.expect("count failed");
-    assert_eq!(count, 3);
+    assert_eq!(count, baseline + 3);
 
-    let list = RealmRepo.list(&mut conn, 2, 0).await.expect("list failed");
+    let list = RealmRepo
+        .list(&mut conn, 2, baseline)
+        .await
+        .expect("list failed");
     assert_eq!(list.len(), 2);
 
-    let list = RealmRepo.list(&mut conn, 2, 2).await.expect("list failed");
+    let list = RealmRepo
+        .list(&mut conn, 2, baseline + 2)
+        .await
+        .expect("list failed");
     assert_eq!(list.len(), 1);
 }
 
 #[tokio::test]
 async fn test_realm_soft_delete_excludes_from_queries() {
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
+
+    let baseline = RealmRepo.count(&mut conn).await.expect("count failed");
 
     let realm = make_realm("soft-delete-realm");
     RealmRepo
@@ -299,7 +297,7 @@ async fn test_realm_soft_delete_excludes_from_queries() {
     );
 
     let count = RealmRepo.count(&mut conn).await.expect("count failed");
-    assert_eq!(count, 0);
+    assert_eq!(count, baseline);
 }
 
 // ===================================================================
@@ -309,7 +307,6 @@ async fn test_realm_soft_delete_excludes_from_queries() {
 #[tokio::test]
 async fn test_user_optional_fields() {
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
 
     let realm = make_realm("user-optional-realm");
     RealmRepo
@@ -365,7 +362,6 @@ async fn test_user_optional_fields() {
 #[tokio::test]
 async fn test_user_list_with_search() {
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
 
     let realm = make_realm("user-search-realm");
     RealmRepo
@@ -401,7 +397,6 @@ async fn test_user_list_with_search() {
 #[tokio::test]
 async fn test_user_update() {
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
 
     let realm = make_realm("user-update-realm");
     RealmRepo
@@ -440,7 +435,6 @@ async fn test_user_update() {
 #[tokio::test]
 async fn test_client_confidential_with_secret() {
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
 
     let realm = make_realm("client-secret-realm");
     RealmRepo
@@ -493,7 +487,6 @@ async fn test_client_confidential_with_secret() {
 #[tokio::test]
 async fn test_client_list_with_filters() {
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
 
     let realm = make_realm("client-list-realm");
     RealmRepo
@@ -531,7 +524,6 @@ async fn test_client_list_with_filters() {
 #[tokio::test]
 async fn test_client_update() {
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
 
     let realm = make_realm("client-update-realm");
     RealmRepo
@@ -572,8 +564,8 @@ async fn test_client_update() {
 
 #[tokio::test]
 async fn test_session_lifecycle_create_find_revoke() {
-    let (realm, user, client) = seed_realm_user_client().await;
     let mut conn = test_conn().await;
+    let (realm, user, client) = seed_realm_user_client(&mut conn).await;
 
     let session = make_session(user.id, realm.id, client.id, "lifecycle_hash");
     SessionRepo
@@ -622,8 +614,8 @@ async fn test_session_lifecycle_create_find_revoke() {
 
 #[tokio::test]
 async fn test_session_refresh_token_lifecycle() {
-    let (realm, user, client) = seed_realm_user_client().await;
     let mut conn = test_conn().await;
+    let (realm, user, client) = seed_realm_user_client(&mut conn).await;
 
     let mut session = make_session(user.id, realm.id, client.id, "refresh_lifecycle_hash");
     session.refresh_token_hash = Some("refresh_lifecycle_rhash".to_string());
@@ -662,8 +654,8 @@ async fn test_session_refresh_token_lifecycle() {
 
 #[tokio::test]
 async fn test_session_token_rotation_chain() {
-    let (realm, user, client) = seed_realm_user_client().await;
     let mut conn = test_conn().await;
+    let (realm, user, client) = seed_realm_user_client(&mut conn).await;
 
     let family_id = Uuid::new_v4();
 
@@ -727,8 +719,8 @@ async fn test_session_token_rotation_chain() {
 
 #[tokio::test]
 async fn test_session_reuse_detection() {
-    let (realm, user, client) = seed_realm_user_client().await;
     let mut conn = test_conn().await;
+    let (realm, user, client) = seed_realm_user_client(&mut conn).await;
 
     let session = make_session(user.id, realm.id, client.id, "reuse_hash");
     SessionRepo
@@ -752,8 +744,8 @@ async fn test_session_reuse_detection() {
 
 #[tokio::test]
 async fn test_session_revoke_all_for_user() {
-    let (realm, user, client) = seed_realm_user_client().await;
     let mut conn = test_conn().await;
+    let (realm, user, client) = seed_realm_user_client(&mut conn).await;
 
     // Create 3 sessions for the same user
     for i in 0..3 {
@@ -787,8 +779,8 @@ async fn test_session_revoke_all_for_user() {
 
 #[tokio::test]
 async fn test_session_list_and_count() {
-    let (realm, user, client) = seed_realm_user_client().await;
     let mut conn = test_conn().await;
+    let (realm, user, client) = seed_realm_user_client(&mut conn).await;
 
     for i in 0..5 {
         let session = make_session(user.id, realm.id, client.id, &format!("list_hash_{}", i));
@@ -824,7 +816,6 @@ async fn test_session_list_and_count() {
 #[tokio::test]
 async fn test_api_key_lifecycle() {
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
 
     let realm = make_realm("apikey-lifecycle-realm");
     RealmRepo
@@ -913,7 +904,6 @@ async fn test_api_key_lifecycle() {
 #[tokio::test]
 async fn test_api_key_find_by_realm() {
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
 
     let realm = make_realm("apikey-realm-realm");
     RealmRepo
@@ -959,7 +949,6 @@ async fn test_api_key_find_by_realm() {
 #[tokio::test]
 async fn test_api_key_expired_not_found_by_prefix() {
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
 
     let realm = make_realm("apikey-expired-realm");
     RealmRepo
@@ -989,7 +978,6 @@ async fn test_api_key_expired_not_found_by_prefix() {
 #[tokio::test]
 async fn test_signing_key_lifecycle() {
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
 
     let realm = make_realm("signing-lifecycle-realm");
     RealmRepo
@@ -1065,7 +1053,6 @@ async fn test_signing_key_lifecycle() {
 #[tokio::test]
 async fn test_signing_key_update() {
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
 
     let realm = make_realm("signing-update-realm");
     RealmRepo
@@ -1102,8 +1089,8 @@ async fn test_signing_key_update() {
 
 #[tokio::test]
 async fn test_auth_code_lifecycle() {
-    let (realm, user, client) = seed_realm_user_client().await;
     let mut conn = test_conn().await;
+    let (realm, user, client) = seed_realm_user_client(&mut conn).await;
 
     let code = make_auth_code(client.id, user.id, realm.id, "lifecycle_code");
     AuthCodeRepo
@@ -1139,8 +1126,8 @@ async fn test_auth_code_lifecycle() {
 
 #[tokio::test]
 async fn test_auth_code_wrong_code_not_found() {
-    let (realm, user, client) = seed_realm_user_client().await;
     let mut conn = test_conn().await;
+    let (realm, user, client) = seed_realm_user_client(&mut conn).await;
 
     let code = make_auth_code(client.id, user.id, realm.id, "correct_code");
     AuthCodeRepo
@@ -1163,7 +1150,6 @@ async fn test_auth_code_wrong_code_not_found() {
 #[tokio::test]
 async fn test_audit_event_create_and_find() {
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
 
     let realm = make_realm("audit-repo-realm");
     RealmRepo
@@ -1212,7 +1198,6 @@ async fn test_audit_event_create_and_find() {
 #[tokio::test]
 async fn test_audit_event_count_recent_failures() {
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
 
     let realm = make_realm("audit-failures-realm");
     RealmRepo
@@ -1265,7 +1250,6 @@ async fn test_audit_event_count_recent_failures() {
 #[tokio::test]
 async fn test_audit_event_system_actor() {
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
 
     let realm = make_realm("audit-system-realm");
     RealmRepo
@@ -1304,7 +1288,6 @@ async fn test_audit_event_system_actor() {
 #[tokio::test]
 async fn test_audit_event_list_recent() {
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
 
     let realm = make_realm("audit-list-realm");
     RealmRepo
@@ -1349,7 +1332,6 @@ async fn test_cross_repo_single_connection() {
     // Simulates a production request: create realm, user, client, session
     // all on the same connection, with interleaved lookups.
     let mut conn = test_conn().await;
-    clean_database(&mut conn).await.unwrap();
 
     // 1. Create realm
     let realm = make_realm("cross-repo-realm");
@@ -1428,22 +1410,31 @@ async fn test_cross_repo_single_connection() {
 
 #[tokio::test]
 async fn test_concurrent_connections_isolation() {
+    // Serialize: this test commits to the shared template DB.
+    let _guard = crate::harness::REPO_WRITE_MUTEX.lock().unwrap();
+
     // Two separate connections should see committed data from each other.
-    let mut conn1 = test_conn().await;
-    clean_database(&mut conn1).await.unwrap();
-
-    let mut conn2 = test_conn().await;
-
+    // Use test_conn_no_tx (auto-commit) because we need conn1's insert to
+    // be visible to conn2 immediately.
+    let mut conn1 = crate::harness::test_conn_no_tx().await;
     let realm = make_realm("concurrent-realm");
     RealmRepo
         .create(&mut conn1, &realm)
         .await
         .expect("realm create on conn1");
 
+    let mut conn2 = crate::harness::test_conn_no_tx().await;
     // conn2 should see the realm (auto-commit)
     let found = RealmRepo
         .find_by_name(&mut conn2, "concurrent-realm")
         .await
         .expect("find_by_name on conn2 failed");
     assert!(found.is_some(), "conn2 should see data committed by conn1");
+
+    // Cleanup so the shared template stays clean for other tests.
+    let _ = conn1
+        .execute("DELETE FROM realms WHERE name = 'concurrent-realm'")
+        .await;
+    let _ = conn1.close().await;
+    let _ = conn2.close().await;
 }

@@ -37,6 +37,23 @@ impl oidc_apikey::ApiKeyVerifierState for AppState {
 }
 
 impl AppState {
+    /// Build state directly from a config struct (no env vars).
+    pub fn from_config(config: AppConfig) -> Self {
+        let token_service =
+            Arc::new(oidc_oidc::tokens::JwtTokenService::new(&config.issuer).unwrap());
+        let hasher = Arc::new(oidc_core::traits::hasher::Argon2idHasher::new());
+
+        let db_config = wasi_pg_client::Config::from_uri(&config.database_url)
+            .unwrap_or_else(|_| wasi_pg_client::Config::new());
+
+        Self {
+            config: Arc::new(config),
+            token_service,
+            hasher,
+            db_config,
+        }
+    }
+
     /// Load state from environment variables.
     pub fn from_env() -> Self {
         let config = AppConfig {
@@ -53,20 +70,7 @@ impl AppState {
                 "OIDC_ENCRYPTION_KEY environment variable must be set (32-byte base64 key)",
             ),
         };
-
-        let token_service =
-            Arc::new(oidc_oidc::tokens::JwtTokenService::new(&config.issuer).unwrap());
-        let hasher = Arc::new(oidc_core::traits::hasher::Argon2idHasher::new());
-
-        let db_config = wasi_pg_client::Config::from_uri(&config.database_url)
-            .unwrap_or_else(|_| wasi_pg_client::Config::new());
-
-        Self {
-            config: Arc::new(config),
-            token_service,
-            hasher,
-            db_config,
-        }
+        Self::from_config(config)
     }
 
     /// Build the OIDC state used by `oidc-oidc` handlers.

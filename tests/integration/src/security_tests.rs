@@ -781,7 +781,7 @@ async fn test_api_key_timing_attack() {
     let app = TestApp::new().await;
 
     // Seed an API key with admin scope
-    let mut conn = crate::harness::test_conn_no_tx().await;
+    let mut conn = app.db_conn().await;
     let (api_key_model, correct_key) = oidc_apikey::ApiKeyService::generate_key(
         &mut conn,
         app.master_realm_id(),

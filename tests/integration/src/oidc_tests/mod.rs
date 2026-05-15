@@ -1005,9 +1005,9 @@ async fn test_client_credentials_grant() {
         .await;
 
     // Update the client to allow client_credentials grant type.
-    // Use test_conn_no_tx() (auto-commit) so the UPDATE is visible to the app server.
+    // Use app.db_conn() so the UPDATE is visible to the app server.
     {
-        let mut conn = crate::harness::test_conn_no_tx().await;
+        let mut conn = app.db_conn().await;
         let grant_types =
             serde_json::json!(["authorization_code", "refresh_token", "client_credentials"]);
         conn.execute_params(
@@ -1643,7 +1643,7 @@ async fn test_userinfo_profile_scope_returns_standard_claims() {
 
     // Update client to allow phone scope
     {
-        let mut conn = crate::harness::test_conn_no_tx().await;
+        let mut conn = app.db_conn().await;
         let scopes = serde_json::json!(["openid", "profile", "email", "phone"]);
         conn.execute_params(
             "UPDATE clients SET allowed_scopes = $1 WHERE client_id = $2",
@@ -1656,7 +1656,7 @@ async fn test_userinfo_profile_scope_returns_standard_claims() {
 
     // Seed a user with all the new claims populated
     {
-        let mut conn = crate::harness::test_conn_no_tx().await;
+        let mut conn = app.db_conn().await;
         let mut user = fixtures::test_user(
             app.master_realm_id(),
             "claimsuser@example.com",

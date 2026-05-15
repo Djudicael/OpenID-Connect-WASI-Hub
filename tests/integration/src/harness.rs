@@ -228,12 +228,15 @@ pub async fn test_conn() -> oidc_repository::connection::Connection {
     conn
 }
 
-/// Open a connection **without** a transaction.
+/// Open a connection **without** a transaction to the **shared** template DB.
 ///
-/// Use this for **HTTP integration** tests where the app under test
-/// gets its own database connection and must be able to see seeded
-/// data.  Callers must pair this with [`clean_database`] to reset
-/// state between tests.
+/// Use this for **repository / DB unit tests** that do NOT spawn a
+/// `TestApp`.  These tests should wrap work in a transaction (via
+/// [`test_conn`]) so changes roll back on drop, keeping the shared
+/// template clean for the next test.
+///
+/// HTTP integration tests should use [`TestApp::db_conn`] instead so
+/// direct SQL lands in the same isolated DB as the server.
 pub async fn test_conn_no_tx() -> oidc_repository::connection::Connection {
     let url = database_url().await;
     let config = wasi_pg_client::Config::from_uri(&url).expect("invalid database URL");
@@ -243,57 +246,12 @@ pub async fn test_conn_no_tx() -> oidc_repository::connection::Connection {
     oidc_repository::connection::Connection::from_pg_client(pg_conn)
 }
 
-/// Clean all data tables (keep `_migrations`).
+/// Serialize repo tests that write to the shared template DB.
 ///
-/// For HTTP tests using [`test_conn_no_tx`] this wraps a
-/// `TRUNCATE ... CASCADE` in a transaction.  For DB tests using
-/// [`test_conn`] (which already has an open transaction) this is a
-/// no-op — the connection-drop rollback handles cleanup.
-pub async fn clean_database(
-    conn: &mut oidc_repository::connection::Connection,
-) -> Result<(), oidc_core::OidcError> {
-    // Serialize cleanup — only one test cleans at a time.
-    // We use a std Mutex but NEVER hold it across .await.
-    static CLEANUP_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    // Acquire the lock briefly to serialize entry, then drop it.
-    // The actual TRUNCATEs are still serialized because only one
-    // caller passes the lock at a time.  We rely on single-threaded
-    // execution (--test-threads=1) to avoid reordering issues.
-    {
-        let _guard = CLEANUP_MUTEX.lock().unwrap();
-        // Lock held — serializes callers.  Dropped immediately below.
-    }
-
-    conn.begin()
-        .await
-        .map_err(|e| oidc_core::OidcError::Internal(e.to_string()))?;
-
-    let tables = [
-        "audit_events",
-        "authorization_codes",
-        "sessions",
-        "api_keys",
-        "signing_keys",
-        "clients",
-        "users",
-        "realms",
-    ];
-    for table in &tables {
-        if let Err(e) = conn
-            .execute(&format!("TRUNCATE TABLE {} CASCADE", table))
-            .await
-        {
-            let _ = conn.rollback().await;
-            return Err(oidc_core::OidcError::Internal(e.to_string()));
-        }
-    }
-
-    conn.commit()
-        .await
-        .map_err(|e| oidc_core::OidcError::Internal(e.to_string()))?;
-    Ok(())
-}
+/// Only repo tests that *must* commit data (auth_codes, sessions) need
+/// to acquire this lock.  Tests using [`test_conn`] (transaction-based)
+/// do NOT need this because their changes roll back on drop.
+pub static REPO_WRITE_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
 mod diag_tests {

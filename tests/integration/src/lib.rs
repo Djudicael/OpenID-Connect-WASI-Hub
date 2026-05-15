@@ -4,7 +4,16 @@
 //!
 //! The `harness` module spawns a single PostgreSQL container via `podman`
 //! before the first test and reuses it for the entire run.  Migrations are
-//! applied automatically.  No manual setup is required.
+//! applied once to a template database (`oidc_hub_test`).
+//!
+//! Each HTTP integration test that uses [`TestApp`] gets its own **fresh
+//! database** cloned from that template (`oidc_hub_test_1`,
+//! `oidc_hub_test_2`, …).  This provides perfect isolation without
+//! `TRUNCATE` or table locks.
+//!
+//! Repository / DB unit tests that do NOT spawn a server use the shared
+//! template DB with per-connection transactions, so they also need no
+//! explicit cleanup.
 //!
 //! ```bash
 //! cargo test -p integration-tests -- --test-threads=1
