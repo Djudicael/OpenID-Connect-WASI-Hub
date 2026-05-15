@@ -27,7 +27,9 @@ const USER_COLUMNS: &str = r#"
     id, realm_id, email, email_verified, username, password_hash,
     given_name, family_name, middle_name, nickname, preferred_username,
     profile, picture, website, gender, birthdate, zoneinfo,
-    phone_number, phone_number_verified, locale, attributes, enabled,
+    phone_number, phone_number_verified,
+    street_address, locality, region, postal_code, country,
+    locale, attributes, enabled,
     deleted_at, updated_at
 "#;
 
@@ -70,8 +72,10 @@ impl UserRepo {
                 id, realm_id, email, email_verified, username, password_hash,
                 given_name, family_name, middle_name, nickname, preferred_username,
                 profile, picture, website, gender, birthdate, zoneinfo,
-                phone_number, phone_number_verified, locale, attributes, enabled, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+                phone_number, phone_number_verified,
+                street_address, locality, region, postal_code, country,
+                locale, attributes, enabled, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
         "#;
         conn.execute_params(
             sql,
@@ -95,6 +99,11 @@ impl UserRepo {
                 &entity.zoneinfo,
                 &entity.phone_number,
                 &entity.phone_number_verified.unwrap_or(false),
+                &entity.street_address,
+                &entity.locality,
+                &entity.region,
+                &entity.postal_code,
+                &entity.country,
                 &entity.locale,
                 &entity.attributes,
                 &entity.enabled,
@@ -127,11 +136,16 @@ impl UserRepo {
                 zoneinfo = $15,
                 phone_number = $16,
                 phone_number_verified = $17,
-                locale = $18,
-                attributes = $19,
-                enabled = $20,
+                street_address = $18,
+                locality = $19,
+                region = $20,
+                postal_code = $21,
+                country = $22,
+                locale = $23,
+                attributes = $24,
+                enabled = $25,
                 updated_at = NOW()
-            WHERE id = $21 AND deleted_at IS NULL
+            WHERE id = $26 AND deleted_at IS NULL
         "#;
         conn.execute_params(
             sql,
@@ -153,6 +167,11 @@ impl UserRepo {
                 &entity.zoneinfo,
                 &entity.phone_number,
                 &entity.phone_number_verified.unwrap_or(false),
+                &entity.street_address,
+                &entity.locality,
+                &entity.region,
+                &entity.postal_code,
+                &entity.country,
                 &entity.locale,
                 &entity.attributes,
                 &entity.enabled,
@@ -283,11 +302,16 @@ impl UserRepo {
             zoneinfo: mapper::opt_string(row, 16)?,
             phone_number: mapper::opt_string(row, 17)?,
             phone_number_verified: mapper::opt_bool(row, 18)?,
-            locale: mapper::string(row, 19)?,
-            attributes: row.get::<serde_json::Value>(20).map_err(mapper::pg_err)?,
-            enabled: mapper::bool_(row, 21)?,
-            deleted_at: mapper::opt_datetime(row, 22)?,
-            updated_at: mapper::datetime(row, 23)?,
+            street_address: mapper::opt_string(row, 19)?,
+            locality: mapper::opt_string(row, 20)?,
+            region: mapper::opt_string(row, 21)?,
+            postal_code: mapper::opt_string(row, 22)?,
+            country: mapper::opt_string(row, 23)?,
+            locale: mapper::string(row, 24)?,
+            attributes: row.get::<serde_json::Value>(25).map_err(mapper::pg_err)?,
+            enabled: mapper::bool_(row, 26)?,
+            deleted_at: mapper::opt_datetime(row, 27)?,
+            updated_at: mapper::datetime(row, 28)?,
         })
     }
 }

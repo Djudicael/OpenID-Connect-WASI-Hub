@@ -29,7 +29,7 @@ pub async fn discovery_handler(state: OidcState) -> Json<Value> {
         "frontchannel_logout_session_supported": true,
         "backchannel_logout_supported": true,
         "backchannel_logout_session_supported": true,
-        "scopes_supported": ["openid", "profile", "email", "phone", "offline_access"],
+        "scopes_supported": ["openid", "profile", "email", "phone", "address", "offline_access"],
         "response_types_supported": response_types,
         "grant_types_supported": ["authorization_code", "client_credentials", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code", "urn:ietf:params:oauth:grant-type:jwt-bearer", "urn:ietf:params:oauth:grant-type:token-exchange"],
         "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "private_key_jwt"],
@@ -45,6 +45,7 @@ pub async fn discovery_handler(state: OidcState) -> Json<Value> {
             "profile", "picture", "website", "gender", "birthdate", "zoneinfo", "locale",
             "email", "email_verified",
             "phone_number", "phone_number_verified",
+            "address",
             "updated_at"
         ],
         "acr_values_supported": ["urn:mace:incommon:iap:bronze", "urn:mace:incommon:iap:silver"],
@@ -94,7 +95,7 @@ pub async fn realm_discovery_handler(state: OidcState, realm: String) -> Json<Va
         "frontchannel_logout_session_supported": true,
         "backchannel_logout_supported": true,
         "backchannel_logout_session_supported": true,
-        "scopes_supported": ["openid", "profile", "email", "phone", "offline_access"],
+        "scopes_supported": ["openid", "profile", "email", "phone", "address", "offline_access"],
         "response_types_supported": response_types,
         "grant_types_supported": ["authorization_code", "client_credentials", "refresh_token", "urn:ietf:params:oauth:grant-type:device_code", "urn:ietf:params:oauth:grant-type:jwt-bearer", "urn:ietf:params:oauth:grant-type:token-exchange"],
         "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "private_key_jwt"],
@@ -110,6 +111,7 @@ pub async fn realm_discovery_handler(state: OidcState, realm: String) -> Json<Va
             "profile", "picture", "website", "gender", "birthdate", "zoneinfo", "locale",
             "email", "email_verified",
             "phone_number", "phone_number_verified",
+            "address",
             "updated_at"
         ],
         "acr_values_supported": ["urn:mace:incommon:iap:bronze", "urn:mace:incommon:iap:silver"],

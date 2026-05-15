@@ -159,6 +159,10 @@ pub struct IdTokenClaims {
     /// OPTIONAL otherwise. Set to `client_id` when resource indicators are present.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub azp: Option<String>,
+    /// Structured address claim (OIDC Core §5.1.1).
+    /// Returned when the `address` scope is requested.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub address: Option<oidc_core::models::AddressClaim>,
 }
 
 /// A JWK (JSON Web Key) entry for JWKS endpoint — supports RSA and OKP (Ed25519).
@@ -918,6 +922,7 @@ impl TokenService for JwtTokenService {
             acr: extra.acr,
             amr: extra.amr,
             azp: extra.azp,
+            address: extra.address,
         };
         self.encode_jwt(&claims)
     }
@@ -1316,6 +1321,7 @@ mod tests {
             acr: None,
             amr: None,
             azp: None,
+            address: None,
         };
 
         let token = service.sign_eddsa(&claims).unwrap();

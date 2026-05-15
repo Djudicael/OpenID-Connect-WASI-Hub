@@ -147,6 +147,11 @@ impl AuthorizationCodeFlow {
                 } else {
                     Some(client.client_id.clone())
                 },
+                address: if auth_code.scope.contains(&"address".to_string()) {
+                    user.address_claim()
+                } else {
+                    None
+                },
             };
 
             let id_token = token_svc

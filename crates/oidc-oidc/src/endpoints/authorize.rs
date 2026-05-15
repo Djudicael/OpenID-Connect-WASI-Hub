@@ -1199,6 +1199,11 @@ async fn authorize_inner(
                 } else {
                     Some(client_id_str.to_string())
                 },
+                address: if requested_scopes.contains(&"address".to_string()) {
+                    user.address_claim()
+                } else {
+                    None
+                },
             };
 
             let id_token = match token_svc

@@ -61,6 +61,9 @@ pub struct IdTokenExtraClaims {
     /// REQUIRED per OIDC Core §2 when `aud` contains multiple audiences.
     /// Set to `client_id` when resource indicators are present (RFC 8707).
     pub azp: Option<String>,
+    /// Structured address claim (OIDC Core §5.1.1).
+    /// Returned when the `address` scope is requested.
+    pub address: Option<crate::models::AddressClaim>,
 }
 
 /// Verified access token claims returned by the token service.

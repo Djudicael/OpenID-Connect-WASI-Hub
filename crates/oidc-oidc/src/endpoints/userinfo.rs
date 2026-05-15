@@ -161,6 +161,17 @@ pub async fn userinfo_handler(
         }
     }
 
+    if scopes.contains("address") {
+        if let Some(obj) = claims.as_object_mut() {
+            if let Some(addr) = user.address_claim() {
+                obj.insert(
+                    "address".to_string(),
+                    serde_json::to_value(&addr).unwrap_or_default(),
+                );
+            }
+        }
+    }
+
     if scopes.contains("phone") {
         if let Some(obj) = claims.as_object_mut() {
             if let Some(ref v) = user.phone_number {

@@ -1,5 +1,6 @@
 //! Domain models for the OIDC hub.
 
+pub mod address;
 pub mod api_key;
 pub mod audit_event;
 pub mod auth_code;
@@ -20,6 +21,7 @@ pub mod session;
 pub mod signing_key;
 pub mod user;
 
+pub use address::AddressClaim;
 pub use api_key::ApiKey;
 pub use audit_event::{ActorType, AuditEvent};
 pub use auth_code::{AuthCode, CodeChallengeMethod};
