@@ -969,6 +969,10 @@ mod tests {
             id_token_encrypted_response_enc: None,
             id_token_encryption_key_encrypted: None,
             id_token_encryption_key_pem: None,
+            request_object_encryption_alg: None,
+            request_object_encryption_enc: None,
+            request_object_encryption_key_encrypted: None,
+            request_object_encryption_key_pem: None,
         }
     }
 

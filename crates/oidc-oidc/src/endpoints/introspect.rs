@@ -15,7 +15,7 @@ use crate::tokens::JwtTokenService;
 
 /// Token introspection endpoint handler.
 /// Requires client authentication (`client_secret_basic`, `client_secret_post`,
-/// or `private_key_jwt` per RFC 7523).
+/// `private_key_jwt`, or `client_secret_jwt` per RFC 7523).
 /// Per RFC 7662, returns `active`, `sub`, `client_id`, `scope`, `token_type`,
 /// `exp`, and `iat` from the verified JWT claims.
 ///
@@ -147,7 +147,6 @@ async fn authenticate_client_introspect(
     params: &HashMap<String, String>,
     conn: &mut oidc_repository::Connection,
 ) -> Result<oidc_core::models::Client, OidcErrorResponse> {
-    // --- private_key_jwt ---
     if let Some(assertion) = params.get("client_assertion") {
         let assertion_type = params
             .get("client_assertion_type")
@@ -175,22 +174,61 @@ async fn authenticate_client_introspect(
             Err(e) => return Err(OidcErrorResponse::from_internal(e)),
         };
 
-        if client.token_endpoint_auth_method != "private_key_jwt" {
-            return Err(OidcErrorResponse::invalid_client(
-                "Client not configured for private_key_jwt",
-            ));
+        match client.token_endpoint_auth_method.as_str() {
+            "private_key_jwt" => {
+                let jwks = client.jwks.as_ref().ok_or_else(|| {
+                    OidcErrorResponse::invalid_client("Client has no JWKS for private_key_jwt")
+                })?;
+
+                let token_endpoint = format!("{}/oidc/introspect", state.issuer);
+                let now = chrono::Utc::now().timestamp();
+                JwtTokenService::verify_client_assertion(
+                    assertion,
+                    jwks,
+                    &token_endpoint,
+                    &client_id,
+                    now,
+                )
+                .map_err(|e| {
+                    OidcErrorResponse::invalid_client(format!("JWT verification failed: {e}"))
+                })?;
+            }
+            "client_secret_jwt" => {
+                let encrypted_secret =
+                    client.client_secret_encrypted.as_ref().ok_or_else(|| {
+                        OidcErrorResponse::invalid_client(
+                            "Client has no encrypted secret for client_secret_jwt",
+                        )
+                    })?;
+
+                let client_secret_bytes = state
+                    .decrypt_client_encryption_key(encrypted_secret)
+                    .map_err(|_| {
+                        OidcErrorResponse::invalid_client("Failed to decrypt client secret")
+                    })?;
+                let client_secret = String::from_utf8(client_secret_bytes).map_err(|_| {
+                    OidcErrorResponse::invalid_client("Invalid client secret encoding")
+                })?;
+
+                let token_endpoint = format!("{}/oidc/introspect", state.issuer);
+                let now = chrono::Utc::now().timestamp();
+                crate::tokens::jwt_service::verify_client_secret_jwt(
+                    assertion,
+                    &client_secret,
+                    &token_endpoint,
+                    &client_id,
+                    now,
+                )
+                .map_err(|e| {
+                    OidcErrorResponse::invalid_client(format!("JWT verification failed: {e}"))
+                })?;
+            }
+            _ => {
+                return Err(OidcErrorResponse::invalid_client(
+                    "Client not configured for JWT assertion authentication",
+                ));
+            }
         }
-
-        let jwks = client.jwks.as_ref().ok_or_else(|| {
-            OidcErrorResponse::invalid_client("Client has no JWKS for private_key_jwt")
-        })?;
-
-        let token_endpoint = format!("{}/oidc/introspect", state.issuer);
-        let now = chrono::Utc::now().timestamp();
-        JwtTokenService::verify_client_assertion(assertion, jwks, &token_endpoint, &client_id, now)
-            .map_err(|e| {
-                OidcErrorResponse::invalid_client(format!("JWT verification failed: {e}"))
-            })?;
 
         return Ok(client);
     }

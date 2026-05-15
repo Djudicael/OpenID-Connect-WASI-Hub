@@ -20,7 +20,8 @@ use crate::tokens::dpop::verify_dpop_proof;
 
 /// Token endpoint handler.
 /// Supports `client_secret_basic` (Authorization header), `client_secret_post`
-/// (form body), and `private_key_jwt` (client_assertion JWT) per RFC 7523.
+/// (form body), `private_key_jwt` (client_assertion JWT), and `client_secret_jwt`
+/// (client_assertion JWT signed with HMAC) per RFC 7523.
 ///
 /// Also supports DPoP (RFC 9449): when a `DPoP` header is present, the proof
 /// is verified and the access token is bound to the client's key via a `cnf.jkt`
@@ -170,7 +171,7 @@ pub async fn token_handler(
 /// Authenticate the client using one of the supported methods.
 ///
 /// Priority:
-/// 1. `private_key_jwt` via `client_assertion` + `client_assertion_type`
+/// 1. `private_key_jwt` / `client_secret_jwt` via `client_assertion` + `client_assertion_type`
 /// 2. `client_secret_basic` / `client_secret_post` via `client_id` + `client_secret`
 ///
 /// Returns the authenticated `Client` and its `client_id` string.
@@ -178,7 +179,6 @@ async fn authenticate_client(
     state: &OidcState,
     params: &HashMap<String, String>,
 ) -> Result<(oidc_core::models::Client, String), OidcError> {
-    // --- private_key_jwt ---
     if let Some(assertion) = params.get("client_assertion") {
         let assertion_type = params
             .get("client_assertion_type")
@@ -199,24 +199,54 @@ async fn authenticate_client(
         if !client.enabled {
             return Err(OidcError::InvalidClient);
         }
-        if client.token_endpoint_auth_method != "private_key_jwt" {
-            return Err(OidcError::InvalidClient);
+
+        match client.token_endpoint_auth_method.as_str() {
+            "private_key_jwt" => {
+                let jwks = client.jwks.as_ref().ok_or_else(|| {
+                    OidcError::InvalidClientAssertion("client has no jwks".into())
+                })?;
+
+                let token_endpoint = format!("{}/oidc/token", state.issuer);
+                let now = chrono::Utc::now().timestamp();
+                JwtTokenService::verify_client_assertion(
+                    assertion,
+                    jwks,
+                    &token_endpoint,
+                    &client_id,
+                    now,
+                )?;
+            }
+            "client_secret_jwt" => {
+                let encrypted_secret =
+                    client.client_secret_encrypted.as_ref().ok_or_else(|| {
+                        OidcError::InvalidClientAssertion(
+                            "client has no encrypted secret for client_secret_jwt".into(),
+                        )
+                    })?;
+
+                let client_secret_bytes = state
+                    .decrypt_client_encryption_key(encrypted_secret)
+                    .map_err(|_| {
+                        OidcError::InvalidClientAssertion("failed to decrypt client secret".into())
+                    })?;
+                let client_secret = String::from_utf8(client_secret_bytes).map_err(|_| {
+                    OidcError::InvalidClientAssertion("invalid client secret encoding".into())
+                })?;
+
+                let token_endpoint = format!("{}/oidc/token", state.issuer);
+                let now = chrono::Utc::now().timestamp();
+                crate::tokens::jwt_service::verify_client_secret_jwt(
+                    assertion,
+                    &client_secret,
+                    &token_endpoint,
+                    &client_id,
+                    now,
+                )?;
+            }
+            _ => {
+                return Err(OidcError::InvalidClient);
+            }
         }
-
-        let jwks = client
-            .jwks
-            .as_ref()
-            .ok_or_else(|| OidcError::InvalidClientAssertion("client has no jwks".into()))?;
-
-        let token_endpoint = format!("{}/oidc/token", state.issuer);
-        let now = chrono::Utc::now().timestamp();
-        JwtTokenService::verify_client_assertion(
-            assertion,
-            jwks,
-            &token_endpoint,
-            &client_id,
-            now,
-        )?;
 
         return Ok((client, client_id));
     }

@@ -276,6 +276,117 @@ async fn authorize_inner(
         }
     }
 
+    // --- Encrypted Request Object resolution (OIDC Core §10) ---
+    if let Some(request_jwe) = params.get("request").cloned() {
+        let jwe_parts: Vec<&str> = request_jwe.split('.').collect();
+        if jwe_parts.len() == 5 {
+            // This is an encrypted request object (JWE)
+            // Per OIDC Core §6.1: If both request and request_uri are present, return an error.
+            if params.contains_key("request_uri") {
+                return Err((
+                    redirect_uri.clone(),
+                    "invalid_request".to_string(),
+                    "request and request_uri MUST NOT be used together".to_string(),
+                ));
+            }
+
+            // The client_id must be present either in params or we need it to look up the client
+            let request_client_id = params.get("client_id").cloned();
+
+            let effective_client_id = request_client_id.ok_or_else(|| {
+                (
+                    redirect_uri.clone(),
+                    "invalid_request".to_string(),
+                    "Missing client_id".to_string(),
+                )
+            })?;
+
+            // Look up the client to get its encryption keys
+            let mut conn_for_enc = match state.connect().await {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!("DB connection failed in authorize request object lookup: {e}");
+                    return Err((
+                        redirect_uri.clone(),
+                        "server_error".to_string(),
+                        "An internal error occurred".to_string(),
+                    ));
+                }
+            };
+
+            let client_for_enc = ClientRepo
+                .find_by_client_id(&mut conn_for_enc, &effective_client_id)
+                .await
+                .map_err(|_| {
+                    (
+                        redirect_uri.clone(),
+                        "invalid_client".to_string(),
+                        "Client not found".to_string(),
+                    )
+                })?
+                .ok_or_else(|| {
+                    (
+                        redirect_uri.clone(),
+                        "invalid_client".to_string(),
+                        "Client not found".to_string(),
+                    )
+                })?;
+
+            // Decrypt the JWE using the client's configured encryption keys
+            let enc_alg = client_for_enc.request_object_encryption_alg.as_deref();
+            if enc_alg.is_none() {
+                return Err((
+                    redirect_uri.clone(),
+                    "invalid_request_object".to_string(),
+                    "Client has no request object encryption configured".to_string(),
+                ));
+            }
+
+            // Get the appropriate decryption key based on algorithm
+            let symmetric_key: Option<Vec<u8>> = match enc_alg {
+                Some("dir") => match &client_for_enc.request_object_encryption_key_encrypted {
+                    Some(encrypted) => Some(
+                        state
+                            .decrypt_client_encryption_key(encrypted)
+                            .map_err(|e| {
+                                (
+                                    redirect_uri.clone(),
+                                    "invalid_request_object".to_string(),
+                                    format!("Failed to decrypt request object key: {e}"),
+                                )
+                            })?,
+                    ),
+                    None => {
+                        return Err((
+                            redirect_uri.clone(),
+                            "invalid_request_object".to_string(),
+                            "Client has dir encryption configured but no encryption key"
+                                .to_string(),
+                        ));
+                    }
+                },
+                _ => None,
+            };
+
+            let rsa_pem = client_for_enc.request_object_encryption_key_pem.as_deref();
+
+            // Decrypt the JWE
+            let decrypted =
+                oidc_core::utils::decrypt_jwe(&request_jwe, symmetric_key.as_deref(), rsa_pem)
+                    .map_err(|e| {
+                        (
+                            redirect_uri.clone(),
+                            "invalid_request_object".to_string(),
+                            format!("Request object decryption failed: {e}"),
+                        )
+                    })?;
+
+            // The decrypted content should be a signed JWT (nested JWT: sign then encrypt)
+            // Replace the request parameter with the decrypted signed JWT
+            params.insert("request".to_string(), decrypted);
+        }
+    }
+
     // --- Signed Request Object resolution (OIDC Core §6) ---
     if let Some(request_jwt) = params.get("request").cloned() {
         // Per OIDC Core §6.1: If both request and request_uri are present, return an error.

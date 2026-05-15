@@ -98,6 +98,10 @@ fn test_client(realm_id: Uuid, client_id: &str, name: &str) -> Client {
         id_token_encrypted_response_enc: None,
         id_token_encryption_key_encrypted: None,
         id_token_encryption_key_pem: None,
+        request_object_encryption_alg: None,
+        request_object_encryption_enc: None,
+        request_object_encryption_key_encrypted: None,
+        request_object_encryption_key_pem: None,
     }
 }
 // ===================================================================
@@ -248,6 +252,10 @@ async fn test_client_crud() {
         id_token_encrypted_response_enc: None,
         id_token_encryption_key_encrypted: None,
         id_token_encryption_key_pem: None,
+        request_object_encryption_alg: None,
+        request_object_encryption_enc: None,
+        request_object_encryption_key_encrypted: None,
+        request_object_encryption_key_pem: None,
     };
 
     repo.create(&mut conn, &client).await.unwrap();
@@ -458,6 +466,10 @@ async fn test_auth_code_crud() {
         id_token_encrypted_response_enc: None,
         id_token_encryption_key_encrypted: None,
         id_token_encryption_key_pem: None,
+        request_object_encryption_alg: None,
+        request_object_encryption_enc: None,
+        request_object_encryption_key_encrypted: None,
+        request_object_encryption_key_pem: None,
     };
     client_repo.create(&mut conn, &client).await.unwrap();
 

@@ -20,6 +20,7 @@ const SUPPORTED_AUTH_METHODS: &[&str] = &[
     "none",
     "client_secret_basic",
     "client_secret_post",
+    "client_secret_jwt",
     "private_key_jwt",
 ];
 
@@ -48,6 +49,12 @@ pub struct RegisterClientRequest {
     pub subject_type: Option<String>,
     /// Sector identifier URI for pairwise subject identifiers (OIDC Core §8).
     pub sector_identifier_uri: Option<String>,
+    /// JWE encryption algorithm for request objects (optional).
+    pub request_object_encryption_alg: Option<String>,
+    /// JWE content encryption algorithm for request objects (optional, default A256GCM).
+    pub request_object_encryption_enc: Option<String>,
+    /// Client's RSA public key PEM for JWE RSA-OAEP-256 encryption of request objects (optional).
+    pub request_object_encryption_key_pem: Option<String>,
 }
 
 /// Validate a single redirect URI per RFC 7591 §2:
@@ -128,6 +135,14 @@ fn validate_registration_request(req: &RegisterClientRequest) -> Result<(), Oidc
         }
     }
 
+    // For client_secret_jwt, no additional fields required (secret is auto-generated)
+    // But we should reject if jwks is provided with client_secret_jwt
+    if req.token_endpoint_auth_method == "client_secret_jwt" && req.jwks.is_some() {
+        return Err(OidcError::InvalidInput(
+            "jwks must not be provided when token_endpoint_auth_method is client_secret_jwt".into(),
+        ));
+    }
+
     Ok(())
 }
 
@@ -160,18 +175,32 @@ pub async fn register_handler(
     let realm_id = admin_realm_id.unwrap_or(req.realm_id);
     let client_id = format!("client_{}", Uuid::new_v4().to_string().replace("-", ""));
 
-    let (client_type, client_secret, client_secret_hash, client_secret_encrypted) =
-        match req.token_endpoint_auth_method.as_str() {
-            "client_secret_basic" | "client_secret_post" => {
-                let mut secret_bytes = [0u8; 32];
-                getrandom::fill(&mut secret_bytes)
-                    .map_err(|e| OidcError::Internal(e.to_string()))?;
-                let secret = base64::engine::general_purpose::STANDARD.encode(&secret_bytes);
-                let hash = state.hasher.hash(&secret)?;
-                (ClientType::Confidential, Some(secret), Some(hash), None)
-            }
-            _ => (ClientType::Public, None, None, None),
-        };
+    let (client_type, client_secret, client_secret_hash, client_secret_encrypted) = match req
+        .token_endpoint_auth_method
+        .as_str()
+    {
+        "client_secret_basic" | "client_secret_post" => {
+            let mut secret_bytes = [0u8; 32];
+            getrandom::fill(&mut secret_bytes).map_err(|e| OidcError::Internal(e.to_string()))?;
+            let secret = base64::engine::general_purpose::STANDARD.encode(&secret_bytes);
+            let hash = state.hasher.hash(&secret)?;
+            (ClientType::Confidential, Some(secret), Some(hash), None)
+        }
+        "client_secret_jwt" => {
+            let mut secret_bytes = [0u8; 32];
+            getrandom::fill(&mut secret_bytes).map_err(|e| OidcError::Internal(e.to_string()))?;
+            let secret = base64::engine::general_purpose::STANDARD.encode(&secret_bytes);
+            let hash = state.hasher.hash(&secret)?;
+            let encrypted = state.encrypt_client_encryption_key(secret.as_bytes())?;
+            (
+                ClientType::Confidential,
+                Some(secret),
+                Some(hash),
+                Some(encrypted),
+            )
+        }
+        _ => (ClientType::Public, None, None, None),
+    };
 
     // ── Persist client ──────────────────────────────────────────────────
     let mut conn = state.connect().await?;
@@ -209,6 +238,10 @@ pub async fn register_handler(
         id_token_encrypted_response_enc: None,
         id_token_encryption_key_encrypted: None,
         id_token_encryption_key_pem: None,
+        request_object_encryption_alg: req.request_object_encryption_alg,
+        request_object_encryption_enc: req.request_object_encryption_enc,
+        request_object_encryption_key_encrypted: None, // Will be set if dir is used
+        request_object_encryption_key_pem: req.request_object_encryption_key_pem,
     };
 
     with_transaction!(conn, pg_err, {
@@ -236,6 +269,13 @@ pub async fn register_handler(
         response["jwks"] = jwks;
     }
 
+    if let Some(ref alg) = client.request_object_encryption_alg {
+        response["request_object_encryption_alg"] = json!(alg);
+    }
+    if let Some(ref enc) = client.request_object_encryption_enc {
+        response["request_object_encryption_enc"] = json!(enc);
+    }
+
     Ok(Json(response))
 }
 
@@ -255,6 +295,9 @@ mod tests {
             jwks: None,
             subject_type: None,
             sector_identifier_uri: None,
+            request_object_encryption_alg: None,
+            request_object_encryption_enc: None,
+            request_object_encryption_key_pem: None,
         }
     }
 
@@ -333,6 +376,7 @@ mod tests {
             "none",
             "client_secret_basic",
             "client_secret_post",
+            "client_secret_jwt",
             "private_key_jwt",
         ] {
             let mut req = valid_request();

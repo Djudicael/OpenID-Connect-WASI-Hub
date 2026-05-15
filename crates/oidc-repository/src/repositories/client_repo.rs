@@ -35,7 +35,9 @@ const CLIENT_COLUMNS: &str = r#"
     subject_type, sector_identifier_uri,
     response_modes,
     id_token_encrypted_response_alg, id_token_encrypted_response_enc,
-    id_token_encryption_key_encrypted, id_token_encryption_key_pem
+    id_token_encryption_key_encrypted, id_token_encryption_key_pem,
+    request_object_encryption_alg, request_object_encryption_enc,
+    request_object_encryption_key_encrypted, request_object_encryption_key_pem
 "#;
 
 impl ClientRepo {
@@ -105,8 +107,10 @@ impl ClientRepo {
                 subject_type, sector_identifier_uri,
                 response_modes,
                 id_token_encrypted_response_alg, id_token_encrypted_response_enc,
-                id_token_encryption_key_encrypted, id_token_encryption_key_pem
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
+                id_token_encryption_key_encrypted, id_token_encryption_key_pem,
+                request_object_encryption_alg, request_object_encryption_enc,
+                request_object_encryption_key_encrypted, request_object_encryption_key_pem
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32)
         "#;
         let client_type_str = match entity.client_type {
             ClientType::Confidential => "confidential",
@@ -143,6 +147,10 @@ impl ClientRepo {
                 &entity.id_token_encrypted_response_enc,
                 &entity.id_token_encryption_key_encrypted,
                 &entity.id_token_encryption_key_pem,
+                &entity.request_object_encryption_alg,
+                &entity.request_object_encryption_enc,
+                &entity.request_object_encryption_key_encrypted,
+                &entity.request_object_encryption_key_pem,
             ],
         )
         .await
@@ -180,8 +188,12 @@ impl ClientRepo {
                 id_token_encrypted_response_enc = $24,
                 id_token_encryption_key_encrypted = $25,
                 id_token_encryption_key_pem = $26,
+                request_object_encryption_alg = $27,
+                request_object_encryption_enc = $28,
+                request_object_encryption_key_encrypted = $29,
+                request_object_encryption_key_pem = $30,
                 updated_at = NOW()
-            WHERE id = $27 AND deleted_at IS NULL
+            WHERE id = $31 AND deleted_at IS NULL
         "#;
         let client_type_str = match entity.client_type {
             ClientType::Confidential => "confidential",
@@ -216,6 +228,10 @@ impl ClientRepo {
                 &entity.id_token_encrypted_response_enc,
                 &entity.id_token_encryption_key_encrypted,
                 &entity.id_token_encryption_key_pem,
+                &entity.request_object_encryption_alg,
+                &entity.request_object_encryption_enc,
+                &entity.request_object_encryption_key_encrypted,
+                &entity.request_object_encryption_key_pem,
                 &entity.id,
             ],
         )
@@ -358,6 +374,10 @@ impl ClientRepo {
             id_token_encrypted_response_enc: mapper::opt_string(row, 26)?,
             id_token_encryption_key_encrypted: mapper::opt_string(row, 27)?,
             id_token_encryption_key_pem: mapper::opt_string(row, 28)?,
+            request_object_encryption_alg: mapper::opt_string(row, 29)?,
+            request_object_encryption_enc: mapper::opt_string(row, 30)?,
+            request_object_encryption_key_encrypted: mapper::opt_string(row, 31)?,
+            request_object_encryption_key_pem: mapper::opt_string(row, 32)?,
         })
     }
 }

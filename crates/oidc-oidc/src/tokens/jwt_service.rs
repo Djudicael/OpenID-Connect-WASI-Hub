@@ -806,6 +806,131 @@ pub fn verify_signature_with_jwk(
     Ok(())
 }
 
+/// Verify an HMAC-based JWT signature (HS256, HS384, HS512).
+///
+/// Uses constant-time comparison via `subtle::ConstantTimeEq` to prevent
+/// timing attacks.
+pub fn verify_hmac_signature(
+    signing_input: &[u8],
+    signature: &[u8],
+    secret: &[u8],
+    alg: &str,
+) -> Result<(), OidcError> {
+    use hmac::{Hmac, Mac};
+    use sha2::{Sha256, Sha384, Sha512};
+    use subtle::ConstantTimeEq;
+
+    type HmacSha256 = Hmac<Sha256>;
+    type HmacSha384 = Hmac<Sha384>;
+    type HmacSha512 = Hmac<Sha512>;
+
+    match alg {
+        "HS256" => {
+            let mut mac = HmacSha256::new_from_slice(secret)
+                .map_err(|e| OidcError::InvalidClientAssertion(format!("HMAC key error: {e}")))?;
+            mac.update(signing_input);
+            let expected = mac.clone().finalize().into_bytes();
+            if expected[..].ct_eq(signature).into() {
+                Ok(())
+            } else {
+                Err(OidcError::InvalidClientAssertion(
+                    "HMAC signature verification failed".into(),
+                ))
+            }
+        }
+        "HS384" => {
+            let mut mac = HmacSha384::new_from_slice(secret)
+                .map_err(|e| OidcError::InvalidClientAssertion(format!("HMAC key error: {e}")))?;
+            mac.update(signing_input);
+            let expected = mac.clone().finalize().into_bytes();
+            if expected[..].ct_eq(signature).into() {
+                Ok(())
+            } else {
+                Err(OidcError::InvalidClientAssertion(
+                    "HMAC signature verification failed".into(),
+                ))
+            }
+        }
+        "HS512" => {
+            let mut mac = HmacSha512::new_from_slice(secret)
+                .map_err(|e| OidcError::InvalidClientAssertion(format!("HMAC key error: {e}")))?;
+            mac.update(signing_input);
+            let expected = mac.clone().finalize().into_bytes();
+            if expected[..].ct_eq(signature).into() {
+                Ok(())
+            } else {
+                Err(OidcError::InvalidClientAssertion(
+                    "HMAC signature verification failed".into(),
+                ))
+            }
+        }
+        _ => Err(OidcError::InvalidClientAssertion(format!(
+            "unsupported HMAC alg: {alg}"
+        ))),
+    }
+}
+
+/// Verify a `client_secret_jwt` assertion per OIDC Core §9.
+///
+/// Unlike `verify_client_assertion` (which uses public-key / JWK verification),
+/// this method verifies the HMAC signature using the client's shared secret.
+pub fn verify_client_secret_jwt(
+    assertion: &str,
+    client_secret: &str,
+    expected_aud: &str,
+    expected_iss: &str,
+    now: i64,
+) -> Result<ClientAssertionClaims, OidcError> {
+    let (header, claims, signing_input, signature) =
+        JwtTokenService::parse_client_assertion_unverified(assertion)?;
+
+    // Validate claims
+    if claims.iss != expected_iss {
+        return Err(OidcError::InvalidClientAssertion(
+            "iss does not match client_id".into(),
+        ));
+    }
+    if claims.sub != expected_iss {
+        return Err(OidcError::InvalidClientAssertion(
+            "sub does not match client_id".into(),
+        ));
+    }
+    if claims.aud != expected_aud {
+        return Err(OidcError::InvalidClientAssertion(
+            "aud does not match token endpoint".into(),
+        ));
+    }
+    if claims.exp < now {
+        return Err(OidcError::InvalidClientAssertion(
+            "client assertion expired".into(),
+        ));
+    }
+    if claims.iat > now + 300 {
+        return Err(OidcError::InvalidClientAssertion(
+            "client assertion issued too far in the future".into(),
+        ));
+    }
+
+    // alg must be an HMAC variant
+    match header.alg.as_str() {
+        "HS256" | "HS384" | "HS512" => {}
+        other => {
+            return Err(OidcError::InvalidClientAssertion(format!(
+                "client_secret_jwt requires HS256/HS384/HS512, got: {other}"
+            )));
+        }
+    }
+
+    verify_hmac_signature(
+        signing_input.as_bytes(),
+        &signature,
+        client_secret.as_bytes(),
+        &header.alg,
+    )?;
+
+    Ok(claims)
+}
+
 fn load_rsa_key() -> Result<(RsaPrivateKey, String), OidcError> {
     match std::env::var("OIDC_SIGNING_KEY") {
         Ok(pem) => {
@@ -1648,5 +1773,341 @@ mod tests {
         );
         assert!(result.is_err());
         assert!(format!("{}", result.unwrap_err()).contains("iss"));
+    }
+
+    // -----------------------------------------------------------------------
+    // HMAC signature verification tests
+    // -----------------------------------------------------------------------
+
+    /// Helper: create a properly signed HMAC JWT for testing.
+    fn make_hmac_jwt(alg: &str, secret: &str, claims: &serde_json::Value) -> String {
+        use hmac::{Hmac, Mac};
+        use sha2::{Sha256, Sha384, Sha512};
+
+        type HmacSha256 = Hmac<Sha256>;
+        type HmacSha384 = Hmac<Sha384>;
+        type HmacSha512 = Hmac<Sha512>;
+
+        let header = serde_json::json!({"alg": alg, "typ": "JWT", "kid": ""});
+        let header_b64 = b64_encode(header.to_string().as_bytes());
+        let claims_b64 = b64_encode(claims.to_string().as_bytes());
+        let signing_input = format!("{}.{}", header_b64, claims_b64);
+
+        let sig_bytes = match alg {
+            "HS256" => {
+                let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
+                mac.update(signing_input.as_bytes());
+                mac.finalize().into_bytes().to_vec()
+            }
+            "HS384" => {
+                let mut mac = HmacSha384::new_from_slice(secret.as_bytes()).unwrap();
+                mac.update(signing_input.as_bytes());
+                mac.finalize().into_bytes().to_vec()
+            }
+            "HS512" => {
+                let mut mac = HmacSha512::new_from_slice(secret.as_bytes()).unwrap();
+                mac.update(signing_input.as_bytes());
+                mac.finalize().into_bytes().to_vec()
+            }
+            _ => panic!("unsupported alg in test helper: {alg}"),
+        };
+
+        format!("{}.{}", signing_input, b64_encode(&sig_bytes))
+    }
+
+    #[test]
+    fn test_verify_hmac_signature_hs256_valid() {
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+
+        type HmacSha256 = Hmac<Sha256>;
+
+        let secret = b"my-secret-key";
+        let signing_input = b"header.payload";
+        let mut mac = HmacSha256::new_from_slice(secret).unwrap();
+        mac.update(signing_input);
+        let sig = mac.finalize().into_bytes();
+
+        assert!(verify_hmac_signature(signing_input, &sig, secret, "HS256").is_ok());
+    }
+
+    #[test]
+    fn test_verify_hmac_signature_hs384_valid() {
+        use hmac::{Hmac, Mac};
+        use sha2::Sha384;
+
+        type HmacSha384 = Hmac<Sha384>;
+
+        let secret = b"my-secret-key";
+        let signing_input = b"header.payload";
+        let mut mac = HmacSha384::new_from_slice(secret).unwrap();
+        mac.update(signing_input);
+        let sig = mac.finalize().into_bytes();
+
+        assert!(verify_hmac_signature(signing_input, &sig, secret, "HS384").is_ok());
+    }
+
+    #[test]
+    fn test_verify_hmac_signature_hs512_valid() {
+        use hmac::{Hmac, Mac};
+        use sha2::Sha512;
+
+        type HmacSha512 = Hmac<Sha512>;
+
+        let secret = b"my-secret-key";
+        let signing_input = b"header.payload";
+        let mut mac = HmacSha512::new_from_slice(secret).unwrap();
+        mac.update(signing_input);
+        let sig = mac.finalize().into_bytes();
+
+        assert!(verify_hmac_signature(signing_input, &sig, secret, "HS512").is_ok());
+    }
+
+    #[test]
+    fn test_verify_hmac_signature_wrong_secret() {
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+
+        type HmacSha256 = Hmac<Sha256>;
+
+        let secret = b"correct-secret";
+        let signing_input = b"header.payload";
+        let mut mac = HmacSha256::new_from_slice(secret).unwrap();
+        mac.update(signing_input);
+        let sig = mac.finalize().into_bytes();
+
+        let result = verify_hmac_signature(signing_input, &sig, b"wrong-secret", "HS256");
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("HMAC signature verification failed"));
+    }
+
+    #[test]
+    fn test_verify_hmac_signature_wrong_signing_input() {
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+
+        type HmacSha256 = Hmac<Sha256>;
+
+        let secret = b"my-secret-key";
+        let signing_input = b"header.payload";
+        let mut mac = HmacSha256::new_from_slice(secret).unwrap();
+        mac.update(signing_input);
+        let sig = mac.finalize().into_bytes();
+
+        let result = verify_hmac_signature(b"header.tampered", &sig, secret, "HS256");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_verify_hmac_signature_unsupported_alg() {
+        let result = verify_hmac_signature(b"data", b"sig", b"key", "HS123");
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("unsupported HMAC alg"));
+    }
+
+    #[test]
+    fn test_verify_client_secret_jwt_hs256_roundtrip() {
+        let now = chrono::Utc::now().timestamp();
+        let secret = "shared-client-secret";
+        let expected_iss = "client-abc";
+        let expected_aud = "https://issuer.example.com/oidc/token";
+
+        let claims = serde_json::json!({
+            "iss": expected_iss,
+            "sub": expected_iss,
+            "aud": expected_aud,
+            "exp": now + 300,
+            "iat": now
+        });
+
+        let token = make_hmac_jwt("HS256", secret, &claims);
+
+        let result = verify_client_secret_jwt(&token, secret, expected_aud, expected_iss, now);
+        assert!(result.is_ok());
+        let verified = result.unwrap();
+        assert_eq!(verified.iss, expected_iss);
+        assert_eq!(verified.sub, expected_iss);
+        assert_eq!(verified.aud, expected_aud);
+    }
+
+    #[test]
+    fn test_verify_client_secret_jwt_hs384_roundtrip() {
+        let now = chrono::Utc::now().timestamp();
+        let secret = "shared-client-secret";
+        let expected_iss = "client-abc";
+        let expected_aud = "https://issuer.example.com/oidc/token";
+
+        let claims = serde_json::json!({
+            "iss": expected_iss,
+            "sub": expected_iss,
+            "aud": expected_aud,
+            "exp": now + 300,
+            "iat": now
+        });
+
+        let token = make_hmac_jwt("HS384", secret, &claims);
+
+        let result = verify_client_secret_jwt(&token, secret, expected_aud, expected_iss, now);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_verify_client_secret_jwt_hs512_roundtrip() {
+        let now = chrono::Utc::now().timestamp();
+        let secret = "shared-client-secret";
+        let expected_iss = "client-abc";
+        let expected_aud = "https://issuer.example.com/oidc/token";
+
+        let claims = serde_json::json!({
+            "iss": expected_iss,
+            "sub": expected_iss,
+            "aud": expected_aud,
+            "exp": now + 300,
+            "iat": now
+        });
+
+        let token = make_hmac_jwt("HS512", secret, &claims);
+
+        let result = verify_client_secret_jwt(&token, secret, expected_aud, expected_iss, now);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_verify_client_secret_jwt_rejects_wrong_secret() {
+        let now = chrono::Utc::now().timestamp();
+        let secret = "correct-secret";
+        let expected_iss = "client-abc";
+        let expected_aud = "https://issuer.example.com/oidc/token";
+
+        let claims = serde_json::json!({
+            "iss": expected_iss,
+            "sub": expected_iss,
+            "aud": expected_aud,
+            "exp": now + 300,
+            "iat": now
+        });
+
+        let token = make_hmac_jwt("HS256", secret, &claims);
+
+        let result =
+            verify_client_secret_jwt(&token, "wrong-secret", expected_aud, expected_iss, now);
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("HMAC signature verification failed"));
+    }
+
+    #[test]
+    fn test_verify_client_secret_jwt_rejects_expired() {
+        let now = chrono::Utc::now().timestamp();
+        let secret = "shared-client-secret";
+        let expected_iss = "client-abc";
+        let expected_aud = "https://issuer.example.com/oidc/token";
+
+        let claims = serde_json::json!({
+            "iss": expected_iss,
+            "sub": expected_iss,
+            "aud": expected_aud,
+            "exp": now - 10,
+            "iat": now - 60
+        });
+
+        let token = make_hmac_jwt("HS256", secret, &claims);
+
+        let result = verify_client_secret_jwt(&token, secret, expected_aud, expected_iss, now);
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("expired"));
+    }
+
+    #[test]
+    fn test_verify_client_secret_jwt_rejects_wrong_aud() {
+        let now = chrono::Utc::now().timestamp();
+        let secret = "shared-client-secret";
+        let expected_iss = "client-abc";
+        let expected_aud = "https://issuer.example.com/oidc/token";
+
+        let claims = serde_json::json!({
+            "iss": expected_iss,
+            "sub": expected_iss,
+            "aud": "https://wrong.example.com/token",
+            "exp": now + 300,
+            "iat": now
+        });
+
+        let token = make_hmac_jwt("HS256", secret, &claims);
+
+        let result = verify_client_secret_jwt(&token, secret, expected_aud, expected_iss, now);
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("aud"));
+    }
+
+    #[test]
+    fn test_verify_client_secret_jwt_rejects_wrong_iss() {
+        let now = chrono::Utc::now().timestamp();
+        let secret = "shared-client-secret";
+        let expected_iss = "client-abc";
+        let expected_aud = "https://issuer.example.com/oidc/token";
+
+        let claims = serde_json::json!({
+            "iss": "client-999",
+            "sub": "client-999",
+            "aud": expected_aud,
+            "exp": now + 300,
+            "iat": now
+        });
+
+        let token = make_hmac_jwt("HS256", secret, &claims);
+
+        let result = verify_client_secret_jwt(&token, secret, expected_aud, expected_iss, now);
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("iss"));
+    }
+
+    #[test]
+    fn test_verify_client_secret_jwt_rejects_non_hmac_alg() {
+        let now = chrono::Utc::now().timestamp();
+        let secret = "shared-client-secret";
+        let expected_iss = "client-abc";
+        let expected_aud = "https://issuer.example.com/oidc/token";
+
+        // Build a JWT with alg=RS256 (not HMAC)
+        let header = serde_json::json!({"alg": "RS256", "typ": "JWT", "kid": ""});
+        let claims = serde_json::json!({
+            "iss": expected_iss,
+            "sub": expected_iss,
+            "aud": expected_aud,
+            "exp": now + 300,
+            "iat": now
+        });
+        let header_b64 = b64_encode(header.to_string().as_bytes());
+        let claims_b64 = b64_encode(claims.to_string().as_bytes());
+        let token = format!("{}.{}.fake-sig", header_b64, claims_b64);
+
+        let result = verify_client_secret_jwt(&token, secret, expected_aud, expected_iss, now);
+        assert!(result.is_err());
+        assert!(
+            format!("{}", result.unwrap_err())
+                .contains("client_secret_jwt requires HS256/HS384/HS512")
+        );
+    }
+
+    #[test]
+    fn test_verify_client_secret_jwt_rejects_future_iat() {
+        let now = chrono::Utc::now().timestamp();
+        let secret = "shared-client-secret";
+        let expected_iss = "client-abc";
+        let expected_aud = "https://issuer.example.com/oidc/token";
+
+        let claims = serde_json::json!({
+            "iss": expected_iss,
+            "sub": expected_iss,
+            "aud": expected_aud,
+            "exp": now + 1000,
+            "iat": now + 600  // > now + 300
+        });
+
+        let token = make_hmac_jwt("HS256", secret, &claims);
+
+        let result = verify_client_secret_jwt(&token, secret, expected_aud, expected_iss, now);
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("future"));
     }
 }

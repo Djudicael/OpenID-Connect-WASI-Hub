@@ -70,6 +70,15 @@ pub struct Client {
     /// Client's RSA public key for JWE "RSA-OAEP-256" encryption (PEM format).
     /// Stored as-is (public information, no need to encrypt).
     pub id_token_encryption_key_pem: Option<String>,
+    /// JWE encryption algorithm for request objects. None = no encryption.
+    /// Supported: "dir" (direct symmetric key), "RSA-OAEP-256" (RSA key wrapping)
+    pub request_object_encryption_alg: Option<String>,
+    /// JWE content encryption algorithm for request objects. Default: "A256GCM"
+    pub request_object_encryption_enc: Option<String>,
+    /// Symmetric key for JWE "dir" encryption of request objects, encrypted with the server's encryption key.
+    pub request_object_encryption_key_encrypted: Option<String>,
+    /// Client's RSA public key for JWE "RSA-OAEP-256" encryption of request objects (PEM format).
+    pub request_object_encryption_key_pem: Option<String>,
 }
 
 /// The type of OAuth2 client.
@@ -117,6 +126,10 @@ mod tests {
             id_token_encrypted_response_enc: None,
             id_token_encryption_key_encrypted: None,
             id_token_encryption_key_pem: None,
+            request_object_encryption_alg: None,
+            request_object_encryption_enc: None,
+            request_object_encryption_key_encrypted: None,
+            request_object_encryption_key_pem: None,
         }
     }
 

@@ -3,7 +3,6 @@
 //! OpenID Connect and OAuth2 endpoint handlers.
 
 #![allow(missing_docs)]
-#![recursion_limit = "512"]
 
 pub mod endpoints;
 pub mod errors;
