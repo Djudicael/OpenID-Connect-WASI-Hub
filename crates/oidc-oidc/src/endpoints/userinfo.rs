@@ -11,28 +11,72 @@ use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 
 use crate::state::OidcState;
+use crate::tokens::dpop::verify_dpop_proof;
 
 /// UserInfo endpoint handler.
 /// Returns claims scoped to the access token's granted scopes.
 /// Per RFC 6750, returns 401 with `WWW-Authenticate: Bearer error="invalid_token"`
 /// when the token is missing or invalid.
+///
+/// When the access token is DPoP-bound (has a `cnf.jkt` claim), the `DPoP`
+/// header must be present and valid per RFC 9449. The proof's `jwk_thumbprint`
+/// must match the `cnf.jkt` in the token, and the `ath` must match the
+/// SHA-256 hash of the access token.
 pub async fn userinfo_handler(
     State(state): State<OidcState>,
     authorization: Option<axum::http::HeaderValue>,
+    dpop_header: Option<axum::http::HeaderValue>,
 ) -> Response {
     let token = match extract_bearer_token(authorization) {
         Ok(t) => t,
-        Err(()) => return unauthorized_response(),
+        Err(()) => return unauthorized_response(None),
     };
 
-    let subject = match state.token_service.verify_access_token(&token).await {
-        Ok(sub) => sub,
-        Err(_) => return unauthorized_response(),
+    // Verify the access token and extract full claims (including cnf for DPoP)
+    let claims = match state
+        .token_service
+        .verify_access_token_with_claims(&token)
+        .await
+    {
+        Ok(c) => c,
+        Err(_) => return unauthorized_response(None),
     };
 
-    let user_id = match subject.parse() {
+    // ── DPoP validation for sender-constrained tokens (RFC 9449) ──────────
+    if let Some(ref cnf) = claims.cnf {
+        // Token is DPoP-bound — the DPoP proof is required
+        let jkt = cnf.get("jkt").and_then(|v| v.as_str()).unwrap_or("");
+
+        if jkt.is_empty() {
+            return unauthorized_response(Some("DPoP-bound token has no jkt"));
+        }
+
+        let dpop_value = match dpop_header {
+            Some(ref h) => match h.to_str() {
+                Ok(v) => v,
+                Err(_) => return unauthorized_response(Some("DPoP header is not valid UTF-8")),
+            },
+            None => return unauthorized_response(Some("DPoP proof required for DPoP-bound token")),
+        };
+
+        let userinfo_endpoint = format!("{}/oidc/userinfo", state.issuer);
+        let now = chrono::Utc::now().timestamp();
+
+        let proof =
+            match verify_dpop_proof(dpop_value, "GET", &userinfo_endpoint, Some(&token), now) {
+                Ok(p) => p,
+                Err(_) => return unauthorized_response(Some("Invalid DPoP proof")),
+            };
+
+        // The thumbprint in the proof must match the cnf.jkt in the token
+        if proof.jwk_thumbprint != jkt {
+            return unauthorized_response(Some("DPoP proof key does not match token binding"));
+        }
+    }
+
+    let user_id = match claims.sub.parse() {
         Ok(id) => id,
-        Err(_) => return unauthorized_response(),
+        Err(_) => return unauthorized_response(None),
     };
 
     let mut conn = match state.connect().await {
@@ -47,17 +91,17 @@ pub async fn userinfo_handler(
         .await
     {
         Ok(Some(s)) => s,
-        Ok(None) => return unauthorized_response(),
+        Ok(None) => return unauthorized_response(None),
         Err(_) => return internal_error_response(),
     };
 
     if session.revoked {
-        return unauthorized_response();
+        return unauthorized_response(None);
     }
 
     let user = match UserRepo.find_by_id(&mut conn, user_id).await {
         Ok(Some(u)) => u,
-        Ok(None) => return unauthorized_response(),
+        Ok(None) => return unauthorized_response(None),
         Err(_) => return internal_error_response(),
     };
 
@@ -135,12 +179,16 @@ pub async fn userinfo_handler(
 ///
 /// Per RFC 6750 §3, the error response MUST include:
 /// `WWW-Authenticate: Bearer error="invalid_token"`
-fn unauthorized_response() -> Response {
+///
+/// When `detail` is provided, it is included as `error_description`.
+fn unauthorized_response(detail: Option<&str>) -> Response {
+    let error_description = detail.unwrap_or("The access token is missing, invalid, or expired.");
+
     let mut response = (
         StatusCode::UNAUTHORIZED,
         axum::Json(json!({
             "error": "invalid_token",
-            "error_description": "The access token is missing, invalid, or expired."
+            "error_description": error_description,
         })),
     )
         .into_response();

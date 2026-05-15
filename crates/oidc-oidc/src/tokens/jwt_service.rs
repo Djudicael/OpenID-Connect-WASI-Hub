@@ -38,6 +38,10 @@ pub struct AccessTokenClaims {
     pub exp: i64,
     pub iat: i64,
     pub scope: String,
+    /// Confirmation claim for DPoP-bound tokens (RFC 9449).
+    /// Contains `{"jkt": "<thumbprint>"}` when the token is sender-constrained.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cnf: Option<serde_json::Value>,
 }
 
 /// JWT claims for an ID token.
@@ -559,7 +563,7 @@ impl JwtTokenService {
 
 /// Load the RSA private key from `OIDC_SIGNING_KEY` env var, or generate a fresh one.
 /// Find a JWK in a JWKS document by `kid` and `alg`.
-fn find_jwk_in_jwks(
+pub fn find_jwk_in_jwks(
     jwks: &serde_json::Value,
     kid: &str,
     alg: &str,
@@ -605,7 +609,7 @@ fn reconstruct_ed25519_public_key(x_b64: &str) -> Result<ed25519_dalek::Verifyin
 }
 
 /// Verify a JWT signature using a single JWK value.
-fn verify_signature_with_jwk(
+pub fn verify_signature_with_jwk(
     signing_input: &[u8],
     signature: &[u8],
     jwk: &serde_json::Value,
@@ -706,8 +710,10 @@ impl TokenService for JwtTokenService {
         subject: &str,
         audience: &str,
         scopes: &[String],
+        dpop_jkt: Option<&str>,
     ) -> Result<String, OidcError> {
         let now = self.now();
+        let cnf = dpop_jkt.map(|jkt| serde_json::json!({"jkt": jkt}));
         let claims = AccessTokenClaims {
             sub: subject.to_string(),
             aud: audience.to_string(),
@@ -715,6 +721,7 @@ impl TokenService for JwtTokenService {
             exp: now + self.access_token_ttl_secs,
             iat: now,
             scope: scopes.join(" "),
+            cnf,
         };
         self.encode_jwt(&claims)
     }
@@ -750,6 +757,7 @@ impl TokenService for JwtTokenService {
             exp: claims.exp,
             iat: claims.iat,
             scope: claims.scope,
+            cnf: claims.cnf,
         })
     }
 
@@ -806,12 +814,12 @@ impl TokenService for JwtTokenService {
     }
 }
 
-fn b64_encode(data: &[u8]) -> String {
+pub fn b64_encode(data: &[u8]) -> String {
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     URL_SAFE_NO_PAD.encode(data)
 }
 
-fn b64_decode(data: &str) -> Result<Vec<u8>, base64::DecodeError> {
+pub fn b64_decode(data: &str) -> Result<Vec<u8>, base64::DecodeError> {
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     URL_SAFE_NO_PAD.decode(data)
 }
@@ -825,7 +833,7 @@ mod tests {
     async fn test_jwt_roundtrip() {
         let service = JwtTokenService::new("https://test.example.com").unwrap();
         let token = service
-            .issue_access_token("user-123", "my-client", &["openid".to_string()])
+            .issue_access_token("user-123", "my-client", &["openid".to_string()], None)
             .await
             .unwrap();
         assert!(!token.is_empty());
@@ -1049,6 +1057,7 @@ mod tests {
             exp: now + 900,
             iat: now,
             scope: "openid".to_string(),
+            cnf: None,
         };
 
         let token = service.sign_eddsa(&claims).unwrap();
@@ -1075,6 +1084,7 @@ mod tests {
             exp: now + 900,
             iat: now,
             scope: "openid".to_string(),
+            cnf: None,
         };
 
         let token = service.sign_eddsa(&claims).unwrap();
@@ -1089,7 +1099,7 @@ mod tests {
         let service = JwtTokenService::new("https://test.example.com").unwrap();
         // issue_access_token uses RS256 by default
         let token = service
-            .issue_access_token("user-rs256", "my-client", &["openid".to_string()])
+            .issue_access_token("user-rs256", "my-client", &["openid".to_string()], None)
             .await
             .unwrap();
 
@@ -1195,6 +1205,7 @@ mod tests {
             exp: now + 900,
             iat: now,
             scope: "openid".to_string(),
+            cnf: None,
         };
 
         let token = service.sign_eddsa(&claims).unwrap();
@@ -1220,6 +1231,7 @@ mod tests {
             exp: now + 900,
             iat: now,
             scope: "openid".to_string(),
+            cnf: None,
         };
 
         // Sign with RS256

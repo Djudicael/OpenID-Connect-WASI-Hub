@@ -67,17 +67,23 @@ pub struct VerifiedAccessToken {
     pub iat: i64,
     /// Space-separated scope string.
     pub scope: String,
+    /// Confirmation claim for DPoP-bound tokens (RFC 9449).
+    /// Contains `{"jkt": "<thumbprint>"}` when the token is sender-constrained.
+    pub cnf: Option<serde_json::Value>,
 }
 
 /// Abstract token issuance and verification service.
 #[async_trait]
 pub trait TokenService: Send + Sync {
     /// Issue an access token for the given subject and audience.
+    /// When `dpop_jkt` is provided, the token is bound to the DPoP key
+    /// via a `cnf` claim containing `{"jkt": "<thumbprint>"}` (RFC 9449).
     async fn issue_access_token(
         &self,
         subject: &str,
         audience: &str,
         scopes: &[String],
+        dpop_jkt: Option<&str>,
     ) -> Result<String, OidcError>;
 
     /// Verify an access token and return the subject.

@@ -57,6 +57,7 @@ pub async fn login_handler(
         &req.password,
         req.client_id.as_deref(),
         req.realm.as_deref(),
+        None, // DPoP not supported at the login endpoint
     )
     .await
     .map_err(|e| from_oidc_error(&e))?;

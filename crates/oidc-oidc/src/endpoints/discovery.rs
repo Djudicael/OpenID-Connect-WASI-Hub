@@ -27,6 +27,7 @@ pub async fn discovery_handler(state: OidcState) -> Json<Value> {
         "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "private_key_jwt"],
         "subject_types_supported": ["public"],
         "id_token_signing_alg_values_supported": ["RS256", "EdDSA"],
+        "dpop_signing_alg_values_supported": ["RS256", "EdDSA"],
         "claims_supported": [
             "sub", "iss", "aud", "exp", "iat", "auth_time", "nonce", "at_hash", "c_hash",
             "name", "given_name", "family_name", "middle_name", "nickname", "preferred_username",
@@ -37,6 +38,8 @@ pub async fn discovery_handler(state: OidcState) -> Json<Value> {
         ],
         "display_values_supported": ["page", "popup", "touch", "wap"],
         "claims_parameter_supported": true,
+        "request_parameter_supported": true,
+        "request_object_signing_alg_values_supported": ["RS256", "EdDSA"],
         "code_challenge_methods_supported": ["S256"],
     }))
 }
@@ -66,6 +69,7 @@ pub async fn realm_discovery_handler(state: OidcState, realm: String) -> Json<Va
         "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "private_key_jwt"],
         "subject_types_supported": ["public"],
         "id_token_signing_alg_values_supported": ["RS256", "EdDSA"],
+        "dpop_signing_alg_values_supported": ["RS256", "EdDSA"],
         "claims_supported": [
             "sub", "iss", "aud", "exp", "iat", "auth_time", "nonce", "at_hash", "c_hash",
             "name", "given_name", "family_name", "middle_name", "nickname", "preferred_username",
@@ -76,6 +80,8 @@ pub async fn realm_discovery_handler(state: OidcState, realm: String) -> Json<Va
         ],
         "display_values_supported": ["page", "popup", "touch", "wap"],
         "claims_parameter_supported": true,
+        "request_parameter_supported": true,
+        "request_object_signing_alg_values_supported": ["RS256", "EdDSA"],
         "code_challenge_methods_supported": ["S256"],
     }))
 }

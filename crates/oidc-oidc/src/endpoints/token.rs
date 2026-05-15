@@ -13,10 +13,15 @@ use crate::flows::client_credentials::ClientCredentialsFlow;
 use crate::flows::refresh_token::RefreshTokenFlow;
 use crate::state::OidcState;
 use crate::tokens::JwtTokenService;
+use crate::tokens::dpop::verify_dpop_proof;
 
 /// Token endpoint handler.
 /// Supports `client_secret_basic` (Authorization header), `client_secret_post`
 /// (form body), and `private_key_jwt` (client_assertion JWT) per RFC 7523.
+///
+/// Also supports DPoP (RFC 9449): when a `DPoP` header is present, the proof
+/// is verified and the access token is bound to the client's key via a `cnf.jkt`
+/// claim. The response `token_type` is `"DPoP"` instead of `"Bearer"`.
 pub async fn token_handler(
     state: OidcState,
     headers: axum::http::HeaderMap,
@@ -56,6 +61,23 @@ pub async fn token_handler(
         return Err(OidcError::UnauthorizedClient);
     }
 
+    // ── DPoP proof verification (RFC 9449) ──────────────────────────────
+    let dpop_jkt: Option<String> = if let Some(dpop_header) = headers.get("DPoP") {
+        let dpop_value = dpop_header
+            .to_str()
+            .map_err(|_| OidcError::InvalidDPoPProof("DPoP header is not valid UTF-8".into()))?;
+
+        let token_endpoint = format!("{}/oidc/token", state.issuer);
+        let now = chrono::Utc::now().timestamp();
+
+        // At the token endpoint, no access_token exists yet, so ath is NOT required
+        let proof = verify_dpop_proof(dpop_value, "POST", &token_endpoint, None, now)?;
+
+        Some(proof.jwk_thumbprint)
+    } else {
+        None
+    };
+
     let result = match grant_type {
         "authorization_code" => {
             let code = params.get("code").ok_or(OidcError::InvalidRequest)?;
@@ -66,22 +88,30 @@ pub async fn token_handler(
                 .get("code_verifier")
                 .ok_or(OidcError::InvalidRequest)?;
 
-            AuthorizationCodeFlow::execute(&state, code, redirect_uri, &client_id, code_verifier)
-                .await?
+            AuthorizationCodeFlow::execute(
+                &state,
+                code,
+                redirect_uri,
+                &client_id,
+                code_verifier,
+                dpop_jkt.as_deref(),
+            )
+            .await?
         }
         "client_credentials" => {
             let client_secret = params
                 .get("client_secret")
                 .ok_or(OidcError::InvalidClient)?;
 
-            ClientCredentialsFlow::execute(&state, &client_id, client_secret).await?
+            ClientCredentialsFlow::execute(&state, &client_id, client_secret, dpop_jkt.as_deref())
+                .await?
         }
         "refresh_token" => {
             let refresh_token = params
                 .get("refresh_token")
                 .ok_or(OidcError::InvalidRequest)?;
 
-            RefreshTokenFlow::execute(&state, refresh_token).await?
+            RefreshTokenFlow::execute(&state, refresh_token, dpop_jkt.as_deref()).await?
         }
         _ => return Err(OidcError::UnsupportedGrantType),
     };

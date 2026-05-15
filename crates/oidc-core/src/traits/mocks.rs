@@ -799,9 +799,11 @@ impl TokenService for MockTokenService {
         subject: &str,
         audience: &str,
         scopes: &[String],
+        _dpop_jkt: Option<&str>,
     ) -> Result<String, OidcError> {
         // Generate a deterministic-ish token for testing
         let token = format!("at:{}:{}:{}", subject, audience, scopes.join(","));
+        let cnf = _dpop_jkt.map(|jkt| serde_json::json!({"jkt": jkt}));
         let claims = VerifiedAccessToken {
             sub: subject.to_string(),
             aud: audience.to_string(),
@@ -809,6 +811,7 @@ impl TokenService for MockTokenService {
             exp: chrono::Utc::now().timestamp() + 3600,
             iat: chrono::Utc::now().timestamp(),
             scope: scopes.join(" "),
+            cnf,
         };
         self.access_tokens
             .write()
@@ -1502,7 +1505,12 @@ mod tests {
         let svc = MockTokenService::new("https://test.example.com");
 
         let token = svc
-            .issue_access_token("user-1", "client-1", &["openid".into(), "profile".into()])
+            .issue_access_token(
+                "user-1",
+                "client-1",
+                &["openid".into(), "profile".into()],
+                None,
+            )
             .await
             .unwrap();
 

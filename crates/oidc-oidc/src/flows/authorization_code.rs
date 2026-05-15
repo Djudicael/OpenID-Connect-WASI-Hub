@@ -19,12 +19,16 @@ pub struct AuthorizationCodeFlow;
 
 impl AuthorizationCodeFlow {
     /// Execute the authorization code flow.
+    ///
+    /// When `dpop_jkt` is provided, the access token is bound to the DPoP
+    /// key via a `cnf.jkt` claim and `token_type` is `"DPoP"` (RFC 9449).
     pub async fn execute(
         state: &OidcState,
         code: &str,
         redirect_uri: &str,
         client_id: &str,
         code_verifier: &str,
+        dpop_jkt: Option<&str>,
     ) -> Result<Value, OidcError> {
         let mut conn = state.connect().await?;
 
@@ -72,7 +76,7 @@ impl AuthorizationCodeFlow {
 
             let token_svc = state.token_service_for_realm(auth_code.realm_id).await?;
             let access_token = token_svc
-                .issue_access_token(&subject, &audience, &scopes)
+                .issue_access_token(&subject, &audience, &scopes, dpop_jkt)
                 .await?;
 
             let at_hash = oidc_core::utils::compute_at_hash(&access_token);
@@ -138,9 +142,11 @@ impl AuthorizationCodeFlow {
 
             SessionRepo.create(&mut conn, &session).await?;
 
+            let token_type = if dpop_jkt.is_some() { "DPoP" } else { "Bearer" };
+
             Ok(json!({
                 "access_token": access_token,
-                "token_type": "Bearer",
+                "token_type": token_type,
                 "expires_in": 900,
                 "refresh_token": refresh_token_value,
                 "id_token": id_token,

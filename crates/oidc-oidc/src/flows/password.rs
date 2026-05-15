@@ -39,12 +39,16 @@ impl PasswordFlow {
     ///
     /// If `realm_name` is provided, authenticates against that realm.
     /// Defaults to `"master"` (backward-compatible).
+    ///
+    /// When `dpop_jkt` is provided, the access token is bound to the DPoP
+    /// key via a `cnf.jkt` claim and `token_type` is `"DPoP"` (RFC 9449).
     pub async fn execute(
         state: &OidcState,
         email: &str,
         password: &str,
         client_id: Option<&str>,
         realm_name: Option<&str>,
+        dpop_jkt: Option<&str>,
     ) -> Result<PasswordFlowResult, OidcError> {
         // --- Input validation ---
         if !is_valid_email(email) {
@@ -174,7 +178,7 @@ impl PasswordFlow {
 
             let token_svc = state.token_service_for_realm(user.realm_id).await?;
             let access_token = token_svc
-                .issue_access_token(&subject, &audience, &scopes)
+                .issue_access_token(&subject, &audience, &scopes, dpop_jkt)
                 .await?;
 
             let at_hash = oidc_core::utils::compute_at_hash(&access_token);
@@ -236,11 +240,13 @@ impl PasswordFlow {
 
             SessionRepo.create(&mut conn, &session).await?;
 
+            let token_type = if dpop_jkt.is_some() { "DPoP" } else { "Bearer" };
+
             Ok(PasswordFlowResult {
                 access_token,
                 refresh_token,
                 id_token,
-                token_type: "Bearer".to_string(),
+                token_type: token_type.to_string(),
                 expires_in: 900,
                 session_id: session.id.to_string(),
                 user_id: user.id.to_string(),

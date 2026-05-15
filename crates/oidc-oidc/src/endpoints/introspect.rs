@@ -18,6 +18,9 @@ use crate::tokens::JwtTokenService;
 /// or `private_key_jwt` per RFC 7523).
 /// Per RFC 7662, returns `active`, `sub`, `client_id`, `scope`, `token_type`,
 /// `exp`, and `iat` from the verified JWT claims.
+///
+/// When the access token is DPoP-bound (has a `cnf` claim), the `cnf` claim
+/// is included in the introspection response per RFC 9449.
 pub async fn introspect_handler(
     State(state): State<OidcState>,
     axum::extract::Form(mut params): axum::extract::Form<HashMap<String, String>>,
@@ -87,17 +90,33 @@ pub async fn introspect_handler(
             Err(_) => None,
         };
 
-        Ok(Json(json!({
+        // Determine token_type: DPoP if cnf.jkt is present, Bearer otherwise
+        let token_type = if claims.cnf.is_some() {
+            "DPoP"
+        } else {
+            "Bearer"
+        };
+
+        let mut response = json!({
             "active": true,
             "sub": claims.sub,
             "client_id": claims.aud,
             "aud": claims.aud,
             "scope": claims.scope,
-            "token_type": "Bearer",
+            "token_type": token_type,
             "exp": claims.exp,
             "iat": claims.iat,
             "username": username,
-        })))
+        });
+
+        // Include cnf claim for DPoP-bound tokens (RFC 9449)
+        if let Some(cnf) = claims.cnf {
+            if let Some(obj) = response.as_object_mut() {
+                obj.insert("cnf".to_string(), cnf);
+            }
+        }
+
+        Ok(Json(response))
     });
 
     result

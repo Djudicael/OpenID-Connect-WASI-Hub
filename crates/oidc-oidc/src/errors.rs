@@ -185,6 +185,12 @@ pub fn from_oidc_error(e: &oidc_core::OidcError) -> OidcErrorResponse {
         OidcError::InvalidClientAssertion(_) => {
             OidcErrorResponse::invalid_client("Invalid client assertion")
         }
+        OidcError::InvalidRequestObject(msg) => {
+            OidcErrorResponse::invalid_request(format!("Invalid request object: {msg}"))
+        }
+        OidcError::InvalidDPoPProof(msg) => {
+            OidcErrorResponse::invalid_request(format!("Invalid DPoP proof: {msg}"))
+        }
         OidcError::Internal(msg) => OidcErrorResponse::from_internal(msg),
         _ => OidcErrorResponse::from_internal("unknown error"),
     }

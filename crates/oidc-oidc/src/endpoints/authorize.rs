@@ -189,6 +189,109 @@ async fn authorize_inner(
         }
     }
 
+    // --- Signed Request Object resolution (OIDC Core §6) ---
+    if let Some(request_jwt) = params.get("request").cloned() {
+        // Per OIDC Core §6.1: If both request and request_uri are present, return an error.
+        // Since request_uri was already resolved above, if we reach here with both,
+        // it means request_uri was present and resolved — reject.
+        if params.contains_key("request_uri") {
+            return Err((
+                redirect_uri.clone(),
+                "invalid_request".to_string(),
+                "request and request_uri MUST NOT be used together".to_string(),
+            ));
+        }
+
+        // The client_id must be present either in params or in the JWT
+        let request_client_id = params.get("client_id").cloned();
+
+        // Parse the request object header/claims without verification to get client_id if missing
+        let (_header, unverified_claims, _signing_input, _signature) =
+            crate::tokens::jwt_service::JwtTokenService::parse_client_assertion_unverified(
+                &request_jwt,
+            )
+            .map_err(|e| {
+                (
+                    redirect_uri.clone(),
+                    "invalid_request_object".to_string(),
+                    format!("Request object parse error: {e}"),
+                )
+            })?;
+
+        // Determine client_id: from params first, then from JWT iss
+        let effective_client_id = request_client_id
+            .as_deref()
+            .or(Some(unverified_claims.iss.as_str()))
+            .ok_or_else(|| {
+                (
+                    redirect_uri.clone(),
+                    "invalid_request".to_string(),
+                    "Missing client_id".to_string(),
+                )
+            })?;
+
+        // Look up the client to get its JWKS
+        let mut conn_for_jwks = match state.connect().await {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("DB connection failed in authorize request object lookup: {e}");
+                return Err((
+                    redirect_uri.clone(),
+                    "server_error".to_string(),
+                    "An internal error occurred".to_string(),
+                ));
+            }
+        };
+
+        let client_for_jwks = ClientRepo
+            .find_by_client_id(&mut conn_for_jwks, effective_client_id)
+            .await
+            .map_err(|_| {
+                (
+                    redirect_uri.clone(),
+                    "invalid_client".to_string(),
+                    "Client not found".to_string(),
+                )
+            })?
+            .ok_or_else(|| {
+                (
+                    redirect_uri.clone(),
+                    "invalid_client".to_string(),
+                    "Client not found".to_string(),
+                )
+            })?;
+
+        let client_jwks = client_for_jwks.jwks.as_ref().ok_or_else(|| {
+            (
+                redirect_uri.clone(),
+                "invalid_request".to_string(),
+                "Client has no JWKS for request object verification".to_string(),
+            )
+        })?;
+
+        // Verify and extract claims from the request object
+        let request_claims = crate::tokens::request_object::verify_request_object(
+            &request_jwt,
+            client_jwks,
+            &state.issuer,
+            effective_client_id,
+            chrono::Utc::now().timestamp(),
+        )
+        .map_err(|e| {
+            (
+                redirect_uri.clone(),
+                "invalid_request_object".to_string(),
+                format!("Request object verification failed: {e}"),
+            )
+        })?;
+
+        // Merge: request object claims override query params per OIDC Core §6.2
+        // But certain parameters (client_id, redirect_uri) must match between query and JWT
+        for (k, v) in request_claims {
+            params.entry(k).or_insert(v);
+        }
+    }
+
     // --- Parameter extraction ---
     let response_type_raw = params.get("response_type").ok_or_else(|| {
         (
@@ -645,7 +748,7 @@ async fn authorize_inner(
 
         if response_type.has_token() {
             let access_token = match token_svc
-                .issue_access_token(&subject, &audience, &requested_scopes)
+                .issue_access_token(&subject, &audience, &requested_scopes, None)
                 .await
             {
                 Ok(t) => t,
