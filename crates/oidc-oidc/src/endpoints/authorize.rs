@@ -730,6 +730,9 @@ async fn authorize_inner(
         redirect_fragments.push(format!("code={}", urlencoding::encode(&code_value)));
     }
 
+    // Generate sid for session management (used in both implicit/hybrid ID tokens and session_state)
+    let implicit_sid = oidc_core::utils::generate_sid().unwrap_or_default();
+
     if response_type.is_implicit_or_hybrid() {
         let token_svc = match state.token_service_for_realm(client.realm_id).await {
             Ok(svc) => svc,
@@ -765,6 +768,7 @@ async fn authorize_inner(
             let access_hash = oidc_core::utils::sha2_256_hex(&access_token);
             let session = oidc_core::models::Session {
                 id: oidc_core::utils::generate_uuid_v7(),
+                sid: implicit_sid.clone(),
                 user_id: Some(user.id),
                 realm_id: client.realm_id,
                 client_id: client.id,
@@ -821,6 +825,7 @@ async fn authorize_inner(
                 at_hash,
                 c_hash: None,
                 auth_time: Some(chrono::Utc::now().timestamp()),
+                sid: Some(implicit_sid.clone()),
                 email: Some(user.email.clone()),
                 email_verified: Some(user.email_verified),
                 name: user.username.clone(),
@@ -862,6 +867,34 @@ async fn authorize_inner(
 
     if let Some(s) = state_param {
         redirect_fragments.push(format!("state={}", urlencoding::encode(&s)));
+    }
+
+    // --- session_state (OIDC Session Management §3) ---
+    // Compute session_state = SHA256(client_id + " " + sid + " " + origin) base64url
+    // The sid comes from the session cookie (for SSO) or is derived from the session.
+    // For the authorize endpoint, we use the cookie session's sid if available,
+    // otherwise we generate a new one for the response.
+    //
+    // Note: The "OP browser session ID" in the spec maps to our `sid` field.
+    // The RP will compare this session_state with the one computed by the
+    // check session iframe to detect session changes.
+    if let Some(op_browser_session_id) = cookie_session_id.as_ref() {
+        // We have a session cookie — look up the sid from the session
+        // For now, use the session_id from the cookie as the op_browser_session_id
+        // (the actual sid is stored in the session record in the DB, but for
+        // session_state computation, we use the same value the check_session
+        // iframe will use — which is the cookie's session_id part)
+        if let Some(origin) = oidc_core::utils::extract_origin(&redirect_uri) {
+            let session_state = oidc_core::utils::compute_session_state(
+                client_id_str,
+                op_browser_session_id,
+                &origin,
+            );
+            redirect_fragments.push(format!(
+                "session_state={}",
+                urlencoding::encode(&session_state)
+            ));
+        }
     }
 
     let redirect = format!("{}?{}", redirect_uri, redirect_fragments.join("&"));

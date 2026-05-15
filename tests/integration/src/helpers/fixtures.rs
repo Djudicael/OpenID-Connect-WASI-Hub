@@ -116,6 +116,11 @@ pub fn test_client(realm_id: Uuid, client_id: &str, redirect_uris: Vec<String>) 
         jwks: None,
         request_uris: vec![],
         client_secret_encrypted: None,
+        frontchannel_logout_uri: None,
+        frontchannel_logout_session_required: false,
+        backchannel_logout_uri: None,
+        backchannel_logout_session_required: false,
+        post_logout_redirect_uris: vec![],
     }
 }
 
@@ -150,5 +155,10 @@ pub fn test_public_client(realm_id: Uuid, client_id: &str, redirect_uris: Vec<St
         jwks: None,
         request_uris: vec![],
         client_secret_encrypted: None,
+        frontchannel_logout_uri: None,
+        frontchannel_logout_session_required: false,
+        backchannel_logout_uri: None,
+        backchannel_logout_session_required: false,
+        post_logout_redirect_uris: vec![],
     }
 }

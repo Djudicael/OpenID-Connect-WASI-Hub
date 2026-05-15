@@ -919,6 +919,11 @@ async fn seed_data(db_url: &str, proxy_port: u16) -> Result<()> {
                 jwks: None,
                 request_uris: vec![],
                 client_secret_encrypted: None,
+                frontchannel_logout_uri: None,
+                frontchannel_logout_session_required: false,
+                backchannel_logout_uri: None,
+                backchannel_logout_session_required: false,
+                post_logout_redirect_uris: vec![],
             };
             repo.create(&mut conn, &client)
                 .await
@@ -954,6 +959,11 @@ async fn seed_data(db_url: &str, proxy_port: u16) -> Result<()> {
                 jwks: None,
                 request_uris: vec![],
                 client_secret_encrypted: None,
+                frontchannel_logout_uri: None,
+                frontchannel_logout_session_required: false,
+                backchannel_logout_uri: None,
+                backchannel_logout_session_required: false,
+                post_logout_redirect_uris: vec![],
             };
             repo.create(&mut conn, &client)
                 .await

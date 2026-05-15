@@ -6,6 +6,10 @@ use uuid::Uuid;
 pub struct Session {
     /// Unique identifier.
     pub id: Uuid,
+    /// OIDC Session ID — stable identifier used in ID tokens (`sid` claim)
+    /// and back-channel/front-channel logout tokens. Per Session Management §3,
+    /// this is opaque to RPs and used for session state computation.
+    pub sid: String,
     /// The user this session belongs to (None for client_credentials grant).
     pub user_id: Option<Uuid>,
     /// The realm.

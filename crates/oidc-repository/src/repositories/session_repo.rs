@@ -9,7 +9,7 @@ pub struct SessionRepo;
 
 /// Column list for session SELECT queries (order must match map_row indices).
 const SESSION_COLUMNS: &str = r#"
-    id, user_id, realm_id, client_id, grant_type,
+    id, sid, user_id, realm_id, client_id, grant_type,
     access_token_hash, refresh_token_hash, id_token_jti,
     scope, revoked, expires_at, refresh_expires_at,
     created_at, last_used_at,
@@ -51,16 +51,17 @@ impl SessionRepo {
     pub async fn create(&self, conn: &mut Connection, entity: &Session) -> Result<(), OidcError> {
         let sql = r#"
             INSERT INTO sessions (
-                id, user_id, realm_id, client_id, grant_type,
+                id, sid, user_id, realm_id, client_id, grant_type,
                 access_token_hash, refresh_token_hash, id_token_jti,
                 scope, revoked, expires_at, refresh_expires_at,
                 token_family_id, previous_session_id, rotated_at, reused_at, family_revoked
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
         "#;
         conn.execute_params(
             sql,
             &[
                 &entity.id,
+                &entity.sid,
                 &entity.user_id,
                 &entity.realm_id,
                 &entity.client_id,
@@ -145,6 +146,41 @@ impl SessionRepo {
             .await
             .map_err(mapper::pg_err)?;
         Ok(())
+    }
+
+    /// Find all active (non-revoked, non-expired) sessions for a user.
+    /// Used for front-channel and back-channel logout notifications.
+    pub async fn find_active_by_user_id(
+        &self,
+        conn: &mut Connection,
+        user_id: Uuid,
+    ) -> Result<Vec<Session>, OidcError> {
+        let sql = &format!(
+            "SELECT {SESSION_COLUMNS} FROM sessions WHERE user_id = $1 AND NOT revoked AND expires_at > NOW()"
+        );
+        let result = conn
+            .query_params(sql, &[&user_id])
+            .await
+            .map_err(mapper::pg_err)?;
+        result
+            .into_rows()
+            .iter()
+            .map(|row| Self::map_row(row))
+            .collect::<Result<Vec<_>, _>>()
+    }
+
+    /// Find a session by its OIDC Session ID (`sid`).
+    pub async fn find_by_sid(
+        &self,
+        conn: &mut Connection,
+        sid: &str,
+    ) -> Result<Option<Session>, OidcError> {
+        let sql = &format!("SELECT {SESSION_COLUMNS} FROM sessions WHERE sid = $1");
+        let row = conn
+            .query_one_params(sql, &[&sid])
+            .await
+            .map_err(mapper::pg_err)?;
+        row.map(|r| Self::map_row(&r)).transpose()
     }
 
     /// Mark a session as rotated (sets rotated_at to NOW()).
@@ -314,24 +350,25 @@ impl SessionRepo {
     fn map_row(row: &wasi_pg_client::Row) -> Result<Session, OidcError> {
         Ok(Session {
             id: mapper::uuid(row, 0)?,
-            user_id: mapper::opt_uuid(row, 1)?,
-            realm_id: mapper::uuid(row, 2)?,
-            client_id: mapper::uuid(row, 3)?,
-            grant_type: mapper::string(row, 4)?,
-            access_token_hash: mapper::string(row, 5)?,
-            refresh_token_hash: mapper::opt_string(row, 6)?,
-            id_token_jti: mapper::opt_string(row, 7)?,
-            scope: mapper::json_string_vec(row, 8)?,
-            revoked: mapper::bool_(row, 9)?,
-            expires_at: mapper::datetime(row, 10)?,
-            refresh_expires_at: mapper::opt_datetime(row, 11)?,
-            created_at: mapper::datetime(row, 12)?,
-            last_used_at: mapper::opt_datetime(row, 13)?,
-            token_family_id: mapper::opt_uuid(row, 14)?,
-            previous_session_id: mapper::opt_uuid(row, 15)?,
-            rotated_at: mapper::opt_datetime(row, 16)?,
-            reused_at: mapper::opt_datetime(row, 17)?,
-            family_revoked: mapper::bool_(row, 18)?,
+            sid: mapper::string(row, 1)?,
+            user_id: mapper::opt_uuid(row, 2)?,
+            realm_id: mapper::uuid(row, 3)?,
+            client_id: mapper::uuid(row, 4)?,
+            grant_type: mapper::string(row, 5)?,
+            access_token_hash: mapper::string(row, 6)?,
+            refresh_token_hash: mapper::opt_string(row, 7)?,
+            id_token_jti: mapper::opt_string(row, 8)?,
+            scope: mapper::json_string_vec(row, 9)?,
+            revoked: mapper::bool_(row, 10)?,
+            expires_at: mapper::datetime(row, 11)?,
+            refresh_expires_at: mapper::opt_datetime(row, 12)?,
+            created_at: mapper::datetime(row, 13)?,
+            last_used_at: mapper::opt_datetime(row, 14)?,
+            token_family_id: mapper::opt_uuid(row, 15)?,
+            previous_session_id: mapper::opt_uuid(row, 16)?,
+            rotated_at: mapper::opt_datetime(row, 17)?,
+            reused_at: mapper::opt_datetime(row, 18)?,
+            family_revoked: mapper::bool_(row, 19)?,
         })
     }
 }

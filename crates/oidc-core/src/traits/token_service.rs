@@ -14,6 +14,9 @@ pub struct IdTokenExtraClaims {
     pub c_hash: Option<String>,
     /// `auth_time` — when the user authenticated (Unix seconds).
     pub auth_time: Option<i64>,
+    /// `sid` — Session ID per OIDC Session Management §3.
+    /// Included when the client supports front/back-channel logout.
+    pub sid: Option<String>,
     /// User email.
     pub email: Option<String>,
     /// Whether email is verified.

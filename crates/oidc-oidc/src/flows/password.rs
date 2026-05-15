@@ -176,6 +176,9 @@ impl PasswordFlow {
                 "admin".to_string(),
             ];
 
+            // Generate sid early so it can be included in both the ID token and session
+            let sid = oidc_core::utils::generate_sid().unwrap_or_default();
+
             let token_svc = state.token_service_for_realm(user.realm_id).await?;
             let access_token = token_svc
                 .issue_access_token(&subject, &audience, &scopes, dpop_jkt)
@@ -188,6 +191,7 @@ impl PasswordFlow {
                 at_hash: Some(at_hash),
                 c_hash: None,
                 auth_time: Some(chrono::Utc::now().timestamp()),
+                sid: Some(sid.clone()),
                 email: Some(user.email.clone()),
                 email_verified: Some(user.email_verified),
                 name: user.username.clone(),
@@ -218,6 +222,7 @@ impl PasswordFlow {
             let now = chrono::Utc::now();
             let session = Session {
                 id: generate_uuid_v7(),
+                sid,
                 user_id: Some(user.id),
                 realm_id: user.realm_id,
                 client_id: client.id,

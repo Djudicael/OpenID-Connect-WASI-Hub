@@ -167,6 +167,11 @@ fn make_client_with_client_id(client_id: String) -> Client {
         jwks: None,
         request_uris: vec![],
         client_secret_encrypted: None,
+        frontchannel_logout_uri: None,
+        frontchannel_logout_session_required: false,
+        backchannel_logout_uri: None,
+        backchannel_logout_session_required: false,
+        post_logout_redirect_uris: vec![],
     }
 }
 

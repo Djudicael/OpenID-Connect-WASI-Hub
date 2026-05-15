@@ -1250,6 +1250,11 @@ async fn create_client(State(state): State<AppState>, auth: AdminAuth, body: Str
         jwks: None,
         request_uris: vec![],
         client_secret_encrypted: None,
+        frontchannel_logout_uri: None,
+        frontchannel_logout_session_required: false,
+        backchannel_logout_uri: None,
+        backchannel_logout_session_required: false,
+        post_logout_redirect_uris: vec![],
     };
 
     match ClientRepo.create(&mut conn, &client).await {

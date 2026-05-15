@@ -81,16 +81,19 @@ fn test_client(realm_id: Uuid, client_id: &str, name: &str) -> Client {
         jwks: None,
         request_uris: vec![],
         client_secret_encrypted: None,
+        frontchannel_logout_uri: None,
+        frontchannel_logout_session_required: false,
+        backchannel_logout_uri: None,
+        backchannel_logout_session_required: false,
+        post_logout_redirect_uris: vec![],
     }
 }
-
 // ===================================================================
 // Realm Repository Tests
 // ===================================================================
 #[tokio::test]
 async fn test_realm_crud() {
     let mut conn = test_conn().await;
-    
 
     let repo = RealmRepo;
     let realm = test_realm("test-realm", "Test Realm");
@@ -128,7 +131,6 @@ async fn test_realm_crud() {
 #[tokio::test]
 async fn test_user_crud_and_soft_delete() {
     let mut conn = test_conn().await;
-    
 
     let realm_repo = RealmRepo;
     let realm = test_realm("user-test-realm", "User Test Realm");
@@ -193,7 +195,6 @@ async fn test_user_crud_and_soft_delete() {
 #[tokio::test]
 async fn test_client_crud() {
     let mut conn = test_conn().await;
-    
 
     let realm_repo = RealmRepo;
     let realm = test_realm("client-test-realm", "Client Test");
@@ -218,6 +219,11 @@ async fn test_client_crud() {
         jwks: None,
         request_uris: vec![],
         client_secret_encrypted: None,
+        frontchannel_logout_uri: None,
+        frontchannel_logout_session_required: false,
+        backchannel_logout_uri: None,
+        backchannel_logout_session_required: false,
+        post_logout_redirect_uris: vec![],
     };
 
     repo.create(&mut conn, &client).await.unwrap();
@@ -263,7 +269,6 @@ async fn test_client_crud() {
 #[tokio::test]
 async fn test_session_crud() {
     let mut conn = test_conn().await;
-    
 
     let realm_repo = RealmRepo;
     let realm = test_realm("session-test-realm", "Session Test");
@@ -281,6 +286,7 @@ async fn test_session_crud() {
     let repo = SessionRepo;
     let session = Session {
         id: Uuid::new_v4(),
+        sid: "test_sid_db_001".to_string(),
         user_id: Some(user.id),
         realm_id: realm.id,
         client_id: client.id,
@@ -338,7 +344,6 @@ async fn test_session_crud() {
 #[tokio::test]
 async fn test_api_key_crud() {
     let mut conn = test_conn().await;
-    
 
     let realm_repo = RealmRepo;
     let realm = test_realm("apikey-test-realm", "API Key Test");
@@ -387,7 +392,6 @@ async fn test_api_key_crud() {
 #[tokio::test]
 async fn test_auth_code_crud() {
     let mut conn = test_conn().await;
-    
 
     let realm_repo = RealmRepo;
     let realm = test_realm("authcode-test-realm", "AuthCode Test");
@@ -416,6 +420,11 @@ async fn test_auth_code_crud() {
         jwks: None,
         request_uris: vec![],
         client_secret_encrypted: None,
+        frontchannel_logout_uri: None,
+        frontchannel_logout_session_required: false,
+        backchannel_logout_uri: None,
+        backchannel_logout_session_required: false,
+        post_logout_redirect_uris: vec![],
     };
     client_repo.create(&mut conn, &client).await.unwrap();
 
@@ -459,7 +468,6 @@ async fn test_auth_code_crud() {
 #[tokio::test]
 async fn test_signing_key_crud() {
     let mut conn = test_conn().await;
-    
 
     let realm_repo = RealmRepo;
     let realm = test_realm("signing-test-realm", "Signing Key Test");
@@ -511,7 +519,6 @@ async fn test_signing_key_crud() {
 #[tokio::test]
 async fn test_audit_event_crud() {
     let mut conn = test_conn().await;
-    
 
     let realm_repo = RealmRepo;
     let realm = test_realm("audit-test-realm", "Audit Test");
@@ -560,7 +567,6 @@ async fn test_audit_event_crud() {
 #[tokio::test]
 async fn test_user_email_index_performance() {
     let mut conn = test_conn().await;
-    
 
     let realm_repo = RealmRepo;
     let realm = test_realm("perf-test-realm", "Perf Test");
@@ -630,7 +636,6 @@ async fn test_user_email_index_performance() {
 #[tokio::test]
 async fn test_session_token_hash_index_performance() {
     let mut conn = test_conn().await;
-    
 
     let realm_repo = RealmRepo;
     let realm = test_realm("session-perf-realm", "Session Perf");
@@ -650,6 +655,7 @@ async fn test_session_token_hash_index_performance() {
         let now = chrono::Utc::now();
         let session = Session {
             id: Uuid::new_v4(),
+            sid: format!("sid_perf_{:04}", i),
             user_id: Some(user.id),
             realm_id: realm.id,
             client_id: client.id,
@@ -703,7 +709,6 @@ async fn test_session_token_hash_index_performance() {
 #[tokio::test]
 async fn test_api_key_prefix_index_performance() {
     let mut conn = test_conn().await;
-    
 
     let realm_repo = RealmRepo;
     let realm = test_realm("apikey-perf-realm", "API Key Perf");
@@ -758,7 +763,6 @@ async fn test_api_key_prefix_index_performance() {
 #[tokio::test]
 async fn test_audit_event_insertion_performance() {
     let mut conn = test_conn().await;
-    
 
     let realm_repo = RealmRepo;
     let realm = test_realm("audit-perf-realm", "Audit Perf");
@@ -841,7 +845,6 @@ async fn test_migration_idempotency() {
 #[tokio::test]
 async fn test_cascade_delete_sessions_on_user_delete() {
     let mut conn = test_conn().await;
-    
 
     let realm_repo = RealmRepo;
     let realm = test_realm("cascade-test-realm", "Cascade Test");
@@ -859,6 +862,7 @@ async fn test_cascade_delete_sessions_on_user_delete() {
     let session_repo = SessionRepo;
     let session = Session {
         id: Uuid::new_v4(),
+        sid: "sid_cascade_001".to_string(),
         user_id: Some(user.id),
         realm_id: realm.id,
         client_id: client.id,
@@ -911,7 +915,6 @@ async fn test_cascade_delete_sessions_on_user_delete() {
 #[tokio::test]
 async fn test_unique_constraint_violation_surface() {
     let mut conn = test_conn().await;
-    
 
     let realm_repo = RealmRepo;
     let realm1 = test_realm("test-realm", "Test Realm");
@@ -936,7 +939,6 @@ async fn test_unique_constraint_violation_surface() {
 #[tokio::test]
 async fn test_expired_session_cleanup() {
     let mut conn = test_conn().await;
-    
 
     let realm_repo = RealmRepo;
     let realm = test_realm("session-cleanup-realm", "Session Cleanup");
@@ -956,6 +958,7 @@ async fn test_expired_session_cleanup() {
     // Create a session with expires_at in the past
     let expired_session = Session {
         id: Uuid::new_v4(),
+        sid: "sid_expired_001".to_string(),
         user_id: Some(user.id),
         realm_id: realm.id,
         client_id: client.id,
@@ -1015,7 +1018,6 @@ async fn test_expired_session_cleanup() {
 #[tokio::test]
 async fn test_expired_auth_code_cleanup() {
     let mut conn = test_conn().await;
-    
 
     let realm_repo = RealmRepo;
     let realm = test_realm("authcode-cleanup-realm", "AuthCode Cleanup");

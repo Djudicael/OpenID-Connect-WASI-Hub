@@ -68,6 +68,7 @@ impl ClientCredentialsFlow {
             // Client credentials have no end-user, so user_id is NULL.
             let session = Session {
                 id: generate_uuid_v7(),
+                sid: oidc_core::utils::generate_sid().unwrap_or_default(),
                 user_id: None, // no end-user for client_credentials
                 realm_id: client.realm_id,
                 client_id: client.id,

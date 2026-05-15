@@ -83,6 +83,11 @@ fn make_client(realm_id: Uuid, client_id: &str) -> Client {
         jwks: None,
         request_uris: vec![],
         client_secret_encrypted: None,
+        frontchannel_logout_uri: None,
+        frontchannel_logout_session_required: false,
+        backchannel_logout_uri: None,
+        backchannel_logout_session_required: false,
+        post_logout_redirect_uris: vec![],
     }
 }
 
@@ -90,6 +95,7 @@ fn make_session(user_id: Uuid, realm_id: Uuid, client_id: Uuid, hash: &str) -> S
     let now = chrono::Utc::now();
     Session {
         id: Uuid::new_v4(),
+        sid: format!("sid_lifecycle_{}", hash),
         user_id: Some(user_id),
         realm_id,
         client_id,
@@ -463,6 +469,11 @@ async fn test_client_confidential_with_secret() {
         jwks: None,
         request_uris: vec![],
         client_secret_encrypted: None,
+        frontchannel_logout_uri: None,
+        frontchannel_logout_session_required: false,
+        backchannel_logout_uri: None,
+        backchannel_logout_session_required: false,
+        post_logout_redirect_uris: vec![],
     };
     ClientRepo
         .create(&mut conn, &client)

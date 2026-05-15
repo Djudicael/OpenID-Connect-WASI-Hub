@@ -9,5 +9,6 @@ pub mod logout;
 pub mod par;
 pub mod registration;
 pub mod revoke;
+pub mod session;
 pub mod token;
 pub mod userinfo;

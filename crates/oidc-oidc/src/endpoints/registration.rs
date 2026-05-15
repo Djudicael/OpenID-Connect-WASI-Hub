@@ -193,6 +193,11 @@ pub async fn register_handler(
         jwks: req.jwks,
         request_uris: vec![],
         client_secret_encrypted,
+        frontchannel_logout_uri: None,
+        frontchannel_logout_session_required: false,
+        backchannel_logout_uri: None,
+        backchannel_logout_session_required: false,
+        post_logout_redirect_uris: vec![],
     };
 
     with_transaction!(conn, pg_err, {

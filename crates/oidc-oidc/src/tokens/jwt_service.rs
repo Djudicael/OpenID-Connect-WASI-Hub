@@ -56,6 +56,8 @@ pub struct IdTokenClaims {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nonce: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub sid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub at_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub c_hash: Option<String>,
@@ -358,6 +360,18 @@ impl JwtTokenService {
         let signature_b64 = b64_encode(&signature);
 
         Ok(format!("{}.{}", signing_input, signature_b64))
+    }
+
+    /// Encode and sign a logout token (Back-Channel Logout §2.1).
+    ///
+    /// Logout tokens use the same signing infrastructure as ID tokens.
+    /// We prefer RS256 for broadest compatibility with RPs.
+    pub fn encode_logout_token<Claims: Serialize>(
+        &self,
+        claims: &Claims,
+    ) -> Result<String, OidcError> {
+        // Use RS256 as the primary signing algorithm for logout tokens
+        self.encode_jwt(claims)
     }
 
     /// Sign data with RSASSA-PKCS1-v1_5-SHA256.
@@ -789,6 +803,7 @@ impl TokenService for JwtTokenService {
             iat: now,
             auth_time: extra.auth_time.unwrap_or(now),
             nonce: extra.nonce,
+            sid: extra.sid,
             at_hash: extra.at_hash,
             c_hash: extra.c_hash,
             email: extra.email,
@@ -1165,6 +1180,7 @@ mod tests {
             iat: now,
             auth_time: now,
             nonce: Some("nonce-abc".to_string()),
+            sid: None,
             at_hash: None,
             c_hash: None,
             email: Some("ed@example.com".to_string()),

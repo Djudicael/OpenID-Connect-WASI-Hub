@@ -949,12 +949,18 @@ mod tests {
             jwks: None,
             request_uris: vec![],
             client_secret_encrypted: None,
+            frontchannel_logout_uri: None,
+            frontchannel_logout_session_required: false,
+            backchannel_logout_uri: None,
+            backchannel_logout_session_required: false,
+            post_logout_redirect_uris: vec![],
         }
     }
 
     fn test_session(user_id: Uuid, realm_id: Uuid, client_id: Uuid) -> Session {
         Session {
             id: Uuid::now_v7(),
+            sid: "test_sid_12345678".to_string(),
             user_id: Some(user_id),
             realm_id,
             client_id,

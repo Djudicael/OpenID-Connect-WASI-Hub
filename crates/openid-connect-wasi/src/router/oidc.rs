@@ -49,8 +49,11 @@ pub fn router() -> Router<AppState> {
                 Err(e) => oidc_oidc::errors::from_oidc_error(&e).into_response(),
             }
         }))
-        .route("/oidc/logout", get(|State(state): State<AppState>, Query(params): Query<HashMap<String, String>>| async move {
-            oidc_oidc::endpoints::logout::logout_handler(state.oidc_state(), Query(params)).await
+        .route("/oidc/logout", get(|State(state): State<AppState>, headers: axum::http::HeaderMap, Query(params): Query<HashMap<String, String>>| async move {
+            oidc_oidc::endpoints::logout::logout_handler(state.oidc_state(), headers, Query(params)).await
+        }))
+        .route("/oidc/session/check", get(|State(state): State<AppState>, Query(params): Query<oidc_oidc::endpoints::session::check_session::CheckSessionParams>| async move {
+            oidc_oidc::endpoints::session::check_session::check_session_handler(state.oidc_state(), Query(params)).await
         }))
         .route("/oidc/register", post(|State(state): State<AppState>, auth: AdminAuth, Json(req): Json<oidc_oidc::endpoints::registration::RegisterClientRequest>| async move {
             match oidc_oidc::endpoints::registration::register_handler(state.oidc_state(), auth.realm_id, Json(req)).await {

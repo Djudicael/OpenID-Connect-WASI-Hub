@@ -28,7 +28,10 @@ const CLIENT_COLUMNS: &str = r#"
     name, redirect_uris, allowed_scopes, allowed_grant_types,
     pkce_required, enabled, deleted_at,
     token_endpoint_auth_method, jwks_uri, jwks, request_uris,
-    client_secret_encrypted
+    client_secret_encrypted,
+    frontchannel_logout_uri, frontchannel_logout_session_required,
+    backchannel_logout_uri, backchannel_logout_session_required,
+    post_logout_redirect_uris
 "#;
 
 impl ClientRepo {
@@ -91,8 +94,11 @@ impl ClientRepo {
                 name, redirect_uris, allowed_scopes, allowed_grant_types,
                 pkce_required, enabled,
                 token_endpoint_auth_method, jwks_uri, jwks, request_uris,
-                client_secret_encrypted
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                client_secret_encrypted,
+                frontchannel_logout_uri, frontchannel_logout_session_required,
+                backchannel_logout_uri, backchannel_logout_session_required,
+                post_logout_redirect_uris
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
         "#;
         let client_type_str = match entity.client_type {
             ClientType::Confidential => "confidential",
@@ -117,6 +123,11 @@ impl ClientRepo {
                 &entity.jwks,
                 &mapper::to_json_value_vec(&entity.request_uris),
                 &entity.client_secret_encrypted,
+                &entity.frontchannel_logout_uri,
+                &entity.frontchannel_logout_session_required,
+                &entity.backchannel_logout_uri,
+                &entity.backchannel_logout_session_required,
+                &mapper::to_json_value_vec(&entity.post_logout_redirect_uris),
             ],
         )
         .await
@@ -142,8 +153,13 @@ impl ClientRepo {
                 jwks = $12,
                 request_uris = $13,
                 client_secret_encrypted = $14,
+                frontchannel_logout_uri = $15,
+                frontchannel_logout_session_required = $16,
+                backchannel_logout_uri = $17,
+                backchannel_logout_session_required = $18,
+                post_logout_redirect_uris = $19,
                 updated_at = NOW()
-            WHERE id = $15 AND deleted_at IS NULL
+            WHERE id = $20 AND deleted_at IS NULL
         "#;
         let client_type_str = match entity.client_type {
             ClientType::Confidential => "confidential",
@@ -166,6 +182,11 @@ impl ClientRepo {
                 &entity.jwks,
                 &mapper::to_json_value_vec(&entity.request_uris),
                 &entity.client_secret_encrypted,
+                &entity.frontchannel_logout_uri,
+                &entity.frontchannel_logout_session_required,
+                &entity.backchannel_logout_uri,
+                &entity.backchannel_logout_session_required,
+                &mapper::to_json_value_vec(&entity.post_logout_redirect_uris),
                 &entity.id,
             ],
         )
@@ -296,6 +317,11 @@ impl ClientRepo {
             jwks: row.get::<Option<serde_json::Value>>(14).ok().flatten(),
             request_uris: mapper::json_string_vec(row, 15)?,
             client_secret_encrypted: mapper::opt_string(row, 16)?,
+            frontchannel_logout_uri: mapper::opt_string(row, 17)?,
+            frontchannel_logout_session_required: mapper::bool_(row, 18)?,
+            backchannel_logout_uri: mapper::opt_string(row, 19)?,
+            backchannel_logout_session_required: mapper::bool_(row, 20)?,
+            post_logout_redirect_uris: mapper::json_string_vec(row, 21)?,
         })
     }
 }

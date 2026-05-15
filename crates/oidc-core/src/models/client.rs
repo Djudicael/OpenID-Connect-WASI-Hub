@@ -40,6 +40,18 @@ pub struct Client {
     pub request_uris: Vec<String>,
     /// Encrypted client secret for `client_secret_jwt` authentication.
     pub client_secret_encrypted: Option<String>,
+    /// Front-channel logout URI (Front-Channel Logout §6).
+    /// The OP sends an iframe to this URI when the user logs out.
+    pub frontchannel_logout_uri: Option<String>,
+    /// Whether to include the `sid` claim in front-channel logout notifications.
+    pub frontchannel_logout_session_required: bool,
+    /// Back-channel logout URI (Back-Channel Logout §7).
+    /// The OP sends a signed logout token to this URI via HTTP POST.
+    pub backchannel_logout_uri: Option<String>,
+    /// Whether to include the `sid` claim in back-channel logout tokens.
+    pub backchannel_logout_session_required: bool,
+    /// Registered post-logout redirect URIs (Session §5).
+    pub post_logout_redirect_uris: Vec<String>,
 }
 
 /// The type of OAuth2 client.
@@ -75,6 +87,11 @@ mod tests {
             jwks: None,
             request_uris: vec![],
             client_secret_encrypted: None,
+            frontchannel_logout_uri: None,
+            frontchannel_logout_session_required: false,
+            backchannel_logout_uri: None,
+            backchannel_logout_session_required: false,
+            post_logout_redirect_uris: vec![],
         }
     }
 
