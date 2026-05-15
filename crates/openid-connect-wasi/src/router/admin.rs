@@ -12,6 +12,8 @@ use uuid::Uuid;
 
 use oidc_core::models::ClientType;
 use oidc_core::models::Group;
+use oidc_core::models::IdentityProvider;
+use oidc_core::models::IdentityProviderType;
 use oidc_core::models::PasswordPolicy;
 use oidc_core::models::Role;
 use oidc_core::models::Scope;
@@ -30,6 +32,7 @@ use oidc_repository::repositories::device_code_repo::DeviceCodeRepo;
 use oidc_repository::repositories::email_verification_token_repo::EmailVerificationTokenRepo;
 use oidc_repository::repositories::group_repo::GroupRepo;
 use oidc_repository::repositories::group_role_repo::GroupRoleRepo;
+use oidc_repository::repositories::identity_provider_repo::IdentityProviderRepo;
 use oidc_repository::repositories::par_repo::ParRepo;
 use oidc_repository::repositories::password_reset_token_repo::PasswordResetTokenRepo;
 use oidc_repository::repositories::realm_repo::RealmRepo;
@@ -130,6 +133,12 @@ pub fn router() -> Router<AppState> {
             "/api/realms/{id}/password-policy",
             put(update_password_policy),
         )
+        // Identity Providers
+        .route("/api/identity-providers", get(list_identity_providers))
+        .route("/api/identity-providers", post(create_identity_provider))
+        .route("/api/identity-providers/{id}", get(get_identity_provider))
+        .route("/api/identity-providers/{id}", put(update_identity_provider))
+        .route("/api/identity-providers/{id}", delete(delete_identity_provider))
 }
 
 async fn admin_index_handler(
@@ -268,7 +277,26 @@ async fn list_users(
                 "username": u.username,
                 "given_name": u.given_name,
                 "family_name": u.family_name,
+                "middle_name": u.middle_name,
+                "nickname": u.nickname,
+                "preferred_username": u.preferred_username,
+                "profile": u.profile,
+                "picture": u.picture,
+                "website": u.website,
+                "gender": u.gender,
+                "birthdate": u.birthdate,
+                "zoneinfo": u.zoneinfo,
+                "phone_number": u.phone_number,
+                "phone_number_verified": u.phone_number_verified,
+                "street_address": u.street_address,
+                "locality": u.locality,
+                "region": u.region,
+                "postal_code": u.postal_code,
+                "country": u.country,
+                "locale": u.locale,
+                "attributes": u.attributes,
                 "enabled": u.enabled,
+                "updated_at": u.updated_at.to_rfc3339(),
             })
         })
         .collect();
@@ -299,7 +327,26 @@ async fn get_user(
             "username": u.username,
             "given_name": u.given_name,
             "family_name": u.family_name,
+            "middle_name": u.middle_name,
+            "nickname": u.nickname,
+            "preferred_username": u.preferred_username,
+            "profile": u.profile,
+            "picture": u.picture,
+            "website": u.website,
+            "gender": u.gender,
+            "birthdate": u.birthdate,
+            "zoneinfo": u.zoneinfo,
+            "phone_number": u.phone_number,
+            "phone_number_verified": u.phone_number_verified,
+            "street_address": u.street_address,
+            "locality": u.locality,
+            "region": u.region,
+            "postal_code": u.postal_code,
+            "country": u.country,
+            "locale": u.locale,
+            "attributes": u.attributes,
             "enabled": u.enabled,
+            "updated_at": u.updated_at.to_rfc3339(),
         }))
         .into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response(),
@@ -321,6 +368,23 @@ struct UpdateUserRequest {
     username: Option<String>,
     given_name: Option<String>,
     family_name: Option<String>,
+    middle_name: Option<String>,
+    nickname: Option<String>,
+    preferred_username: Option<String>,
+    profile: Option<String>,
+    picture: Option<String>,
+    website: Option<String>,
+    gender: Option<String>,
+    birthdate: Option<String>,
+    zoneinfo: Option<String>,
+    phone_number: Option<String>,
+    phone_number_verified: Option<bool>,
+    street_address: Option<String>,
+    locality: Option<String>,
+    region: Option<String>,
+    postal_code: Option<String>,
+    country: Option<String>,
+    locale: Option<String>,
     enabled: Option<bool>,
 }
 
@@ -379,6 +443,57 @@ async fn update_user(
     }
     if let Some(v) = req.family_name {
         user.family_name = Some(v);
+    }
+    if let Some(v) = req.middle_name {
+        user.middle_name = Some(v);
+    }
+    if let Some(v) = req.nickname {
+        user.nickname = Some(v);
+    }
+    if let Some(v) = req.preferred_username {
+        user.preferred_username = Some(v);
+    }
+    if let Some(v) = req.profile {
+        user.profile = Some(v);
+    }
+    if let Some(v) = req.picture {
+        user.picture = Some(v);
+    }
+    if let Some(v) = req.website {
+        user.website = Some(v);
+    }
+    if let Some(v) = req.gender {
+        user.gender = Some(v);
+    }
+    if let Some(v) = req.birthdate {
+        user.birthdate = Some(v);
+    }
+    if let Some(v) = req.zoneinfo {
+        user.zoneinfo = Some(v);
+    }
+    if let Some(v) = req.phone_number {
+        user.phone_number = Some(v);
+    }
+    if let Some(v) = req.phone_number_verified {
+        user.phone_number_verified = Some(v);
+    }
+    if let Some(v) = req.street_address {
+        user.street_address = Some(v);
+    }
+    if let Some(v) = req.locality {
+        user.locality = Some(v);
+    }
+    if let Some(v) = req.region {
+        user.region = Some(v);
+    }
+    if let Some(v) = req.postal_code {
+        user.postal_code = Some(v);
+    }
+    if let Some(v) = req.country {
+        user.country = Some(v);
+    }
+    if let Some(v) = req.locale {
+        user.locale = v;
     }
     if let Some(v) = req.enabled {
         user.enabled = v;
@@ -492,6 +607,19 @@ async fn list_clients(
                 "enabled": c.enabled,
                 "subject_type": c.subject_type,
                 "sector_identifier_uri": c.sector_identifier_uri,
+                "token_endpoint_auth_method": c.token_endpoint_auth_method,
+                "jwks_uri": c.jwks_uri,
+                "request_uris": c.request_uris,
+                "frontchannel_logout_uri": c.frontchannel_logout_uri,
+                "frontchannel_logout_session_required": c.frontchannel_logout_session_required,
+                "backchannel_logout_uri": c.backchannel_logout_uri,
+                "backchannel_logout_session_required": c.backchannel_logout_session_required,
+                "post_logout_redirect_uris": c.post_logout_redirect_uris,
+                "response_modes": c.response_modes,
+                "id_token_encrypted_response_alg": c.id_token_encrypted_response_alg,
+                "id_token_encrypted_response_enc": c.id_token_encrypted_response_enc,
+                "request_object_encryption_alg": c.request_object_encryption_alg,
+                "request_object_encryption_enc": c.request_object_encryption_enc,
             })
         })
         .collect();
@@ -527,6 +655,19 @@ async fn get_client(
             "enabled": c.enabled,
             "subject_type": c.subject_type,
             "sector_identifier_uri": c.sector_identifier_uri,
+            "token_endpoint_auth_method": c.token_endpoint_auth_method,
+            "jwks_uri": c.jwks_uri,
+            "request_uris": c.request_uris,
+            "frontchannel_logout_uri": c.frontchannel_logout_uri,
+            "frontchannel_logout_session_required": c.frontchannel_logout_session_required,
+            "backchannel_logout_uri": c.backchannel_logout_uri,
+            "backchannel_logout_session_required": c.backchannel_logout_session_required,
+            "post_logout_redirect_uris": c.post_logout_redirect_uris,
+            "response_modes": c.response_modes,
+            "id_token_encrypted_response_alg": c.id_token_encrypted_response_alg,
+            "id_token_encrypted_response_enc": c.id_token_encrypted_response_enc,
+            "request_object_encryption_alg": c.request_object_encryption_alg,
+            "request_object_encryption_enc": c.request_object_encryption_enc,
         }))
         .into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response(),
@@ -551,6 +692,22 @@ struct UpdateClientRequest {
     enabled: Option<bool>,
     subject_type: Option<String>,
     sector_identifier_uri: Option<String>,
+    token_endpoint_auth_method: Option<String>,
+    jwks_uri: Option<String>,
+    jwks: Option<Value>,
+    request_uris: Option<Vec<String>>,
+    frontchannel_logout_uri: Option<String>,
+    frontchannel_logout_session_required: Option<bool>,
+    backchannel_logout_uri: Option<String>,
+    backchannel_logout_session_required: Option<bool>,
+    post_logout_redirect_uris: Option<Vec<String>>,
+    response_modes: Option<Vec<String>>,
+    id_token_encrypted_response_alg: Option<String>,
+    id_token_encrypted_response_enc: Option<String>,
+    id_token_encryption_key_pem: Option<String>,
+    request_object_encryption_alg: Option<String>,
+    request_object_encryption_enc: Option<String>,
+    request_object_encryption_key_pem: Option<String>,
 }
 
 async fn update_client(
@@ -617,6 +774,54 @@ async fn update_client(
     }
     if let Some(v) = req.sector_identifier_uri {
         client.sector_identifier_uri = Some(v);
+    }
+    if let Some(v) = req.token_endpoint_auth_method {
+        client.token_endpoint_auth_method = v;
+    }
+    if let Some(v) = req.jwks_uri {
+        client.jwks_uri = Some(v);
+    }
+    if let Some(v) = req.jwks {
+        client.jwks = Some(v);
+    }
+    if let Some(v) = req.request_uris {
+        client.request_uris = v;
+    }
+    if let Some(v) = req.frontchannel_logout_uri {
+        client.frontchannel_logout_uri = Some(v);
+    }
+    if let Some(v) = req.frontchannel_logout_session_required {
+        client.frontchannel_logout_session_required = v;
+    }
+    if let Some(v) = req.backchannel_logout_uri {
+        client.backchannel_logout_uri = Some(v);
+    }
+    if let Some(v) = req.backchannel_logout_session_required {
+        client.backchannel_logout_session_required = v;
+    }
+    if let Some(v) = req.post_logout_redirect_uris {
+        client.post_logout_redirect_uris = v;
+    }
+    if let Some(v) = req.response_modes {
+        client.response_modes = v;
+    }
+    if let Some(v) = req.id_token_encrypted_response_alg {
+        client.id_token_encrypted_response_alg = Some(v);
+    }
+    if let Some(v) = req.id_token_encrypted_response_enc {
+        client.id_token_encrypted_response_enc = Some(v);
+    }
+    if let Some(v) = req.id_token_encryption_key_pem {
+        client.id_token_encryption_key_pem = Some(v);
+    }
+    if let Some(v) = req.request_object_encryption_alg {
+        client.request_object_encryption_alg = Some(v);
+    }
+    if let Some(v) = req.request_object_encryption_enc {
+        client.request_object_encryption_enc = Some(v);
+    }
+    if let Some(v) = req.request_object_encryption_key_pem {
+        client.request_object_encryption_key_pem = Some(v);
     }
 
     match ClientRepo.update(&mut conn, &client).await {
@@ -1053,6 +1258,23 @@ struct CreateUserRequest {
     username: Option<String>,
     given_name: Option<String>,
     family_name: Option<String>,
+    middle_name: Option<String>,
+    nickname: Option<String>,
+    preferred_username: Option<String>,
+    profile: Option<String>,
+    picture: Option<String>,
+    website: Option<String>,
+    gender: Option<String>,
+    birthdate: Option<String>,
+    zoneinfo: Option<String>,
+    phone_number: Option<String>,
+    phone_number_verified: Option<bool>,
+    street_address: Option<String>,
+    locality: Option<String>,
+    region: Option<String>,
+    postal_code: Option<String>,
+    country: Option<String>,
+    locale: Option<String>,
     enabled: Option<bool>,
 }
 
@@ -1144,23 +1366,23 @@ async fn create_user(State(state): State<AppState>, auth: AdminAuth, body: Strin
         password_hash: Some(password_hash),
         given_name: req.given_name,
         family_name: req.family_name,
-        middle_name: None,
-        nickname: None,
-        preferred_username: None,
-        profile: None,
-        picture: None,
-        website: None,
-        gender: None,
-        birthdate: None,
-        zoneinfo: None,
-        phone_number: None,
-        phone_number_verified: None,
-        street_address: None,
-        locality: None,
-        region: None,
-        postal_code: None,
-        country: None,
-        locale: "en".into(),
+        middle_name: req.middle_name,
+        nickname: req.nickname,
+        preferred_username: req.preferred_username,
+        profile: req.profile,
+        picture: req.picture,
+        website: req.website,
+        gender: req.gender,
+        birthdate: req.birthdate,
+        zoneinfo: req.zoneinfo,
+        phone_number: req.phone_number,
+        phone_number_verified: req.phone_number_verified,
+        street_address: req.street_address,
+        locality: req.locality,
+        region: req.region,
+        postal_code: req.postal_code,
+        country: req.country,
+        locale: req.locale.unwrap_or_else(|| "en".into()),
         attributes: serde_json::Value::Object(serde_json::Map::new()),
         enabled: req.enabled.unwrap_or(true),
         deleted_at: None,
@@ -1211,6 +1433,24 @@ async fn create_user(State(state): State<AppState>, auth: AdminAuth, body: Strin
         "username": user.username,
         "given_name": user.given_name,
         "family_name": user.family_name,
+        "middle_name": user.middle_name,
+        "nickname": user.nickname,
+        "preferred_username": user.preferred_username,
+        "profile": user.profile,
+        "picture": user.picture,
+        "website": user.website,
+        "gender": user.gender,
+        "birthdate": user.birthdate,
+        "zoneinfo": user.zoneinfo,
+        "phone_number": user.phone_number,
+        "phone_number_verified": user.phone_number_verified,
+        "street_address": user.street_address,
+        "locality": user.locality,
+        "region": user.region,
+        "postal_code": user.postal_code,
+        "country": user.country,
+        "locale": user.locale,
+        "attributes": user.attributes,
         "enabled": user.enabled,
     }))
     .into_response()
@@ -1230,6 +1470,22 @@ struct CreateClientRequest {
     enabled: Option<bool>,
     subject_type: Option<String>,
     sector_identifier_uri: Option<String>,
+    token_endpoint_auth_method: Option<String>,
+    jwks_uri: Option<String>,
+    jwks: Option<Value>,
+    request_uris: Option<Vec<String>>,
+    frontchannel_logout_uri: Option<String>,
+    frontchannel_logout_session_required: Option<bool>,
+    backchannel_logout_uri: Option<String>,
+    backchannel_logout_session_required: Option<bool>,
+    post_logout_redirect_uris: Option<Vec<String>>,
+    response_modes: Option<Vec<String>>,
+    id_token_encrypted_response_alg: Option<String>,
+    id_token_encrypted_response_enc: Option<String>,
+    id_token_encryption_key_pem: Option<String>,
+    request_object_encryption_alg: Option<String>,
+    request_object_encryption_enc: Option<String>,
+    request_object_encryption_key_pem: Option<String>,
 }
 
 async fn create_client(State(state): State<AppState>, auth: AdminAuth, body: String) -> Response {
@@ -1324,30 +1580,30 @@ async fn create_client(State(state): State<AppState>, auth: AdminAuth, body: Str
         pkce_required,
         enabled,
         deleted_at: None,
-        token_endpoint_auth_method: match client_type {
+        token_endpoint_auth_method: req.token_endpoint_auth_method.unwrap_or_else(|| match client_type {
             oidc_core::models::ClientType::Confidential => "client_secret_basic".into(),
             oidc_core::models::ClientType::Public => "none".into(),
-        },
-        jwks_uri: None,
-        jwks: None,
-        request_uris: vec![],
+        }),
+        jwks_uri: req.jwks_uri,
+        jwks: req.jwks,
+        request_uris: req.request_uris.unwrap_or_default(),
         client_secret_encrypted: None,
-        frontchannel_logout_uri: None,
-        frontchannel_logout_session_required: false,
-        backchannel_logout_uri: None,
-        backchannel_logout_session_required: false,
-        post_logout_redirect_uris: vec![],
+        frontchannel_logout_uri: req.frontchannel_logout_uri,
+        frontchannel_logout_session_required: req.frontchannel_logout_session_required.unwrap_or(false),
+        backchannel_logout_uri: req.backchannel_logout_uri,
+        backchannel_logout_session_required: req.backchannel_logout_session_required.unwrap_or(false),
+        post_logout_redirect_uris: req.post_logout_redirect_uris.unwrap_or_default(),
         subject_type: req.subject_type.unwrap_or_else(|| "public".into()),
         sector_identifier_uri: req.sector_identifier_uri,
-        response_modes: vec!["query".to_string(), "fragment".to_string()],
-        id_token_encrypted_response_alg: None,
-        id_token_encrypted_response_enc: None,
+        response_modes: req.response_modes.unwrap_or_else(|| vec!["query".to_string(), "fragment".to_string()]),
+        id_token_encrypted_response_alg: req.id_token_encrypted_response_alg,
+        id_token_encrypted_response_enc: req.id_token_encrypted_response_enc,
         id_token_encryption_key_encrypted: None,
-        id_token_encryption_key_pem: None,
-        request_object_encryption_alg: None,
-        request_object_encryption_enc: None,
+        id_token_encryption_key_pem: req.id_token_encryption_key_pem,
+        request_object_encryption_alg: req.request_object_encryption_alg,
+        request_object_encryption_enc: req.request_object_encryption_enc,
         request_object_encryption_key_encrypted: None,
-        request_object_encryption_key_pem: None,
+        request_object_encryption_key_pem: req.request_object_encryption_key_pem,
     };
 
     match ClientRepo.create(&mut conn, &client).await {
@@ -1376,6 +1632,19 @@ async fn create_client(State(state): State<AppState>, auth: AdminAuth, body: Str
         "enabled": client.enabled,
         "subject_type": client.subject_type,
         "sector_identifier_uri": client.sector_identifier_uri,
+        "token_endpoint_auth_method": client.token_endpoint_auth_method,
+        "jwks_uri": client.jwks_uri,
+        "request_uris": client.request_uris,
+        "frontchannel_logout_uri": client.frontchannel_logout_uri,
+        "frontchannel_logout_session_required": client.frontchannel_logout_session_required,
+        "backchannel_logout_uri": client.backchannel_logout_uri,
+        "backchannel_logout_session_required": client.backchannel_logout_session_required,
+        "post_logout_redirect_uris": client.post_logout_redirect_uris,
+        "response_modes": client.response_modes,
+        "id_token_encrypted_response_alg": client.id_token_encrypted_response_alg,
+        "id_token_encrypted_response_enc": client.id_token_encrypted_response_enc,
+        "request_object_encryption_alg": client.request_object_encryption_alg,
+        "request_object_encryption_enc": client.request_object_encryption_enc,
     });
     if let Some(secret) = plain_secret {
         resp["client_secret"] = json!(secret);
@@ -1743,7 +2012,7 @@ async fn delete_scope(
 
 #[derive(Deserialize)]
 struct RoleListQuery {
-    realm_id: Uuid,
+    realm_id: Option<Uuid>,
     search: Option<String>,
     #[serde(default = "default_limit")]
     limit: i64,
@@ -2248,7 +2517,7 @@ async fn unassign_role_from_user(
 
 #[derive(Deserialize)]
 struct GroupListQuery {
-    realm_id: Uuid,
+    realm_id: Option<Uuid>,
     search: Option<String>,
     #[serde(default = "default_limit")]
     limit: i64,
@@ -3346,6 +3615,397 @@ async fn update_password_policy(
                 Json(json!({"error": "internal"})),
             )
                 .into_response()
+        }
+    }
+}
+
+// ─── Identity Providers CRUD ───────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct IdpListQuery {
+    realm_id: Option<Uuid>,
+    #[serde(default = "default_limit")]
+    limit: i64,
+    #[serde(default = "default_offset")]
+    offset: i64,
+}
+
+async fn list_identity_providers(
+    State(state): State<AppState>,
+    Query(query): Query<IdpListQuery>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let items = match query.realm_id {
+        Some(realm_id) => match IdentityProviderRepo.find_by_realm(&mut conn, realm_id).await {
+            Ok(i) => i,
+            Err(e) => {
+                tracing::error!("list identity providers error: {e}");
+                return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal"}))).into_response();
+            }
+        },
+        None => {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": "realm_id required"}))).into_response();
+        }
+    };
+    let rows: Vec<Value> = items
+        .into_iter()
+        .map(|i| {
+            json!({
+                "id": i.id.to_string(),
+                "realm_id": i.realm_id.to_string(),
+                "alias": i.alias,
+                "display_name": i.display_name,
+                "provider_type": match i.provider_type { IdentityProviderType::Oidc => "oidc", IdentityProviderType::Google => "google", IdentityProviderType::GitHub => "github" },
+                "enabled": i.enabled,
+                "issuer": i.issuer,
+                "authorization_url": i.authorization_url,
+                "token_url": i.token_url,
+                "userinfo_url": i.userinfo_url,
+                "jwks_url": i.jwks_url,
+                "client_id": i.client_id,
+                "scopes": i.scopes,
+                "auto_create_users": i.auto_create_users,
+                "link_users_by_email": i.link_users_by_email,
+            })
+        })
+        .collect();
+    Json(json!({"items": rows, "total": rows.len()})).into_response()
+}
+
+#[derive(Deserialize)]
+struct CreateIdentityProviderRequest {
+    realm_id: Uuid,
+    alias: String,
+    display_name: String,
+    provider_type: Option<String>,
+    enabled: Option<bool>,
+    issuer: String,
+    authorization_url: Option<String>,
+    token_url: Option<String>,
+    userinfo_url: Option<String>,
+    jwks_url: Option<String>,
+    client_id: String,
+    client_secret: Option<String>,
+    scopes: Option<Vec<String>>,
+    auto_create_users: Option<bool>,
+    link_users_by_email: Option<bool>,
+}
+
+async fn create_identity_provider(
+    State(state): State<AppState>,
+    auth: AdminAuth,
+    body: String,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let req: CreateIdentityProviderRequest = match serde_json::from_str(&body) {
+        Ok(r) => r,
+        Err(_) => {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": "bad_request"}))).into_response();
+        }
+    };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    // Check for duplicate alias in realm
+    match IdentityProviderRepo.find_by_alias(&mut conn, req.realm_id, &req.alias).await {
+        Ok(Some(_)) => {
+            return (StatusCode::CONFLICT, Json(json!({"error": "duplicate"}))).into_response();
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::error!("create idp duplicate check error: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal"}))).into_response();
+        }
+    }
+    let provider_type = match req.provider_type.as_deref() {
+        Some("google") => IdentityProviderType::Google,
+        Some("github") => IdentityProviderType::GitHub,
+        _ => IdentityProviderType::Oidc,
+    };
+    let (issuer, authorization_url, token_url, userinfo_url, jwks_url) = match provider_type {
+        IdentityProviderType::Google => (
+            req.issuer,
+            req.authorization_url.unwrap_or_else(|| "https://accounts.google.com/o/oauth2/v2/auth".into()),
+            req.token_url.unwrap_or_else(|| "https://oauth2.googleapis.com/token".into()),
+            req.userinfo_url.unwrap_or_else(|| "https://openidconnect.googleapis.com/v1/userinfo".into()),
+            req.jwks_url.unwrap_or_else(|| "https://www.googleapis.com/oauth2/v3/certs".into()),
+        ),
+        IdentityProviderType::GitHub => (
+            req.issuer,
+            req.authorization_url.unwrap_or_else(|| "https://github.com/login/oauth/authorize".into()),
+            req.token_url.unwrap_or_else(|| "https://github.com/login/oauth/access_token".into()),
+            req.userinfo_url.unwrap_or_else(|| "https://api.github.com/user".into()),
+            req.jwks_url.unwrap_or_default(),
+        ),
+        IdentityProviderType::Oidc => (
+            req.issuer.clone(),
+            req.authorization_url.unwrap_or_default(),
+            req.token_url.unwrap_or_default(),
+            req.userinfo_url.unwrap_or_default(),
+            req.jwks_url.unwrap_or_default(),
+        ),
+    };
+    let id = generate_uuid_v7();
+    let idp = IdentityProvider {
+        id,
+        realm_id: req.realm_id,
+        alias: req.alias,
+        display_name: req.display_name,
+        provider_type,
+        enabled: req.enabled.unwrap_or(true),
+        issuer,
+        authorization_url,
+        token_url,
+        userinfo_url,
+        jwks_url,
+        client_id: req.client_id,
+        client_secret: req.client_secret.unwrap_or_default(),
+        scopes: req.scopes.unwrap_or_else(|| vec!["openid".into(), "profile".into(), "email".into()]),
+        auto_create_users: req.auto_create_users.unwrap_or(true),
+        link_users_by_email: req.link_users_by_email.unwrap_or(false),
+        deleted_at: None,
+    };
+    if let Err(e) = idp.validate() {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": format!("{e}")}))).into_response();
+    }
+    match IdentityProviderRepo.create(&mut conn, &idp).await {
+        Ok(()) => {
+            let audit = oidc_core::models::AuditEvent {
+                id: generate_uuid_v7(),
+                realm_id: Some(idp.realm_id),
+                event_type: "identity_provider.created".to_string(),
+                actor_id: Uuid::parse_str(&auth.subject).ok(),
+                actor_type: if auth.is_api_key { ActorType::ApiKey } else { ActorType::User },
+                target_type: Some("identity_provider".to_string()),
+                target_id: Some(idp.id),
+                details: json!({"alias": idp.alias}),
+                ip_address: None,
+                user_agent: None,
+                created_at: chrono::Utc::now(),
+            };
+            let _ = AuditEventRepo.create(&mut conn, &audit).await;
+            let _ = conn.close().await;
+            Json(json!({
+                "id": idp.id.to_string(),
+                "realm_id": idp.realm_id.to_string(),
+                "alias": idp.alias,
+                "display_name": idp.display_name,
+                "provider_type": match idp.provider_type { IdentityProviderType::Oidc => "oidc", IdentityProviderType::Google => "google", IdentityProviderType::GitHub => "github" },
+                "enabled": idp.enabled,
+                "issuer": idp.issuer,
+                "authorization_url": idp.authorization_url,
+                "token_url": idp.token_url,
+                "userinfo_url": idp.userinfo_url,
+                "jwks_url": idp.jwks_url,
+                "client_id": idp.client_id,
+                "scopes": idp.scopes,
+                "auto_create_users": idp.auto_create_users,
+                "link_users_by_email": idp.link_users_by_email,
+            }))
+            .into_response()
+        }
+        Err(e) => {
+            tracing::error!("create identity provider error: {e}");
+            let _ = conn.close().await;
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal"}))).into_response()
+        }
+    }
+}
+
+async fn get_identity_provider(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    match IdentityProviderRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(i)) => {
+            let _ = conn.close().await;
+            Json(json!({
+                "id": i.id.to_string(),
+                "realm_id": i.realm_id.to_string(),
+                "alias": i.alias,
+                "display_name": i.display_name,
+                "provider_type": match i.provider_type { IdentityProviderType::Oidc => "oidc", IdentityProviderType::Google => "google", IdentityProviderType::GitHub => "github" },
+                "enabled": i.enabled,
+                "issuer": i.issuer,
+                "authorization_url": i.authorization_url,
+                "token_url": i.token_url,
+                "userinfo_url": i.userinfo_url,
+                "jwks_url": i.jwks_url,
+                "client_id": i.client_id,
+                "scopes": i.scopes,
+                "auto_create_users": i.auto_create_users,
+                "link_users_by_email": i.link_users_by_email,
+            }))
+            .into_response()
+        }
+        Ok(None) => (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response(),
+        Err(e) => {
+            tracing::error!("get identity provider error: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal"}))).into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct UpdateIdentityProviderRequest {
+    alias: Option<String>,
+    display_name: Option<String>,
+    provider_type: Option<String>,
+    enabled: Option<bool>,
+    issuer: Option<String>,
+    authorization_url: Option<String>,
+    token_url: Option<String>,
+    userinfo_url: Option<String>,
+    jwks_url: Option<String>,
+    client_id: Option<String>,
+    client_secret: Option<String>,
+    scopes: Option<Vec<String>>,
+    auto_create_users: Option<bool>,
+    link_users_by_email: Option<bool>,
+}
+
+async fn update_identity_provider(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+    body: String,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let req: UpdateIdentityProviderRequest = match serde_json::from_str(&body) {
+        Ok(r) => r,
+        Err(_) => {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error": "bad_request"}))).into_response();
+        }
+    };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let mut idp = match IdentityProviderRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(i)) => i,
+        Ok(None) => {
+            return (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response();
+        }
+        Err(e) => {
+            tracing::error!("update idp fetch error: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal"}))).into_response();
+        }
+    };
+    if let Some(v) = req.alias { idp.alias = v; }
+    if let Some(v) = req.display_name { idp.display_name = v; }
+    if let Some(v) = req.provider_type {
+        idp.provider_type = match v.as_str() {
+            "google" => IdentityProviderType::Google,
+            "github" => IdentityProviderType::GitHub,
+            _ => IdentityProviderType::Oidc,
+        };
+    }
+    if let Some(v) = req.enabled { idp.enabled = v; }
+    if let Some(v) = req.issuer { idp.issuer = v; }
+    if let Some(v) = req.authorization_url { idp.authorization_url = v; }
+    if let Some(v) = req.token_url { idp.token_url = v; }
+    if let Some(v) = req.userinfo_url { idp.userinfo_url = v; }
+    if let Some(v) = req.jwks_url { idp.jwks_url = v; }
+    if let Some(v) = req.client_id { idp.client_id = v; }
+    if let Some(v) = req.client_secret { idp.client_secret = v; }
+    if let Some(v) = req.scopes { idp.scopes = v; }
+    if let Some(v) = req.auto_create_users { idp.auto_create_users = v; }
+    if let Some(v) = req.link_users_by_email { idp.link_users_by_email = v; }
+    if let Err(e) = idp.validate() {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": format!("{e}")}))).into_response();
+    }
+    match IdentityProviderRepo.update(&mut conn, &idp).await {
+        Ok(()) => {
+            let audit = oidc_core::models::AuditEvent {
+                id: generate_uuid_v7(),
+                realm_id: Some(idp.realm_id),
+                event_type: "identity_provider.updated".to_string(),
+                actor_id: Uuid::parse_str(&auth.subject).ok(),
+                actor_type: if auth.is_api_key { ActorType::ApiKey } else { ActorType::User },
+                target_type: Some("identity_provider".to_string()),
+                target_id: Some(idp.id),
+                details: json!({"alias": idp.alias}),
+                ip_address: None,
+                user_agent: None,
+                created_at: chrono::Utc::now(),
+            };
+            let _ = AuditEventRepo.create(&mut conn, &audit).await;
+            let _ = conn.close().await;
+            Json(json!({"updated": true})).into_response()
+        }
+        Err(e) => {
+            tracing::error!("update identity provider error: {e}");
+            let _ = conn.close().await;
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal"}))).into_response()
+        }
+    }
+}
+
+async fn delete_identity_provider(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let idp = match IdentityProviderRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(i)) => i,
+        Ok(None) => {
+            return (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response();
+        }
+        Err(e) => {
+            tracing::error!("delete idp fetch error: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal"}))).into_response();
+        }
+    };
+    match IdentityProviderRepo.delete(&mut conn, id).await {
+        Ok(()) => {
+            let audit = oidc_core::models::AuditEvent {
+                id: generate_uuid_v7(),
+                realm_id: Some(idp.realm_id),
+                event_type: "identity_provider.deleted".to_string(),
+                actor_id: Uuid::parse_str(&auth.subject).ok(),
+                actor_type: if auth.is_api_key { ActorType::ApiKey } else { ActorType::User },
+                target_type: Some("identity_provider".to_string()),
+                target_id: Some(idp.id),
+                details: json!({"alias": idp.alias}),
+                ip_address: None,
+                user_agent: None,
+                created_at: chrono::Utc::now(),
+            };
+            let _ = AuditEventRepo.create(&mut conn, &audit).await;
+            let _ = conn.close().await;
+            Json(json!({"deleted": true})).into_response()
+        }
+        Err(e) => {
+            tracing::error!("delete identity provider error: {e}");
+            let _ = conn.close().await;
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "internal"}))).into_response()
         }
     }
 }

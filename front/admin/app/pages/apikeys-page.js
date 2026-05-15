@@ -5,6 +5,9 @@ import { listRealms } from '../services/realm-service.js';
 import { navigate } from '../core/router.js';
 import { formatDate, formatRelativeTime } from '../utils/format.js';
 import { showToast } from '../components/ui/toast.js';
+import { handleApiError } from '../utils/error-handler.js';
+
+const ConfirmDialog = customElements.get('c-modal');
 
 class ApiKeysPage extends BaseComponent {
   constructor() {
@@ -25,13 +28,14 @@ class ApiKeysPage extends BaseComponent {
 
   async _loadRealms() {
     try {
-      const data = await listRealms({ limit: '100' });
+      const data = await listRealms({ limit: '100' }, this.signal);
       const realms = data.items || [];
       const defaultRealmId = realms.length > 0 ? realms[0].id : '00000000-0000-0000-0000-000000000000';
       this.setState({ realms, realmId: defaultRealmId });
       this._loadKeys();
     } catch (err) {
-      showToast('Failed to load realms', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to load realms');
       this.setState({ realms: [], realmId: '00000000-0000-0000-0000-000000000000' });
       this._loadKeys();
     }
@@ -43,27 +47,31 @@ class ApiKeysPage extends BaseComponent {
       const data = await listApiKeys({
         realm_id: this._state.realmId,
         include_revoked: String(this._state.includeRevoked),
-      });
+      }, this.signal);
       this.setState({ keys: data.items || [], loading: false });
     } catch (err) {
-      showToast('Failed to load API keys', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to load API keys');
       this.setState({ keys: [], loading: false });
     }
   }
 
   async _revokeKey(id) {
-    if (!confirm('Are you sure you want to revoke this API key?')) return;
+    const confirmed = await ConfirmDialog.confirm('Are you sure you want to revoke this API key?', 'Revoke Key');
+    if (!confirmed) return;
     try {
       await deleteApiKey(id);
       showToast('API key revoked', 'success');
       this._loadKeys();
     } catch (err) {
-      showToast('Failed to revoke API key', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to revoke API key');
     }
   }
 
   async _rotateKey(id) {
-    if (!confirm('Rotate this API key? The old key will stop working immediately.')) return;
+    const confirmed = await ConfirmDialog.confirm('Rotate this API key? The old key will stop working immediately.', 'Rotate Key');
+    if (!confirmed) return;
     try {
       const data = await rotateApiKey(id);
       showToast('API key rotated! New key copied to clipboard.', 'success');
@@ -80,15 +88,15 @@ class ApiKeysPage extends BaseComponent {
       }
       this._loadKeys();
     } catch (err) {
-      showToast('Failed to rotate API key', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to rotate API key');
     }
   }
 
-  _onRealmChange(e) {
+  async _onRealmChange(e) {
     const realmId = e.target.value;
-    this.setState({ realmId });
-    // Use requestAnimationFrame to ensure state is committed before loading
-    requestAnimationFrame(() => this._loadKeys());
+    await this.setState({ realmId });
+    this._loadKeys();
   }
 
   template() {
@@ -142,6 +150,13 @@ class ApiKeysPage extends BaseComponent {
           outline: none;
           border-color: var(--color-primary, #3b82f6);
         }
+        .empty-state {
+          text-align: center;
+          padding: 3rem 1rem;
+          color: var(--color-text-muted);
+        }
+        .empty-state-icon { font-size: 2.5rem; margin-bottom: 0.75rem; opacity: 0.5; }
+        .empty-state-text { font-size: 1rem; margin-bottom: 1rem; }
       </style>
       <c-page-layout title="API Keys">
         <div slot="actions">
@@ -150,13 +165,14 @@ class ApiKeysPage extends BaseComponent {
         <div class="toolbar">
           <label class="filter-label">
             Realm:
-            <select class="realm-select" .value=${realmId} @change=${(e) => this._onRealmChange(e)}>
+            <select class="realm-select" aria-label="Select realm" .value=${realmId} @change=${(e) => this._onRealmChange(e)}>
               ${realms.map(r => html`<option value=${r.id} ?selected=${realmId === r.id}>${r.display_name || r.name}</option>`)}
             </select>
           </label>
           <label class="filter-label">
             <input
               type="checkbox"
+              aria-label="Include revoked keys"
               ?checked=${includeRevoked}
               @change=${(e) => { this.setState({ includeRevoked: e.target.checked }); this._loadKeys(); }}
             />
@@ -165,7 +181,9 @@ class ApiKeysPage extends BaseComponent {
         </div>
         ${loading
         ? html`<div style="padding:2rem;text-align:center;color:var(--color-text-muted)">Loading...</div>`
-        : html`<c-table .columns=${columns} .rows=${keys}></c-table>`}
+        : keys.length === 0
+          ? html`<div class="empty-state"><div class="empty-state-icon">&#128273;</div><div class="empty-state-text">No API keys yet</div><c-button variant="primary" @click=${() => navigate('/api-keys/create')}>+ Create Key</c-button></div>`
+          : html`<c-table .columns=${columns} .rows=${keys}></c-table>`}
       </c-page-layout>
     `;
   }

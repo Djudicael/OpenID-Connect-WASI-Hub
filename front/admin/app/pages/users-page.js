@@ -5,6 +5,10 @@ import { listRealms } from '../services/realm-service.js';
 import { navigate } from '../core/router.js';
 import { formatDate } from '../utils/format.js';
 import { showToast } from '../components/ui/toast.js';
+import { handleApiError } from '../utils/error-handler.js';
+import { isEmail, isRequired, minLength } from '../utils/validators.js';
+
+const ConfirmDialog = customElements.get('c-modal');
 
 class UsersPage extends BaseComponent {
   constructor() {
@@ -26,7 +30,9 @@ class UsersPage extends BaseComponent {
       createLastName: '',
       createEnabled: true,
       createLoading: false,
+      createErrors: {},
       realms: [],
+      selectedIds: new Set(),
     };
   }
 
@@ -36,14 +42,20 @@ class UsersPage extends BaseComponent {
     this._loadRealms();
   }
 
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    clearTimeout(this._searchTimer);
+  }
+
   async _loadRealms() {
     try {
-      const data = await listRealms({ limit: '100' });
+      const data = await listRealms({ limit: '100' }, this.signal);
       const realms = data.items || [];
       const defaultRealmId = realms.length > 0 ? realms[0].id : '';
       this.setState({ realms, createRealmId: defaultRealmId });
     } catch (err) {
-      showToast('Failed to load realms', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to load realms');
       this.setState({ realms: [] });
     }
   }
@@ -53,23 +65,20 @@ class UsersPage extends BaseComponent {
     try {
       const { search, page, pageSize } = this._state;
       const offset = (page - 1) * pageSize;
-      const params = new URLSearchParams();
-      if (search) params.set('search', search);
-      params.set('limit', String(pageSize));
-      params.set('offset', String(offset));
-
       const data = await listUsers({
         ...(search ? { search } : {}),
         limit: String(pageSize),
         offset: String(offset),
-      });
+      }, this.signal);
       this.setState({
         users: data.items || [],
         total: data.total || 0,
         loading: false,
+        selectedIds: new Set(),
       });
     } catch (err) {
-      showToast('Failed to load users', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to load users');
       this.setState({ users: [], loading: false });
     }
   }
@@ -81,18 +90,54 @@ class UsersPage extends BaseComponent {
     this._searchTimer = setTimeout(() => this._loadUsers(), 300);
   }
 
-  _onPageChange(e) {
-    this.setState({ page: e.detail.page }, this._loadUsers());
+  async _onPageChange(e) {
+    await this.setState({ page: e.detail.page });
+    this._loadUsers();
+  }
+
+  _toggleSelect(id) {
+    const selected = new Set(this._state.selectedIds);
+    if (selected.has(id)) { selected.delete(id); } else { selected.add(id); }
+    this.setState({ selectedIds: selected });
+  }
+
+  _toggleSelectAll() {
+    const { users, selectedIds } = this._state;
+    if (selectedIds.size === users.length && users.length > 0) {
+      this.setState({ selectedIds: new Set() });
+    } else {
+      this.setState({ selectedIds: new Set(users.map(u => u.id)) });
+    }
+  }
+
+  async _bulkDelete() {
+    const { selectedIds } = this._state;
+    if (selectedIds.size === 0) return;
+    const confirmed = await ConfirmDialog.confirm(`Delete ${selectedIds.size} user(s)? This cannot be undone.`, 'Bulk Delete');
+    if (!confirmed) return;
+    let success = 0;
+    for (const id of selectedIds) {
+      try {
+        await deleteUser(id);
+        success++;
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+      }
+    }
+    showToast(`${success} user(s) deleted`, 'success');
+    this._loadUsers();
   }
 
   async _deleteUser(id) {
-    if (!confirm('Are you sure you want to delete this user?')) return;
+    const confirmed = await cModal.confirm('Are you sure you want to delete this user?', 'Delete User');
+    if (!confirmed) return;
     try {
       await deleteUser(id);
       showToast('User deleted', 'success');
       this._loadUsers();
     } catch (err) {
-      showToast('Failed to delete user', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to delete user');
     }
   }
 
@@ -106,6 +151,7 @@ class UsersPage extends BaseComponent {
       createLastName: '',
       createEnabled: true,
       createLoading: false,
+      createErrors: {},
     });
     requestAnimationFrame(() => {
       const modal = this.shadowRoot.querySelector('c-modal');
@@ -114,13 +160,24 @@ class UsersPage extends BaseComponent {
   }
 
   _closeCreateModal() {
-    this.shadowRoot.querySelector('c-modal').close();
-    this.setState({ showCreateModal: false });
+    const modal = this.shadowRoot.querySelector('c-modal');
+    if (modal) modal.close();
+    this.setState({ showCreateModal: false, createErrors: {} });
+  }
+
+  _validateCreateForm() {
+    const { createEmail, createPassword, createRealmId } = this._state;
+    const errors = {};
+    if (!isRequired(createRealmId)) errors.realm = 'Realm is required';
+    if (!isEmail(createEmail)) errors.email = 'Valid email is required';
+    if (!minLength(createPassword, 8)) errors.password = 'Password must be at least 8 characters';
+    this.setState({ createErrors: errors });
+    return Object.keys(errors).length === 0;
   }
 
   async _createUser() {
+    if (!this._validateCreateForm()) return;
     const { createRealmId, createEmail, createPassword, createUsername, createFirstName, createLastName, createEnabled } = this._state;
-    if (!createRealmId.trim() || !createEmail.trim() || !createPassword.trim()) return;
 
     this.setState({ createLoading: true });
     try {
@@ -137,14 +194,20 @@ class UsersPage extends BaseComponent {
       showToast('User created successfully', 'success');
       this._loadUsers();
     } catch (err) {
-      showToast(err.body?.error || 'Failed to create user', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to create user');
       this.setState({ createLoading: false });
     }
   }
 
   template() {
-    const { users, loading, search, page, pageSize, total, showCreateModal, createRealmId, createEmail, createPassword, createUsername, createFirstName, createLastName, createEnabled, createLoading, realms } = this._state;
+    const { users, loading, search, page, pageSize, total, showCreateModal, createRealmId, createEmail, createPassword, createUsername, createFirstName, createLastName, createEnabled, createLoading, createErrors, realms, selectedIds } = this._state;
     const columns = [
+      {
+        key: 'select',
+        label: html`<input type="checkbox" aria-label="Select all users" ?checked=${selectedIds.size === users.length && users.length > 0} @change=${() => this._toggleSelectAll()} />`,
+        render: (_, row) => html`<input type="checkbox" aria-label="Select user ${row.email}" ?checked=${selectedIds.has(row.id)} @change=${() => this._toggleSelect(row.id)} />`,
+      },
       { key: 'email', label: 'Email' },
       { key: 'username', label: 'Username' },
       { key: 'given_name', label: 'First Name' },
@@ -170,6 +233,7 @@ class UsersPage extends BaseComponent {
           gap: 1rem;
           margin-bottom: 1rem;
           align-items: center;
+          flex-wrap: wrap;
         }
         .search-input {
           flex: 1;
@@ -184,6 +248,18 @@ class UsersPage extends BaseComponent {
           outline: none;
           border-color: var(--color-primary);
         }
+        .bulk-bar {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+          padding: 0.5rem 1rem;
+          background: #eff6ff;
+          border: 1px solid #bfdbfe;
+          border-radius: var(--radius-sm);
+          margin-bottom: 1rem;
+          font-size: 0.875rem;
+        }
+        .bulk-bar span { color: var(--color-primary); font-weight: 500; }
         .form { max-width: 32rem; }
         .field { margin-bottom: 1rem; }
         .field-label {
@@ -205,6 +281,14 @@ class UsersPage extends BaseComponent {
           outline: none;
           border-color: var(--color-primary);
         }
+        .field-input.error, .field-select.error {
+          border-color: var(--color-danger);
+        }
+        .field-error {
+          font-size: 0.75rem;
+          color: var(--color-danger);
+          margin-top: 0.25rem;
+        }
         .hint {
           font-size: 0.75rem;
           color: var(--color-text-muted);
@@ -219,6 +303,20 @@ class UsersPage extends BaseComponent {
           width: 1rem;
           height: 1rem;
         }
+        .empty-state {
+          text-align: center;
+          padding: 3rem 1rem;
+          color: var(--color-text-muted);
+        }
+        .empty-state-icon {
+          font-size: 2.5rem;
+          margin-bottom: 0.75rem;
+          opacity: 0.5;
+        }
+        .empty-state-text {
+          font-size: 1rem;
+          margin-bottom: 1rem;
+        }
       </style>
       <c-page-layout title="Users">
         <div slot="actions">
@@ -231,13 +329,29 @@ class UsersPage extends BaseComponent {
             class="search-input"
             type="text"
             placeholder="Search users..."
+            aria-label="Search users"
             .value=${search}
             @input=${(e) => this._onSearch(e)}
           />
         </div>
+        ${selectedIds.size > 0 ? html`
+          <div class="bulk-bar">
+            <span>${selectedIds.size} selected</span>
+            <c-button size="sm" variant="danger" @click=${() => this._bulkDelete()}>Delete Selected</c-button>
+            <c-button size="sm" variant="ghost" @click=${() => this.setState({ selectedIds: new Set() })}>Clear</c-button>
+          </div>
+        ` : ''}
         ${loading
         ? html`<div style="padding:2rem;text-align:center;color:var(--color-text-muted)">Loading...</div>`
-        : html`<c-table .columns=${columns} .rows=${users}></c-table>`}
+        : users.length === 0
+          ? html`
+              <div class="empty-state">
+                <div class="empty-state-icon">&#128100;</div>
+                <div class="empty-state-text">${search ? 'No users match your search' : 'No users yet'}</div>
+                ${!search ? html`<c-button variant="primary" @click=${() => this._openCreateModal()}>+ Add User</c-button>` : ''}
+              </div>
+            `
+          : html`<c-table .columns=${columns} .rows=${users}></c-table>`}
         <c-pagination
           .page=${page}
           .pageSize=${pageSize}
@@ -250,39 +364,47 @@ class UsersPage extends BaseComponent {
         ${showCreateModal ? html`
           <div class="form">
             <div class="field">
-              <label class="field-label">Realm *</label>
+              <label class="field-label" for="create-realm">Realm *</label>
               <select
-                class="field-select"
+                class="field-select ${createErrors.realm ? 'error' : ''}"
+                id="create-realm"
                 .value=${createRealmId}
-                @change=${(e) => this.setState({ createRealmId: e.target.value })}
+                @change=${(e) => this.setState({ createRealmId: e.target.value, createErrors: { ...createErrors, realm: null } })}
               >
                 ${realms.map(r => html`<option value=${r.id} ?selected=${createRealmId === r.id}>${r.display_name || r.name}</option>`)}
               </select>
+              ${createErrors.realm ? html`<div class="field-error">${createErrors.realm}</div>` : ''}
             </div>
             <div class="field">
-              <label class="field-label">Email *</label>
+              <label class="field-label" for="create-email">Email *</label>
               <input
-                class="field-input"
+                class="field-input ${createErrors.email ? 'error' : ''}"
+                id="create-email"
                 type="email"
                 placeholder="user@example.com"
                 .value=${createEmail}
-                @input=${(e) => this.setState({ createEmail: e.target.value })}
+                @input=${(e) => this.setState({ createEmail: e.target.value, createErrors: { ...createErrors, email: null } })}
               />
+              ${createErrors.email ? html`<div class="field-error">${createErrors.email}</div>` : ''}
             </div>
             <div class="field">
-              <label class="field-label">Password *</label>
+              <label class="field-label" for="create-password">Password *</label>
               <input
-                class="field-input"
+                class="field-input ${createErrors.password ? 'error' : ''}"
+                id="create-password"
                 type="password"
-                placeholder="Password"
+                placeholder="At least 8 characters"
                 .value=${createPassword}
-                @input=${(e) => this.setState({ createPassword: e.target.value })}
+                @input=${(e) => this.setState({ createPassword: e.target.value, createErrors: { ...createErrors, password: null } })}
               />
+              ${createErrors.password ? html`<div class="field-error">${createErrors.password}</div>` : ''}
+              <div class="hint">Minimum 8 characters</div>
             </div>
             <div class="field">
-              <label class="field-label">Username</label>
+              <label class="field-label" for="create-username">Username</label>
               <input
                 class="field-input"
+                id="create-username"
                 type="text"
                 placeholder="Optional"
                 .value=${createUsername}
@@ -290,9 +412,10 @@ class UsersPage extends BaseComponent {
               />
             </div>
             <div class="field">
-              <label class="field-label">First Name</label>
+              <label class="field-label" for="create-firstname">First Name</label>
               <input
                 class="field-input"
+                id="create-firstname"
                 type="text"
                 placeholder="Optional"
                 .value=${createFirstName}
@@ -300,9 +423,10 @@ class UsersPage extends BaseComponent {
               />
             </div>
             <div class="field">
-              <label class="field-label">Last Name</label>
+              <label class="field-label" for="create-lastname">Last Name</label>
               <input
                 class="field-input"
+                id="create-lastname"
                 type="text"
                 placeholder="Optional"
                 .value=${createLastName}
@@ -313,6 +437,7 @@ class UsersPage extends BaseComponent {
               <label class="field-checkbox">
                 <input
                   type="checkbox"
+                  id="create-enabled"
                   ?checked=${createEnabled}
                   @change=${(e) => this.setState({ createEnabled: e.target.checked })}
                 />
@@ -323,7 +448,7 @@ class UsersPage extends BaseComponent {
         ` : ''}
         <div slot="footer">
           <c-button variant="secondary" @click=${() => this._closeCreateModal()}>Cancel</c-button>
-          <c-button variant="primary" ?disabled=${createLoading || !createRealmId.trim() || !createEmail.trim() || !createPassword.trim()} @click=${() => this._createUser()}>
+          <c-button variant="primary" ?disabled=${createLoading} @click=${() => this._createUser()}>
             ${createLoading ? 'Creating...' : 'Create'}
           </c-button>
         </div>

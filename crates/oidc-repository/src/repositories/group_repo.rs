@@ -117,16 +117,22 @@ impl GroupRepo {
     }
 
     /// List groups in a realm with optional search and pagination.
+    /// If realm_id is None, returns groups from all realms.
     pub async fn list(
         &self,
         conn: &mut Connection,
-        realm_id: Uuid,
+        realm_id: Option<Uuid>,
         search: Option<&str>,
         limit: i64,
         offset: i64,
     ) -> Result<Vec<Group>, OidcError> {
-        let mut where_clauses = vec!["deleted_at IS NULL".to_string(), format!("realm_id = $1")];
-        let mut param_idx = 2usize;
+        let mut where_clauses = vec!["deleted_at IS NULL".to_string()];
+        let mut param_idx = 1usize;
+
+        if realm_id.is_some() {
+            where_clauses.push(format!("realm_id = ${param_idx}"));
+            param_idx += 1;
+        }
 
         if search.is_some() {
             where_clauses.push(format!(
@@ -147,7 +153,9 @@ impl GroupRepo {
         let pattern = search.map(|s| format!("%{}%", escape_like(s)));
 
         let mut params: Vec<&dyn wasi_pg_client::pg_types::ToSql> = Vec::new();
-        params.push(&realm_id);
+        if realm_id.is_some() {
+            params.push(realm_id.as_ref().unwrap());
+        }
         if let Some(ref p) = pattern {
             params.push(p);
         }
@@ -165,17 +173,20 @@ impl GroupRepo {
             .collect::<Result<Vec<_>, _>>()
     }
 
-    /// Count groups in a realm.
+    /// Count groups in a realm. If realm_id is None, counts all realms.
     pub async fn count(
         &self,
         conn: &mut Connection,
-        realm_id: Uuid,
+        realm_id: Option<Uuid>,
     ) -> Result<i64, OidcError> {
-        let sql = "SELECT COUNT(*) FROM groups WHERE deleted_at IS NULL AND realm_id = $1";
-        let result = conn
-            .query_params(sql, &[&realm_id])
-            .await
-            .map_err(mapper::pg_err)?;
+        let sql = match realm_id {
+            Some(_) => "SELECT COUNT(*) FROM groups WHERE deleted_at IS NULL AND realm_id = $1",
+            None => "SELECT COUNT(*) FROM groups WHERE deleted_at IS NULL",
+        };
+        let result = match realm_id.as_ref() {
+            Some(rid) => conn.query_params(sql, &[rid]).await.map_err(mapper::pg_err)?,
+            None => conn.query_params(sql, &[]).await.map_err(mapper::pg_err)?,
+        };
         let row = result
             .into_rows()
             .into_iter()

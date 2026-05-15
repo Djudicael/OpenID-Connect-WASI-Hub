@@ -10,6 +10,6 @@ function buildQuery(params) {
   return qs.toString() ? `?${qs.toString()}` : '';
 }
 
-export function listAuditEvents(params = {}) {
-  return get(`/api/audit/events${buildQuery(params)}`);
+export function listAuditEvents(params = {}, signal) {
+  return get(`/api/audit/events${buildQuery(params)}`, signal);
 }

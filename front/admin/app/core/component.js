@@ -5,15 +5,30 @@ export class BaseComponent extends HTMLElement {
     super();
     this.attachShadow({ mode: 'open' });
     this._state = {};
+    this._abortController = new AbortController();
   }
 
-  setState(patch) {
+  async setState(patch) {
     this._state = { ...this._state, ...patch };
     this._render();
+    return this._state;
+  }
+
+  get signal() {
+    return this._abortController.signal;
+  }
+
+  _resetAbort() {
+    this._abortController.abort();
+    this._abortController = new AbortController();
   }
 
   connectedCallback() {
     this._render();
+  }
+
+  disconnectedCallback() {
+    this._abortController.abort();
   }
 
   _render() {

@@ -8,10 +8,14 @@ const links = [
   { path: '/groups', label: 'Groups' },
   { path: '/clients', label: 'Clients' },
   { path: '/realms', label: 'Realms' },
+  // TODO: Add when backend admin CRUD endpoints exist for identity providers
+  // { path: '/identity-providers', label: 'Identity Providers' },
+  { path: '/password-policies', label: 'Password Policies' },
   { path: '/sessions', label: 'Sessions' },
   { path: '/api-keys', label: 'API Keys' },
   { path: '/scopes', label: 'Scopes' },
   { path: '/audit', label: 'Audit' },
+  { path: '/maintenance', label: 'Maintenance' },
 ];
 
 class Sidebar extends BaseComponent {

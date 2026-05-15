@@ -4,6 +4,7 @@ import { fetchStats } from '../services/stats-service.js';
 import { listAuditEvents } from '../services/audit-service.js';
 import { formatDate } from '../utils/format.js';
 import { showToast } from '../components/ui/toast.js';
+import { handleApiError } from '../utils/error-handler.js';
 
 class DashboardPage extends BaseComponent {
   constructor() {
@@ -23,8 +24,8 @@ class DashboardPage extends BaseComponent {
   async _loadData() {
     try {
       const [stats, events] = await Promise.allSettled([
-        fetchStats(),
-        listAuditEvents({ limit: '10' }),
+        fetchStats(undefined, this.signal),
+        listAuditEvents({ limit: '10' }, this.signal),
       ]);
 
       const statsData = stats.status === 'fulfilled' ? stats.value : null;
@@ -36,7 +37,8 @@ class DashboardPage extends BaseComponent {
         loading: false,
       });
     } catch (err) {
-      showToast('Failed to load dashboard data', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to load dashboard data');
       this.setState({ loading: false });
     }
   }

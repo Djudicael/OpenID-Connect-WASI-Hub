@@ -10,34 +10,34 @@ function buildQuery(params) {
   return qs.toString() ? `?${qs.toString()}` : '';
 }
 
-export function listRoles(params = {}) {
-  return get(`/api/roles${buildQuery(params)}`);
+export function listRoles(params = {}, signal) {
+  return get(`/api/roles${buildQuery(params)}`, signal);
 }
 
-export function getRole(id) {
-  return get(`/api/roles/${id}`);
+export function getRole(id, signal) {
+  return get(`/api/roles/${id}`, signal);
 }
 
-export function createRole(body) {
-  return post('/api/roles', body);
+export function createRole(body, signal) {
+  return post('/api/roles', body, signal);
 }
 
-export function updateRole(id, body) {
-  return put(`/api/roles/${id}`, body);
+export function updateRole(id, body, signal) {
+  return put(`/api/roles/${id}`, body, signal);
 }
 
-export function deleteRole(id) {
-  return del(`/api/roles/${id}`);
+export function deleteRole(id, signal) {
+  return del(`/api/roles/${id}`, signal);
 }
 
-export function listUserRoles(userId) {
-  return get(`/api/users/${userId}/roles`);
+export function listUserRoles(userId, signal) {
+  return get(`/api/users/${userId}/roles`, signal);
 }
 
-export function assignRoleToUser(userId, roleId) {
-  return post(`/api/users/${userId}/roles`, { role_id: roleId });
+export function assignRoleToUser(userId, roleId, signal) {
+  return post(`/api/users/${userId}/roles`, { role_id: roleId }, signal);
 }
 
-export function unassignRoleFromUser(userId, roleId) {
-  return del(`/api/users/${userId}/roles/${roleId}`);
+export function unassignRoleFromUser(userId, roleId, signal) {
+  return del(`/api/users/${userId}/roles/${roleId}`, signal);
 }

@@ -5,6 +5,9 @@ import { listUserRoles, assignRoleToUser, unassignRoleFromUser, listRoles } from
 import { listUserGroups, assignGroupToUser, unassignGroupFromUser, listGroups } from '../services/group-service.js';
 import { navigate } from '../core/router.js';
 import { showToast } from '../components/ui/toast.js';
+import { handleApiError } from '../utils/error-handler.js';
+
+const ConfirmDialog = customElements.get('c-modal');
 
 class UserDetailPage extends BaseComponent {
   constructor() {
@@ -57,6 +60,23 @@ class UserDetailPage extends BaseComponent {
       user.username !== savedUser.username ||
       user.given_name !== savedUser.given_name ||
       user.family_name !== savedUser.family_name ||
+      user.middle_name !== savedUser.middle_name ||
+      user.nickname !== savedUser.nickname ||
+      user.preferred_username !== savedUser.preferred_username ||
+      user.profile !== savedUser.profile ||
+      user.picture !== savedUser.picture ||
+      user.website !== savedUser.website ||
+      user.gender !== savedUser.gender ||
+      user.birthdate !== savedUser.birthdate ||
+      user.zoneinfo !== savedUser.zoneinfo ||
+      user.phone_number !== savedUser.phone_number ||
+      user.phone_number_verified !== savedUser.phone_number_verified ||
+      user.street_address !== savedUser.street_address ||
+      user.locality !== savedUser.locality ||
+      user.region !== savedUser.region ||
+      user.postal_code !== savedUser.postal_code ||
+      user.country !== savedUser.country ||
+      user.locale !== savedUser.locale ||
       user.enabled !== savedUser.enabled
     );
   }
@@ -64,12 +84,13 @@ class UserDetailPage extends BaseComponent {
   async _loadUser(id) {
     this.setState({ loading: true });
     try {
-      const user = await getUser(id);
+      const user = await getUser(id, this.signal);
       this.setState({ user, savedUser: { ...user }, loading: false, dirty: false });
       this._loadUserRoles(id);
       this._loadUserGroups(id);
     } catch (err) {
-      showToast('Failed to load user', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to load user');
       this.setState({ loading: false });
     }
   }
@@ -85,12 +106,30 @@ class UserDetailPage extends BaseComponent {
         username: user.username,
         given_name: user.given_name,
         family_name: user.family_name,
+        middle_name: user.middle_name,
+        nickname: user.nickname,
+        preferred_username: user.preferred_username,
+        profile: user.profile,
+        picture: user.picture,
+        website: user.website,
+        gender: user.gender,
+        birthdate: user.birthdate,
+        zoneinfo: user.zoneinfo,
+        phone_number: user.phone_number,
+        phone_number_verified: user.phone_number_verified,
+        street_address: user.street_address,
+        locality: user.locality,
+        region: user.region,
+        postal_code: user.postal_code,
+        country: user.country,
+        locale: user.locale,
         enabled: user.enabled,
       });
       showToast('User updated', 'success');
       this.setState({ saving: false, savedUser: { ...user }, dirty: false });
     } catch (err) {
-      showToast('Failed to update user', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to update user');
       this.setState({ saving: false });
     }
   }
@@ -104,16 +143,32 @@ class UserDetailPage extends BaseComponent {
       user.username !== savedUser.username ||
       user.given_name !== savedUser.given_name ||
       user.family_name !== savedUser.family_name ||
+      user.middle_name !== savedUser.middle_name ||
+      user.nickname !== savedUser.nickname ||
+      user.preferred_username !== savedUser.preferred_username ||
+      user.profile !== savedUser.profile ||
+      user.picture !== savedUser.picture ||
+      user.website !== savedUser.website ||
+      user.gender !== savedUser.gender ||
+      user.birthdate !== savedUser.birthdate ||
+      user.zoneinfo !== savedUser.zoneinfo ||
+      user.phone_number !== savedUser.phone_number ||
+      user.phone_number_verified !== savedUser.phone_number_verified ||
+      user.street_address !== savedUser.street_address ||
+      user.locality !== savedUser.locality ||
+      user.region !== savedUser.region ||
+      user.postal_code !== savedUser.postal_code ||
+      user.country !== savedUser.country ||
+      user.locale !== savedUser.locale ||
       user.enabled !== savedUser.enabled
     );
     this.setState({ user, dirty });
   }
 
-  _navigateAway(path) {
+  async _navigateAway(path) {
     if (this._state.dirty) {
-      if (!confirm('You have unsaved changes. Are you sure you want to leave?')) {
-        return;
-      }
+      const confirmed = await ConfirmDialog.confirm('You have unsaved changes. Are you sure you want to leave?', 'Unsaved Changes');
+      if (!confirmed) return;
     }
     // Remove beforeunload before navigating so it doesn't trigger
     this.setState({ dirty: false });
@@ -169,7 +224,8 @@ class UserDetailPage extends BaseComponent {
       this._closeAddRoleModal();
       this._loadUserRoles(user.id);
     } catch (err) {
-      showToast('Failed to assign role', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to assign role');
       this.setState({ addRoleLoading: false });
     }
   }
@@ -182,7 +238,8 @@ class UserDetailPage extends BaseComponent {
       showToast('Role removed', 'success');
       this._loadUserRoles(user.id);
     } catch (err) {
-      showToast('Failed to remove role', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to remove role');
     }
   }
 
@@ -235,7 +292,8 @@ class UserDetailPage extends BaseComponent {
       this._closeAddGroupModal();
       this._loadUserGroups(user.id);
     } catch (err) {
-      showToast('Failed to assign group', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to assign group');
       this.setState({ addGroupLoading: false });
     }
   }
@@ -248,7 +306,8 @@ class UserDetailPage extends BaseComponent {
       showToast('Group removed', 'success');
       this._loadUserGroups(user.id);
     } catch (err) {
-      showToast('Failed to remove group', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to remove group');
     }
   }
 
@@ -284,7 +343,7 @@ class UserDetailPage extends BaseComponent {
           font-weight: 500;
           margin-bottom: 0.25rem;
         }
-        .field-input {
+        .field-input, .field-textarea {
           width: 100%;
           padding: 0.5rem 0.75rem;
           font-size: 0.875rem;
@@ -293,9 +352,13 @@ class UserDetailPage extends BaseComponent {
           font-family: inherit;
           box-sizing: border-box;
         }
-        .field-input:focus {
+        .field-input:focus, .field-textarea:focus {
           outline: none;
           border-color: var(--color-primary);
+        }
+        .field-textarea {
+          resize: vertical;
+          min-height: 4rem;
         }
         .checkbox-row {
           display: flex;
@@ -375,18 +438,107 @@ class UserDetailPage extends BaseComponent {
                     <label class="field-label">Username</label>
                     <input class="field-input" type="text" .value=${user.username || ''} @input=${(e) => this._updateField('username', e.target.value)} />
                   </div>
-                  <div class="field">
-                    <label class="field-label">First Name</label>
-                    <input class="field-input" type="text" .value=${user.given_name || ''} @input=${(e) => this._updateField('given_name', e.target.value)} />
-                  </div>
-                  <div class="field">
-                    <label class="field-label">Last Name</label>
-                    <input class="field-input" type="text" .value=${user.family_name || ''} @input=${(e) => this._updateField('family_name', e.target.value)} />
-                  </div>
                   <label class="checkbox-row">
                     <input type="checkbox" ?checked=${user.email_verified} @change=${(e) => this._updateField('email_verified', e.target.checked)} />
                     Email verified
                   </label>
+
+                  <div class="section">
+                    <div class="section-title">Personal Information</div>
+                    <div class="field">
+                      <label class="field-label">First Name</label>
+                      <input class="field-input" type="text" .value=${user.given_name || ''} @input=${(e) => this._updateField('given_name', e.target.value)} />
+                    </div>
+                    <div class="field">
+                      <label class="field-label">Last Name</label>
+                      <input class="field-input" type="text" .value=${user.family_name || ''} @input=${(e) => this._updateField('family_name', e.target.value)} />
+                    </div>
+                    <div class="field">
+                      <label class="field-label">Middle Name</label>
+                      <input class="field-input" type="text" .value=${user.middle_name || ''} @input=${(e) => this._updateField('middle_name', e.target.value)} />
+                    </div>
+                    <div class="field">
+                      <label class="field-label">Nickname</label>
+                      <input class="field-input" type="text" .value=${user.nickname || ''} @input=${(e) => this._updateField('nickname', e.target.value)} />
+                    </div>
+                    <div class="field">
+                      <label class="field-label">Preferred Username</label>
+                      <input class="field-input" type="text" .value=${user.preferred_username || ''} @input=${(e) => this._updateField('preferred_username', e.target.value)} />
+                    </div>
+                    <div class="field">
+                      <label class="field-label">Gender</label>
+                      <input class="field-input" type="text" .value=${user.gender || ''} @input=${(e) => this._updateField('gender', e.target.value)} />
+                    </div>
+                    <div class="field">
+                      <label class="field-label">Birthdate</label>
+                      <input class="field-input" type="date" .value=${user.birthdate || ''} @input=${(e) => this._updateField('birthdate', e.target.value)} />
+                    </div>
+                  </div>
+
+                  <div class="section">
+                    <div class="section-title">Profile</div>
+                    <div class="field">
+                      <label class="field-label">Profile URL</label>
+                      <input class="field-input" type="url" .value=${user.profile || ''} @input=${(e) => this._updateField('profile', e.target.value)} />
+                    </div>
+                    <div class="field">
+                      <label class="field-label">Picture URL</label>
+                      <input class="field-input" type="url" .value=${user.picture || ''} @input=${(e) => this._updateField('picture', e.target.value)} />
+                    </div>
+                    <div class="field">
+                      <label class="field-label">Website URL</label>
+                      <input class="field-input" type="url" .value=${user.website || ''} @input=${(e) => this._updateField('website', e.target.value)} />
+                    </div>
+                  </div>
+
+                  <div class="section">
+                    <div class="section-title">Contact</div>
+                    <div class="field">
+                      <label class="field-label">Phone Number</label>
+                      <input class="field-input" type="tel" .value=${user.phone_number || ''} @input=${(e) => this._updateField('phone_number', e.target.value)} />
+                    </div>
+                    <label class="checkbox-row">
+                      <input type="checkbox" ?checked=${user.phone_number_verified || false} @change=${(e) => this._updateField('phone_number_verified', e.target.checked)} />
+                      Phone verified
+                    </label>
+                  </div>
+
+                  <div class="section">
+                    <div class="section-title">Address</div>
+                    <div class="field">
+                      <label class="field-label">Street Address</label>
+                      <textarea class="field-textarea" .value=${user.street_address || ''} @input=${(e) => this._updateField('street_address', e.target.value)}></textarea>
+                    </div>
+                    <div class="field">
+                      <label class="field-label">City / Locality</label>
+                      <input class="field-input" type="text" .value=${user.locality || ''} @input=${(e) => this._updateField('locality', e.target.value)} />
+                    </div>
+                    <div class="field">
+                      <label class="field-label">Region / State</label>
+                      <input class="field-input" type="text" .value=${user.region || ''} @input=${(e) => this._updateField('region', e.target.value)} />
+                    </div>
+                    <div class="field">
+                      <label class="field-label">Postal Code</label>
+                      <input class="field-input" type="text" .value=${user.postal_code || ''} @input=${(e) => this._updateField('postal_code', e.target.value)} />
+                    </div>
+                    <div class="field">
+                      <label class="field-label">Country (ISO 3166-1 alpha-2)</label>
+                      <input class="field-input" type="text" .value=${user.country || ''} @input=${(e) => this._updateField('country', e.target.value)} placeholder="e.g. US, FR, DE" />
+                    </div>
+                  </div>
+
+                  <div class="section">
+                    <div class="section-title">Preferences</div>
+                    <div class="field">
+                      <label class="field-label">Locale</label>
+                      <input class="field-input" type="text" .value=${user.locale || 'en'} @input=${(e) => this._updateField('locale', e.target.value)} placeholder="e.g. en, fr" />
+                    </div>
+                    <div class="field">
+                      <label class="field-label">Timezone (IANA)</label>
+                      <input class="field-input" type="text" .value=${user.zoneinfo || ''} @input=${(e) => this._updateField('zoneinfo', e.target.value)} placeholder="e.g. Europe/Paris" />
+                    </div>
+                  </div>
+
                   <label class="checkbox-row">
                     <input type="checkbox" ?checked=${user.enabled} @change=${(e) => this._updateField('enabled', e.target.checked)} />
                     Enabled

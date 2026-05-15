@@ -4,6 +4,14 @@ import { getClient, updateClient } from '../services/client-service.js';
 import { navigate } from '../core/router.js';
 import { showToast } from '../components/ui/toast.js';
 
+const GRANT_TYPES = [
+  { value: 'authorization_code', label: 'Authorization Code', desc: 'Standard web app flow' },
+  { value: 'refresh_token', label: 'Refresh Token', desc: 'Long-lived sessions' },
+  { value: 'client_credentials', label: 'Client Credentials', desc: 'Server-to-server' },
+  { value: 'device_code', label: 'Device Code', desc: 'TVs, IoT, CLI apps' },
+  { value: 'authorization_code_oidc', label: 'Auth Code + OIDC', desc: 'With OpenID Connect' },
+];
+
 class ClientDetailPage extends BaseComponent {
   constructor() {
     super();
@@ -39,7 +47,22 @@ class ClientDetailPage extends BaseComponent {
       this._arraysDiffer(client.allowed_scopes, savedClient.allowed_scopes) ||
       this._arraysDiffer(client.allowed_grant_types, savedClient.allowed_grant_types) ||
       client.pkce_required !== savedClient.pkce_required ||
-      client.enabled !== savedClient.enabled
+      client.enabled !== savedClient.enabled ||
+      client.subject_type !== savedClient.subject_type ||
+      client.sector_identifier_uri !== savedClient.sector_identifier_uri ||
+      client.token_endpoint_auth_method !== savedClient.token_endpoint_auth_method ||
+      client.jwks_uri !== savedClient.jwks_uri ||
+      this._arraysDiffer(client.request_uris, savedClient.request_uris) ||
+      client.frontchannel_logout_uri !== savedClient.frontchannel_logout_uri ||
+      client.frontchannel_logout_session_required !== savedClient.frontchannel_logout_session_required ||
+      client.backchannel_logout_uri !== savedClient.backchannel_logout_uri ||
+      client.backchannel_logout_session_required !== savedClient.backchannel_logout_session_required ||
+      this._arraysDiffer(client.post_logout_redirect_uris, savedClient.post_logout_redirect_uris) ||
+      this._arraysDiffer(client.response_modes, savedClient.response_modes) ||
+      client.id_token_encrypted_response_alg !== savedClient.id_token_encrypted_response_alg ||
+      client.id_token_encrypted_response_enc !== savedClient.id_token_encrypted_response_enc ||
+      client.request_object_encryption_alg !== savedClient.request_object_encryption_alg ||
+      client.request_object_encryption_enc !== savedClient.request_object_encryption_enc
     );
   }
 
@@ -73,6 +96,21 @@ class ClientDetailPage extends BaseComponent {
         allowed_grant_types: client.allowed_grant_types,
         pkce_required: client.pkce_required,
         enabled: client.enabled,
+        subject_type: client.subject_type,
+        sector_identifier_uri: client.sector_identifier_uri,
+        token_endpoint_auth_method: client.token_endpoint_auth_method,
+        jwks_uri: client.jwks_uri,
+        request_uris: client.request_uris,
+        frontchannel_logout_uri: client.frontchannel_logout_uri,
+        frontchannel_logout_session_required: client.frontchannel_logout_session_required,
+        backchannel_logout_uri: client.backchannel_logout_uri,
+        backchannel_logout_session_required: client.backchannel_logout_session_required,
+        post_logout_redirect_uris: client.post_logout_redirect_uris,
+        response_modes: client.response_modes,
+        id_token_encrypted_response_alg: client.id_token_encrypted_response_alg,
+        id_token_encrypted_response_enc: client.id_token_encrypted_response_enc,
+        request_object_encryption_alg: client.request_object_encryption_alg,
+        request_object_encryption_enc: client.request_object_encryption_enc,
       });
       showToast('Client updated', 'success');
       this.setState({ saving: false, savedClient: { ...client }, dirty: false });
@@ -91,7 +129,22 @@ class ClientDetailPage extends BaseComponent {
       this._arraysDiffer(client.allowed_scopes, savedClient.allowed_scopes) ||
       this._arraysDiffer(client.allowed_grant_types, savedClient.allowed_grant_types) ||
       client.pkce_required !== savedClient.pkce_required ||
-      client.enabled !== savedClient.enabled
+      client.enabled !== savedClient.enabled ||
+      client.subject_type !== savedClient.subject_type ||
+      client.sector_identifier_uri !== savedClient.sector_identifier_uri ||
+      client.token_endpoint_auth_method !== savedClient.token_endpoint_auth_method ||
+      client.jwks_uri !== savedClient.jwks_uri ||
+      this._arraysDiffer(client.request_uris, savedClient.request_uris) ||
+      client.frontchannel_logout_uri !== savedClient.frontchannel_logout_uri ||
+      client.frontchannel_logout_session_required !== savedClient.frontchannel_logout_session_required ||
+      client.backchannel_logout_uri !== savedClient.backchannel_logout_uri ||
+      client.backchannel_logout_session_required !== savedClient.backchannel_logout_session_required ||
+      this._arraysDiffer(client.post_logout_redirect_uris, savedClient.post_logout_redirect_uris) ||
+      this._arraysDiffer(client.response_modes, savedClient.response_modes) ||
+      client.id_token_encrypted_response_alg !== savedClient.id_token_encrypted_response_alg ||
+      client.id_token_encrypted_response_enc !== savedClient.id_token_encrypted_response_enc ||
+      client.request_object_encryption_alg !== savedClient.request_object_encryption_alg ||
+      client.request_object_encryption_enc !== savedClient.request_object_encryption_enc
     );
     this.setState({ client, dirty });
   }
@@ -104,6 +157,14 @@ class ClientDetailPage extends BaseComponent {
   _updateCommaField(field, value) {
     const arr = value.split(',').map(s => s.trim()).filter(Boolean);
     this._updateField(field, arr);
+  }
+
+  _toggleGrantType(value, checked) {
+    const client = this._state.client;
+    const arr = [...(client.allowed_grant_types || [])];
+    if (checked) { if (!arr.includes(value)) arr.push(value); }
+    else { const i = arr.indexOf(value); if (i >= 0) arr.splice(i, 1); }
+    this._updateField('allowed_grant_types', arr);
   }
 
   _navigateAway(path) {
@@ -187,6 +248,36 @@ class ClientDetailPage extends BaseComponent {
           color: var(--color-text-muted);
           margin-bottom: 0.5rem;
         }
+        .section {
+          margin-top: 2rem;
+          padding-top: 1.5rem;
+          border-top: 1px solid #e2e8f0;
+        }
+        .section-title {
+          font-size: 1rem;
+          font-weight: 600;
+          margin-bottom: 1rem;
+        }
+        .field-select {
+          width: 100%;
+          padding: 0.5rem 0.75rem;
+          font-size: 0.875rem;
+          border: 1px solid #e2e8f0;
+          border-radius: var(--radius-sm);
+          font-family: inherit;
+          box-sizing: border-box;
+        }
+        .field-select:focus {
+          outline: none;
+          border-color: var(--color-primary);
+        }
+        .grant-type-list {
+          max-height: 12rem;
+          overflow-y: auto;
+          border: 1px solid #e2e8f0;
+          border-radius: var(--radius-sm);
+          padding: 0.5rem;
+        }
       </style>
       <c-page-layout title="Client Details">
         <span class="back-link" @click=${() => this._navigateAway('/clients')}>
@@ -239,19 +330,126 @@ class ClientDetailPage extends BaseComponent {
 
                   <div class="field">
                     <label class="field-label">Allowed Grant Types</label>
-                    <input
-                      class="field-input"
-                      type="text"
-                      .value=${(client.allowed_grant_types || []).join(', ')}
-                      @input=${(e) => this._updateCommaField('allowed_grant_types', e.target.value)}
-                    />
-                    <div class="hint">Comma-separated list of grant types</div>
+                    <div class="grant-type-list">
+                      ${GRANT_TYPES.map(gt => html`
+                        <label class="checkbox-row" style="margin-bottom:.25rem">
+                          <input type="checkbox" ?checked=${(client.allowed_grant_types || []).includes(gt.value)} @change=${(e) => this._toggleGrantType(gt.value, e.target.checked)} />
+                          <span>${gt.label}</span>
+                          <span style="font-size:.75rem;color:var(--color-text-muted);margin-left:.25rem">- ${gt.desc}</span>
+                        </label>
+                      `)}
+                    </div>
+                    <div class="hint">Select one or more grant types</div>
                   </div>
 
                   <label class="checkbox-row">
                     <input type="checkbox" ?checked=${client.pkce_required} @change=${(e) => this._updateField('pkce_required', e.target.checked)} />
                     PKCE Required
                   </label>
+
+                  <div class="section">
+                    <div class="section-title">OIDC Settings</div>
+                    <div class="field">
+                      <label class="field-label">Subject Type</label>
+                      <select class="field-select" .value=${client.subject_type || 'public'} @change=${(e) => this._updateField('subject_type', e.target.value)}>
+                        <option value="public">Public</option>
+                        <option value="pairwise">Pairwise</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label class="field-label">Sector Identifier URI</label>
+                      <input class="field-input" type="url" .value=${client.sector_identifier_uri || ''} @input=${(e) => this._updateField('sector_identifier_uri', e.target.value)} />
+                      <div class="hint">Used for pairwise subject identifiers</div>
+                    </div>
+                    <div class="field">
+                      <label class="field-label">Token Endpoint Auth Method</label>
+                      <input class="field-input" type="text" .value=${client.token_endpoint_auth_method || ''} @input=${(e) => this._updateField('token_endpoint_auth_method', e.target.value)} placeholder="e.g. client_secret_basic" />
+                    </div>
+                    <div class="field">
+                      <label class="field-label">JWKS URI</label>
+                      <input class="field-input" type="url" .value=${client.jwks_uri || ''} @input=${(e) => this._updateField('jwks_uri', e.target.value)} />
+                    </div>
+                    <div class="field">
+                      <label class="field-label">Response Modes</label>
+                      <input
+                        class="field-input"
+                        type="text"
+                        .value=${(client.response_modes || []).join(', ')}
+                        @input=${(e) => this._updateCommaField('response_modes', e.target.value)}
+                      />
+                      <div class="hint">e.g. query, fragment, form_post</div>
+                    </div>
+                  </div>
+
+                  <div class="section">
+                    <div class="section-title">Request Objects</div>
+                    <div class="field">
+                      <label class="field-label">Request URIs</label>
+                      <textarea
+                        class="field-textarea"
+                        .value=${(client.request_uris || []).join('\n')}
+                        @input=${(e) => this._updateField('request_uris', e.target.value.split('\n').map(s => s.trim()).filter(Boolean))}
+                      ></textarea>
+                      <div class="hint">One URI per line</div>
+                    </div>
+                    <div class="field">
+                      <label class="field-label">Request Object Encryption Alg</label>
+                      <select class="field-select" .value=${client.request_object_encryption_alg || ''} @change=${(e) => this._updateField('request_object_encryption_alg', e.target.value || null)}>
+                        <option value="">None</option>
+                        <option value="dir">dir (symmetric)</option>
+                        <option value="RSA-OAEP-256">RSA-OAEP-256</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label class="field-label">Request Object Encryption Enc</label>
+                      <input class="field-input" type="text" .value=${client.request_object_encryption_enc || ''} @input=${(e) => this._updateField('request_object_encryption_enc', e.target.value || null)} placeholder="e.g. A256GCM" />
+                    </div>
+                  </div>
+
+                  <div class="section">
+                    <div class="section-title">ID Token Encryption</div>
+                    <div class="field">
+                      <label class="field-label">ID Token Encryption Alg</label>
+                      <select class="field-select" .value=${client.id_token_encrypted_response_alg || ''} @change=${(e) => this._updateField('id_token_encrypted_response_alg', e.target.value || null)}>
+                        <option value="">None</option>
+                        <option value="dir">dir (symmetric)</option>
+                        <option value="RSA-OAEP-256">RSA-OAEP-256</option>
+                      </select>
+                    </div>
+                    <div class="field">
+                      <label class="field-label">ID Token Encryption Enc</label>
+                      <input class="field-input" type="text" .value=${client.id_token_encrypted_response_enc || ''} @input=${(e) => this._updateField('id_token_encrypted_response_enc', e.target.value || null)} placeholder="e.g. A256GCM" />
+                    </div>
+                  </div>
+
+                  <div class="section">
+                    <div class="section-title">Logout</div>
+                    <div class="field">
+                      <label class="field-label">Front-Channel Logout URI</label>
+                      <input class="field-input" type="url" .value=${client.frontchannel_logout_uri || ''} @input=${(e) => this._updateField('frontchannel_logout_uri', e.target.value)} />
+                    </div>
+                    <label class="checkbox-row">
+                      <input type="checkbox" ?checked=${client.frontchannel_logout_session_required} @change=${(e) => this._updateField('frontchannel_logout_session_required', e.target.checked)} />
+                      Front-Channel Logout Session Required
+                    </label>
+                    <div class="field">
+                      <label class="field-label">Back-Channel Logout URI</label>
+                      <input class="field-input" type="url" .value=${client.backchannel_logout_uri || ''} @input=${(e) => this._updateField('backchannel_logout_uri', e.target.value)} />
+                    </div>
+                    <label class="checkbox-row">
+                      <input type="checkbox" ?checked=${client.backchannel_logout_session_required} @change=${(e) => this._updateField('backchannel_logout_session_required', e.target.checked)} />
+                      Back-Channel Logout Session Required
+                    </label>
+                    <div class="field">
+                      <label class="field-label">Post-Logout Redirect URIs</label>
+                      <textarea
+                        class="field-textarea"
+                        .value=${(client.post_logout_redirect_uris || []).join('\n')}
+                        @input=${(e) => this._updateField('post_logout_redirect_uris', e.target.value.split('\n').map(s => s.trim()).filter(Boolean))}
+                      ></textarea>
+                      <div class="hint">One URI per line</div>
+                    </div>
+                  </div>
 
                   <label class="checkbox-row">
                     <input type="checkbox" ?checked=${client.enabled} @change=${(e) => this._updateField('enabled', e.target.checked)} />

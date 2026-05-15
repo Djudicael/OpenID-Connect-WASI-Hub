@@ -211,3 +211,37 @@ class Modal extends BaseComponent {
 }
 
 customElements.define('c-modal', Modal);
+
+Modal.confirm = function(message, title = 'Confirm') {
+  return new Promise((resolve) => {
+    const modal = document.createElement('c-modal');
+    modal.setAttribute('title', title);
+    const content = document.createElement('div');
+    content.textContent = message;
+    content.style.cssText = 'font-size:0.875rem;line-height:1.5;';
+    modal.appendChild(content);
+
+    const footer = document.createElement('div');
+    footer.setAttribute('slot', 'footer');
+    footer.style.cssText = 'display:flex;justify-content:flex-end;gap:0.5rem;';
+
+    const cancelBtn = document.createElement('c-button');
+    cancelBtn.setAttribute('variant', 'secondary');
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', () => { modal.close(); });
+
+    const okBtn = document.createElement('c-button');
+    okBtn.setAttribute('variant', 'danger');
+    okBtn.textContent = 'Confirm';
+    okBtn.addEventListener('click', () => { resolve(true); modal.remove(); });
+
+    footer.appendChild(cancelBtn);
+    footer.appendChild(okBtn);
+    modal.appendChild(footer);
+
+    modal.addEventListener('close', () => { resolve(false); }, { once: true });
+
+    document.body.appendChild(modal);
+    modal.open();
+  });
+};

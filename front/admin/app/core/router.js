@@ -21,6 +21,9 @@ const routes = [
   { path: '/api-keys/create', component: 'apikey-create-page' },
   { path: '/api-keys/:id', component: 'apikey-detail-page' },
   { path: '/scopes', component: 'scopes-page' },
+  { path: '/identity-providers', component: 'identity-providers-page' },
+  { path: '/password-policies', component: 'password-policies-page' },
+  { path: '/maintenance', component: 'maintenance-page' },
   { path: '/audit', component: 'audit-page' },
 ];
 
@@ -84,6 +87,10 @@ class RouterOutlet extends HTMLElement {
             this._navigate('/login');
             return;
           }
+          if (payload.nbf && payload.nbf * 1000 > Date.now()) {
+            this._navigate('/login');
+            return;
+          }
           // Check for admin scope in the access token
           const accessToken = token.access_token;
           if (accessToken) {
@@ -114,6 +121,13 @@ class RouterOutlet extends HTMLElement {
     const el = document.createElement(route.component);
     el.params = params;
     this.appendChild(el);
+    requestAnimationFrame(() => {
+      const main = document.querySelector('.page-content');
+      if (main) {
+        main.setAttribute('tabindex', '-1');
+        main.focus({ preventScroll: true });
+      }
+    });
   }
 
   _navigate(path) {

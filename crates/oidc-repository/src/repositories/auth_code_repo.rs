@@ -114,12 +114,12 @@ impl AuthCodeRepo {
                     OidcError::Internal(format!("Invalid response_type: {}", rt_str))
                 })?
             },
-            acr_values: mapper::json_string_vec(row, 15)?,
-            claims_locales: mapper::json_string_vec(row, 16)?,
-            expires_at: mapper::datetime(row, 17)?,
-            response_mode: mapper::opt_string(row, 18)?,
-            authorization_details: row.get::<serde_json::Value>(19).ok(),
-            resource: mapper::json_string_vec(row, 20)?,
+            acr_values: mapper::json_string_vec(row, 14)?,
+            claims_locales: mapper::json_string_vec(row, 15)?,
+            expires_at: mapper::datetime(row, 16)?,
+            response_mode: mapper::opt_string(row, 17)?,
+            authorization_details: row.get::<serde_json::Value>(18).ok(),
+            resource: mapper::json_string_vec(row, 19)?,
         })
     }
 }

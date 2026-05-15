@@ -4,6 +4,10 @@ import { listRoles, createRole, deleteRole } from '../services/role-service.js';
 import { listRealms } from '../services/realm-service.js';
 import { navigate } from '../core/router.js';
 import { showToast } from '../components/ui/toast.js';
+import { handleApiError } from '../utils/error-handler.js';
+import { isRequired } from '../utils/validators.js';
+
+const ConfirmDialog = customElements.get('c-modal');
 
 class RolesPage extends BaseComponent {
   constructor() {
@@ -23,6 +27,7 @@ class RolesPage extends BaseComponent {
       createPermissions: '',
       createLoading: false,
       realms: [],
+      selectedIds: new Set(),
     };
   }
 
@@ -32,14 +37,20 @@ class RolesPage extends BaseComponent {
     this._loadRealms();
   }
 
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    clearTimeout(this._searchTimer);
+  }
+
   async _loadRealms() {
     try {
-      const data = await listRealms({ limit: '100' });
+      const data = await listRealms({ limit: '100' }, this.signal);
       const realms = data.items || [];
       const defaultRealmId = realms.length > 0 ? realms[0].id : '';
       this.setState({ realms, createRealmId: defaultRealmId });
     } catch (err) {
-      showToast('Failed to load realms', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to load realms');
       this.setState({ realms: [] });
     }
   }
@@ -53,14 +64,16 @@ class RolesPage extends BaseComponent {
         ...(search ? { search } : {}),
         limit: String(pageSize),
         offset: String(offset),
-      });
+      }, this.signal);
       this.setState({
         roles: data.items || [],
         total: data.total || 0,
         loading: false,
+        selectedIds: new Set(),
       });
     } catch (err) {
-      showToast('Failed to load roles', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to load roles');
       this.setState({ roles: [], loading: false });
     }
   }
@@ -72,18 +85,54 @@ class RolesPage extends BaseComponent {
     this._searchTimer = setTimeout(() => this._loadRoles(), 300);
   }
 
-  _onPageChange(e) {
-    this.setState({ page: e.detail.page }, this._loadRoles());
+  async _onPageChange(e) {
+    await this.setState({ page: e.detail.page });
+    this._loadRoles();
+  }
+
+  _toggleSelect(id) {
+    const selected = new Set(this._state.selectedIds);
+    if (selected.has(id)) { selected.delete(id); } else { selected.add(id); }
+    this.setState({ selectedIds: selected });
+  }
+
+  _toggleSelectAll() {
+    const { roles, selectedIds } = this._state;
+    if (selectedIds.size === roles.length && roles.length > 0) {
+      this.setState({ selectedIds: new Set() });
+    } else {
+      this.setState({ selectedIds: new Set(roles.map(r => r.id)) });
+    }
+  }
+
+  async _bulkDelete() {
+    const { selectedIds } = this._state;
+    if (selectedIds.size === 0) return;
+    const confirmed = await ConfirmDialog.confirm(`Delete ${selectedIds.size} role(s)? This cannot be undone.`, 'Bulk Delete');
+    if (!confirmed) return;
+    let success = 0;
+    for (const id of selectedIds) {
+      try {
+        await deleteRole(id);
+        success++;
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+      }
+    }
+    showToast(`${success} role(s) deleted`, 'success');
+    this._loadRoles();
   }
 
   async _deleteRole(id) {
-    if (!confirm('Are you sure you want to delete this role?')) return;
+    const confirmed = await ConfirmDialog.confirm('Are you sure you want to delete this role?', 'Delete Role');
+    if (!confirmed) return;
     try {
       await deleteRole(id);
       showToast('Role deleted', 'success');
       this._loadRoles();
     } catch (err) {
-      showToast('Failed to delete role', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to delete role');
     }
   }
 
@@ -102,13 +151,14 @@ class RolesPage extends BaseComponent {
   }
 
   _closeCreateModal() {
-    this.shadowRoot.querySelector('c-modal').close();
+    const modal = this.shadowRoot.querySelector('c-modal');
+    if (modal) modal.close();
     this.setState({ showCreateModal: false });
   }
 
   async _createRole() {
     const { createRealmId, createName, createDescription, createPermissions } = this._state;
-    if (!createRealmId.trim() || !createName.trim()) return;
+    if (!isRequired(createRealmId) || !isRequired(createName)) return;
 
     this.setState({ createLoading: true });
     try {
@@ -124,14 +174,20 @@ class RolesPage extends BaseComponent {
       showToast('Role created successfully', 'success');
       this._loadRoles();
     } catch (err) {
-      showToast(err.body?.error || 'Failed to create role', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to create role');
       this.setState({ createLoading: false });
     }
   }
 
   template() {
-    const { roles, loading, search, page, pageSize, total, showCreateModal, createRealmId, createName, createDescription, createPermissions, createLoading, realms } = this._state;
+    const { roles, loading, search, page, pageSize, total, showCreateModal, createRealmId, createName, createDescription, createPermissions, createLoading, realms, selectedIds } = this._state;
     const columns = [
+      {
+        key: 'select',
+        label: html`<input type="checkbox" aria-label="Select all roles" ?checked=${selectedIds.size === roles.length && roles.length > 0} @change=${() => this._toggleSelectAll()} />`,
+        render: (_, row) => html`<input type="checkbox" aria-label="Select role ${row.name}" ?checked=${selectedIds.has(row.id)} @change=${() => this._toggleSelect(row.id)} />`,
+      },
       { key: 'name', label: 'Name' },
       { key: 'description', label: 'Description' },
       {
@@ -173,6 +229,18 @@ class RolesPage extends BaseComponent {
           outline: none;
           border-color: var(--color-primary);
         }
+        .bulk-bar {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+          padding: 0.5rem 1rem;
+          background: #eff6ff;
+          border: 1px solid #bfdbfe;
+          border-radius: var(--radius-sm);
+          margin-bottom: 1rem;
+          font-size: 0.875rem;
+        }
+        .bulk-bar span { color: var(--color-primary); font-weight: 500; }
         .form { max-width: 32rem; }
         .field { margin-bottom: 1rem; }
         .field-label {
@@ -199,6 +267,13 @@ class RolesPage extends BaseComponent {
           color: var(--color-text-muted);
           margin-top: 0.25rem;
         }
+        .empty-state {
+          text-align: center;
+          padding: 3rem 1rem;
+          color: var(--color-text-muted);
+        }
+        .empty-state-icon { font-size: 2.5rem; margin-bottom: 0.75rem; opacity: 0.5; }
+        .empty-state-text { font-size: 1rem; margin-bottom: 1rem; }
       </style>
       <c-page-layout title="Roles">
         <div slot="actions">
@@ -211,13 +286,23 @@ class RolesPage extends BaseComponent {
             class="search-input"
             type="text"
             placeholder="Search roles..."
+            aria-label="Search roles"
             .value=${search}
             @input=${(e) => this._onSearch(e)}
           />
         </div>
+        ${selectedIds.size > 0 ? html`
+          <div class="bulk-bar">
+            <span>${selectedIds.size} selected</span>
+            <c-button size="sm" variant="danger" @click=${() => this._bulkDelete()}>Delete Selected</c-button>
+            <c-button size="sm" variant="ghost" @click=${() => this.setState({ selectedIds: new Set() })}>Clear</c-button>
+          </div>
+        ` : ''}
         ${loading
         ? html`<div style="padding:2rem;text-align:center;color:var(--color-text-muted)">Loading...</div>`
-        : html`<c-table .columns=${columns} .rows=${roles}></c-table>`}
+        : roles.length === 0
+          ? html`<div class="empty-state"><div class="empty-state-icon">&#128273;</div><div class="empty-state-text">${search ? 'No roles match your search' : 'No roles yet'}</div>${!search ? html`<c-button variant="primary" @click=${() => this._openCreateModal()}>+ Add Role</c-button>` : ''}</div>`
+          : html`<c-table .columns=${columns} .rows=${roles}></c-table>`}
         <c-pagination
           .page=${page}
           .pageSize=${pageSize}
@@ -230,9 +315,10 @@ class RolesPage extends BaseComponent {
         ${showCreateModal ? html`
           <div class="form">
             <div class="field">
-              <label class="field-label">Realm *</label>
+              <label class="field-label" for="create-role-realm">Realm *</label>
               <select
                 class="field-select"
+                id="create-role-realm"
                 .value=${createRealmId}
                 @change=${(e) => this.setState({ createRealmId: e.target.value })}
               >
@@ -240,9 +326,10 @@ class RolesPage extends BaseComponent {
               </select>
             </div>
             <div class="field">
-              <label class="field-label">Name *</label>
+              <label class="field-label" for="create-role-name">Name *</label>
               <input
                 class="field-input"
+                id="create-role-name"
                 type="text"
                 placeholder="e.g. admin"
                 .value=${createName}
@@ -250,9 +337,10 @@ class RolesPage extends BaseComponent {
               />
             </div>
             <div class="field">
-              <label class="field-label">Description</label>
+              <label class="field-label" for="create-role-desc">Description</label>
               <input
                 class="field-input"
+                id="create-role-desc"
                 type="text"
                 placeholder="Optional description"
                 .value=${createDescription}
@@ -260,9 +348,10 @@ class RolesPage extends BaseComponent {
               />
             </div>
             <div class="field">
-              <label class="field-label">Permissions</label>
+              <label class="field-label" for="create-role-perms">Permissions</label>
               <input
                 class="field-input"
+                id="create-role-perms"
                 type="text"
                 placeholder="e.g. users:read, users:write"
                 .value=${createPermissions}

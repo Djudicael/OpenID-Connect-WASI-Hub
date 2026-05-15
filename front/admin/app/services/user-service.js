@@ -10,22 +10,22 @@ function buildQuery(params) {
   return qs.toString() ? `?${qs.toString()}` : '';
 }
 
-export function listUsers(params = {}) {
-  return get(`/api/users${buildQuery(params)}`);
+export function listUsers(params = {}, signal) {
+  return get(`/api/users${buildQuery(params)}`, signal);
 }
 
-export function getUser(id) {
-  return get(`/api/users/${id}`);
+export function getUser(id, signal) {
+  return get(`/api/users/${id}`, signal);
 }
 
-export function createUser(body) {
-  return post('/api/users', body);
+export function createUser(body, signal) {
+  return post('/api/users', body, signal);
 }
 
-export function updateUser(id, body) {
-  return put(`/api/users/${id}`, body);
+export function updateUser(id, body, signal) {
+  return put(`/api/users/${id}`, body, signal);
 }
 
-export function deleteUser(id) {
-  return del(`/api/users/${id}`);
+export function deleteUser(id, signal) {
+  return del(`/api/users/${id}`, signal);
 }

@@ -10,10 +10,10 @@ function buildQuery(params) {
   return qs.toString() ? `?${qs.toString()}` : '';
 }
 
-export function listSessions(params = {}) {
-  return get(`/api/sessions${buildQuery(params)}`);
+export function listSessions(params = {}, signal) {
+  return get(`/api/sessions${buildQuery(params)}`, signal);
 }
 
-export function revokeSession(id) {
-  return post(`/api/sessions/${id}/revoke`);
+export function revokeSession(id, signal) {
+  return post(`/api/sessions/${id}/revoke`, {}, signal);
 }

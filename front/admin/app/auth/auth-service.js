@@ -185,6 +185,8 @@ class AuthService {
     this.tokens = null;
     this._memoryTokens = null;
     sessionStorage.removeItem(STORAGE_KEY);
+    sessionStorage.removeItem(STATE_KEY);
+    sessionStorage.removeItem(VERIFIER_KEY);
     const redirect = encodeURIComponent(window.location.origin);
     window.location.href = `${this.config.authority}/logout?post_logout_redirect_uri=${redirect}`;
   }

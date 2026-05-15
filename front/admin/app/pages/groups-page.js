@@ -4,6 +4,10 @@ import { listGroups, createGroup, deleteGroup } from '../services/group-service.
 import { listRealms } from '../services/realm-service.js';
 import { navigate } from '../core/router.js';
 import { showToast } from '../components/ui/toast.js';
+import { handleApiError } from '../utils/error-handler.js';
+import { isRequired } from '../utils/validators.js';
+
+const ConfirmDialog = customElements.get('c-modal');
 
 class GroupsPage extends BaseComponent {
   constructor() {
@@ -24,6 +28,7 @@ class GroupsPage extends BaseComponent {
       createLoading: false,
       realms: [],
       allGroups: [],
+      selectedIds: new Set(),
     };
   }
 
@@ -33,14 +38,20 @@ class GroupsPage extends BaseComponent {
     this._loadRealms();
   }
 
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    clearTimeout(this._searchTimer);
+  }
+
   async _loadRealms() {
     try {
-      const data = await listRealms({ limit: '100' });
+      const data = await listRealms({ limit: '100' }, this.signal);
       const realms = data.items || [];
       const defaultRealmId = realms.length > 0 ? realms[0].id : '';
       this.setState({ realms, createRealmId: defaultRealmId });
     } catch (err) {
-      showToast('Failed to load realms', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to load realms');
       this.setState({ realms: [] });
     }
   }
@@ -54,17 +65,18 @@ class GroupsPage extends BaseComponent {
         ...(search ? { search } : {}),
         limit: String(pageSize),
         offset: String(offset),
-      });
+      }, this.signal);
       this.setState({
         groups: data.items || [],
         total: data.total || 0,
         loading: false,
+        selectedIds: new Set(),
       });
-      // Also load all groups for parent dropdown
-      const allData = await listGroups({ limit: '100' });
+      const allData = await listGroups({ limit: '100' }, this.signal);
       this.setState({ allGroups: allData.items || [] });
     } catch (err) {
-      showToast('Failed to load groups', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to load groups');
       this.setState({ groups: [], loading: false });
     }
   }
@@ -76,18 +88,54 @@ class GroupsPage extends BaseComponent {
     this._searchTimer = setTimeout(() => this._loadGroups(), 300);
   }
 
-  _onPageChange(e) {
-    this.setState({ page: e.detail.page }, this._loadGroups());
+  async _onPageChange(e) {
+    await this.setState({ page: e.detail.page });
+    this._loadGroups();
+  }
+
+  _toggleSelect(id) {
+    const selected = new Set(this._state.selectedIds);
+    if (selected.has(id)) { selected.delete(id); } else { selected.add(id); }
+    this.setState({ selectedIds: selected });
+  }
+
+  _toggleSelectAll() {
+    const { groups, selectedIds } = this._state;
+    if (selectedIds.size === groups.length && groups.length > 0) {
+      this.setState({ selectedIds: new Set() });
+    } else {
+      this.setState({ selectedIds: new Set(groups.map(g => g.id)) });
+    }
+  }
+
+  async _bulkDelete() {
+    const { selectedIds } = this._state;
+    if (selectedIds.size === 0) return;
+    const confirmed = await ConfirmDialog.confirm(`Delete ${selectedIds.size} group(s)? This cannot be undone.`, 'Bulk Delete');
+    if (!confirmed) return;
+    let success = 0;
+    for (const id of selectedIds) {
+      try {
+        await deleteGroup(id);
+        success++;
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+      }
+    }
+    showToast(`${success} group(s) deleted`, 'success');
+    this._loadGroups();
   }
 
   async _deleteGroup(id) {
-    if (!confirm('Are you sure you want to delete this group?')) return;
+    const confirmed = await ConfirmDialog.confirm('Are you sure you want to delete this group?', 'Delete Group');
+    if (!confirmed) return;
     try {
       await deleteGroup(id);
       showToast('Group deleted', 'success');
       this._loadGroups();
     } catch (err) {
-      showToast('Failed to delete group', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to delete group');
     }
   }
 
@@ -106,13 +154,14 @@ class GroupsPage extends BaseComponent {
   }
 
   _closeCreateModal() {
-    this.shadowRoot.querySelector('c-modal').close();
+    const modal = this.shadowRoot.querySelector('c-modal');
+    if (modal) modal.close();
     this.setState({ showCreateModal: false });
   }
 
   async _createGroup() {
     const { createRealmId, createName, createDescription, createParentId } = this._state;
-    if (!createRealmId.trim() || !createName.trim()) return;
+    if (!isRequired(createRealmId) || !isRequired(createName)) return;
 
     this.setState({ createLoading: true });
     try {
@@ -126,14 +175,20 @@ class GroupsPage extends BaseComponent {
       showToast('Group created successfully', 'success');
       this._loadGroups();
     } catch (err) {
-      showToast(err.body?.error || 'Failed to create group', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to create group');
       this.setState({ createLoading: false });
     }
   }
 
   template() {
-    const { groups, loading, search, page, pageSize, total, showCreateModal, createRealmId, createName, createDescription, createParentId, createLoading, realms, allGroups } = this._state;
+    const { groups, loading, search, page, pageSize, total, showCreateModal, createRealmId, createName, createDescription, createParentId, createLoading, realms, allGroups, selectedIds } = this._state;
     const columns = [
+      {
+        key: 'select',
+        label: html`<input type="checkbox" aria-label="Select all groups" ?checked=${selectedIds.size === groups.length && groups.length > 0} @change=${() => this._toggleSelectAll()} />`,
+        render: (_, row) => html`<input type="checkbox" aria-label="Select group ${row.name}" ?checked=${selectedIds.has(row.id)} @change=${() => this._toggleSelect(row.id)} />`,
+      },
       { key: 'name', label: 'Name' },
       { key: 'description', label: 'Description' },
       {
@@ -179,6 +234,18 @@ class GroupsPage extends BaseComponent {
           outline: none;
           border-color: var(--color-primary);
         }
+        .bulk-bar {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+          padding: 0.5rem 1rem;
+          background: #eff6ff;
+          border: 1px solid #bfdbfe;
+          border-radius: var(--radius-sm);
+          margin-bottom: 1rem;
+          font-size: 0.875rem;
+        }
+        .bulk-bar span { color: var(--color-primary); font-weight: 500; }
         .form { max-width: 32rem; }
         .field { margin-bottom: 1rem; }
         .field-label {
@@ -205,6 +272,13 @@ class GroupsPage extends BaseComponent {
           color: var(--color-text-muted);
           margin-top: 0.25rem;
         }
+        .empty-state {
+          text-align: center;
+          padding: 3rem 1rem;
+          color: var(--color-text-muted);
+        }
+        .empty-state-icon { font-size: 2.5rem; margin-bottom: 0.75rem; opacity: 0.5; }
+        .empty-state-text { font-size: 1rem; margin-bottom: 1rem; }
       </style>
       <c-page-layout title="Groups">
         <div slot="actions">
@@ -217,13 +291,23 @@ class GroupsPage extends BaseComponent {
             class="search-input"
             type="text"
             placeholder="Search groups..."
+            aria-label="Search groups"
             .value=${search}
             @input=${(e) => this._onSearch(e)}
           />
         </div>
+        ${selectedIds.size > 0 ? html`
+          <div class="bulk-bar">
+            <span>${selectedIds.size} selected</span>
+            <c-button size="sm" variant="danger" @click=${() => this._bulkDelete()}>Delete Selected</c-button>
+            <c-button size="sm" variant="ghost" @click=${() => this.setState({ selectedIds: new Set() })}>Clear</c-button>
+          </div>
+        ` : ''}
         ${loading
         ? html`<div style="padding:2rem;text-align:center;color:var(--color-text-muted)">Loading...</div>`
-        : html`<c-table .columns=${columns} .rows=${groups}></c-table>`}
+        : groups.length === 0
+          ? html`<div class="empty-state"><div class="empty-state-icon">&#128101;</div><div class="empty-state-text">${search ? 'No groups match your search' : 'No groups yet'}</div>${!search ? html`<c-button variant="primary" @click=${() => this._openCreateModal()}>+ Add Group</c-button>` : ''}</div>`
+          : html`<c-table .columns=${columns} .rows=${groups}></c-table>`}
         <c-pagination
           .page=${page}
           .pageSize=${pageSize}
@@ -236,9 +320,10 @@ class GroupsPage extends BaseComponent {
         ${showCreateModal ? html`
           <div class="form">
             <div class="field">
-              <label class="field-label">Realm *</label>
+              <label class="field-label" for="create-group-realm">Realm *</label>
               <select
                 class="field-select"
+                id="create-group-realm"
                 .value=${createRealmId}
                 @change=${(e) => this.setState({ createRealmId: e.target.value })}
               >
@@ -246,9 +331,10 @@ class GroupsPage extends BaseComponent {
               </select>
             </div>
             <div class="field">
-              <label class="field-label">Name *</label>
+              <label class="field-label" for="create-group-name">Name *</label>
               <input
                 class="field-input"
+                id="create-group-name"
                 type="text"
                 placeholder="e.g. engineering"
                 .value=${createName}
@@ -256,9 +342,10 @@ class GroupsPage extends BaseComponent {
               />
             </div>
             <div class="field">
-              <label class="field-label">Description</label>
+              <label class="field-label" for="create-group-desc">Description</label>
               <input
                 class="field-input"
+                id="create-group-desc"
                 type="text"
                 placeholder="Optional description"
                 .value=${createDescription}
@@ -266,9 +353,10 @@ class GroupsPage extends BaseComponent {
               />
             </div>
             <div class="field">
-              <label class="field-label">Parent Group</label>
+              <label class="field-label" for="create-group-parent">Parent Group</label>
               <select
                 class="field-select"
+                id="create-group-parent"
                 .value=${createParentId}
                 @change=${(e) => this.setState({ createParentId: e.target.value })}
               >

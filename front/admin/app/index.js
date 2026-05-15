@@ -14,11 +14,7 @@ import './components/ui/modal.js';
 import './components/ui/toast.js';
 import './components/ui/pagination.js';
 import './components/ui/session-timer.js';
-
-import './components/forms/form-field.js';
-import './components/forms/form-select.js';
-import './components/forms/form-textarea.js';
-import './components/forms/form-checkbox.js';
+import './components/ui/password-strength.js';
 
 import './pages/login-page.js';
 import './pages/dashboard-page.js';
@@ -37,5 +33,8 @@ import './pages/apikeys-page.js';
 import './pages/apikey-create-page.js';
 import './pages/apikey-detail-page.js';
 import './pages/scopes-page.js';
+import './pages/identity-providers-page.js';
+import './pages/password-policies-page.js';
+import './pages/maintenance-page.js';
 import './pages/audit-page.js';
 import './pages/not-found-page.js';

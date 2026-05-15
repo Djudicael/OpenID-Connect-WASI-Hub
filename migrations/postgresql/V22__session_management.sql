@@ -3,6 +3,7 @@
 
 -- Add sid (Session ID) column to sessions for OIDC session management.
 -- This is the stable identifier used in ID tokens and logout tokens.
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 ALTER TABLE sessions
     ADD COLUMN IF NOT EXISTS sid TEXT;
 

@@ -10,22 +10,22 @@ function buildQuery(params) {
   return qs.toString() ? `?${qs.toString()}` : '';
 }
 
-export function listClients(params = {}) {
-  return get(`/api/clients${buildQuery(params)}`);
+export function listClients(params = {}, signal) {
+  return get(`/api/clients${buildQuery(params)}`, signal);
 }
 
-export function getClient(id) {
-  return get(`/api/clients/${id}`);
+export function getClient(id, signal) {
+  return get(`/api/clients/${id}`, signal);
 }
 
-export function createClient(body) {
-  return post('/api/clients', body);
+export function createClient(body, signal) {
+  return post('/api/clients', body, signal);
 }
 
-export function updateClient(id, body) {
-  return put(`/api/clients/${id}`, body);
+export function updateClient(id, body, signal) {
+  return put(`/api/clients/${id}`, body, signal);
 }
 
-export function deleteClient(id) {
-  return del(`/api/clients/${id}`);
+export function deleteClient(id, signal) {
+  return del(`/api/clients/${id}`, signal);
 }

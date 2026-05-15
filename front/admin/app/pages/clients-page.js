@@ -5,7 +5,10 @@ import { listRealms } from '../services/realm-service.js';
 import { listScopes } from '../services/scope-service.js';
 import { navigate } from '../core/router.js';
 import { showToast } from '../components/ui/toast.js';
+import { handleApiError } from '../utils/error-handler.js';
 import { isRequired, minLength, isEmail } from '../utils/validators.js';
+
+const ConfirmDialog = customElements.get('c-modal');
 
 class ClientsPage extends BaseComponent {
   constructor() {
@@ -26,14 +29,25 @@ class ClientsPage extends BaseComponent {
       createClientSecret: '',
       createRedirectUris: '',
       createAllowedScopes: 'openid',
-      createAllowedGrantTypes: 'authorization_code',
+      createAllowedGrantTypes: ['authorization_code'],
       createPkceRequired: true,
       createEnabled: true,
       createLoading: false,
       realms: [],
       availableScopes: [],
       selectedScopes: [],
+      selectedIds: new Set(),
     };
+  }
+
+  static get GRANT_TYPES() {
+    return [
+      { value: 'authorization_code', label: 'Authorization Code', desc: 'Standard web app flow (recommended)' },
+      { value: 'refresh_token', label: 'Refresh Token', desc: 'Long-lived sessions' },
+      { value: 'client_credentials', label: 'Client Credentials', desc: 'Server-to-server (no user)' },
+      { value: 'device_code', label: 'Device Code', desc: 'TVs, IoT, CLI apps' },
+      { value: 'authorization_code_oidc', label: 'Auth Code + OIDC', desc: 'Authorization Code with OpenID Connect' },
+    ];
   }
 
   connectedCallback() {
@@ -42,14 +56,20 @@ class ClientsPage extends BaseComponent {
     this._loadRealms();
   }
 
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    clearTimeout(this._searchTimer);
+  }
+
   async _loadRealms() {
     try {
-      const data = await listRealms({ limit: '100' });
+      const data = await listRealms({ limit: '100' }, this.signal);
       const realms = data.items || [];
       const defaultRealmId = realms.length > 0 ? realms[0].id : '';
       this.setState({ realms, createRealmId: defaultRealmId });
     } catch (err) {
-      showToast('Failed to load realms', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to load realms');
       this.setState({ realms: [] });
     }
   }
@@ -57,7 +77,7 @@ class ClientsPage extends BaseComponent {
   async _loadScopesForRealm(realmId) {
     if (!realmId) return;
     try {
-      const data = await listScopes(realmId);
+      const data = await listScopes(realmId, this.signal);
       const scopes = (data.items || []).filter(s => s.enabled);
       const names = scopes.map(s => s.name);
       this.setState({ availableScopes: scopes, selectedScopes: names, createAllowedScopes: names.join(', ') });
@@ -71,18 +91,15 @@ class ClientsPage extends BaseComponent {
     try {
       const { search, page, pageSize } = this._state;
       const offset = (page - 1) * pageSize;
-      const params = new URLSearchParams();
-      if (search) params.set('search', search);
-      params.set('limit', String(pageSize));
-      params.set('offset', String(offset));
       const data = await listClients({
         ...(search ? { search } : {}),
         limit: String(pageSize),
         offset: String(offset),
-      });
-      this.setState({ clients: data.items || [], total: data.total || 0, loading: false });
+      }, this.signal);
+      this.setState({ clients: data.items || [], total: data.total || 0, loading: false, selectedIds: new Set() });
     } catch (err) {
-      showToast('Failed to load clients', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to load clients');
       this.setState({ clients: [], loading: false });
     }
   }
@@ -94,18 +111,54 @@ class ClientsPage extends BaseComponent {
     this._searchTimer = setTimeout(() => this._loadClients(), 300);
   }
 
-  _onPageChange(e) {
-    this.setState({ page: e.detail.page }, this._loadClients());
+  async _onPageChange(e) {
+    await this.setState({ page: e.detail.page });
+    this._loadClients();
+  }
+
+  _toggleSelect(id) {
+    const selected = new Set(this._state.selectedIds);
+    if (selected.has(id)) { selected.delete(id); } else { selected.add(id); }
+    this.setState({ selectedIds: selected });
+  }
+
+  _toggleSelectAll() {
+    const { clients, selectedIds } = this._state;
+    if (selectedIds.size === clients.length && clients.length > 0) {
+      this.setState({ selectedIds: new Set() });
+    } else {
+      this.setState({ selectedIds: new Set(clients.map(c => c.id)) });
+    }
+  }
+
+  async _bulkDelete() {
+    const { selectedIds } = this._state;
+    if (selectedIds.size === 0) return;
+    const confirmed = await ConfirmDialog.confirm(`Delete ${selectedIds.size} client(s)? This cannot be undone.`, 'Bulk Delete');
+    if (!confirmed) return;
+    let success = 0;
+    for (const id of selectedIds) {
+      try {
+        await deleteClient(id);
+        success++;
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+      }
+    }
+    showToast(`${success} client(s) deleted`, 'success');
+    this._loadClients();
   }
 
   async _deleteClient(id) {
-    if (!confirm('Are you sure you want to delete this client?')) return;
+    const confirmed = await ConfirmDialog.confirm('Are you sure you want to delete this client?', 'Delete Client');
+    if (!confirmed) return;
     try {
       await deleteClient(id);
       showToast('Client deleted', 'success');
       this._loadClients();
     } catch (err) {
-      showToast('Failed to delete client', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to delete client');
     }
   }
 
@@ -118,7 +171,7 @@ class ClientsPage extends BaseComponent {
       createClientSecret: '',
       createRedirectUris: '',
       createAllowedScopes: 'openid',
-      createAllowedGrantTypes: 'authorization_code',
+      createAllowedGrantTypes: ['authorization_code'],
       createPkceRequired: true,
       createEnabled: true,
       createLoading: false,
@@ -142,6 +195,13 @@ class ClientsPage extends BaseComponent {
     this.setState({ selectedScopes: selected, createAllowedScopes: selected.join(', ') });
   }
 
+  _toggleGrantType(value, checked) {
+    const selected = [...this._state.createAllowedGrantTypes];
+    if (checked) { if (!selected.includes(value)) selected.push(value); }
+    else { const i = selected.indexOf(value); if (i >= 0) selected.splice(i, 1); }
+    this.setState({ createAllowedGrantTypes: selected });
+  }
+
   async _createClient() {
     const { createRealmId, createClientId, createName, createClientType, createClientSecret, createRedirectUris, createAllowedScopes, createAllowedGrantTypes, createPkceRequired, createEnabled } = this._state;
     if (!isRequired(createClientId)) { showToast('Client ID is required', 'error'); return; }
@@ -154,6 +214,7 @@ class ClientsPage extends BaseComponent {
         try { new URL(uri); } catch { showToast('Invalid redirect URI: ' + uri, 'error'); return; }
       }
     }
+    if (createAllowedGrantTypes.length === 0) { showToast('At least one grant type is required', 'error'); return; }
     const body = {
       realm_id: createRealmId.trim(),
       client_id: createClientId.trim(),
@@ -161,7 +222,7 @@ class ClientsPage extends BaseComponent {
       client_type: createClientType,
       redirect_uris: createRedirectUris.split('\n').map(s => s.trim()).filter(Boolean),
       allowed_scopes: createAllowedScopes.split(',').map(s => s.trim()).filter(Boolean),
-      allowed_grant_types: createAllowedGrantTypes.split(',').map(s => s.trim()).filter(Boolean),
+      allowed_grant_types: createAllowedGrantTypes,
       pkce_required: createPkceRequired,
       enabled: createEnabled,
     };
@@ -178,14 +239,20 @@ class ClientsPage extends BaseComponent {
       }
       this._loadClients();
     } catch (err) {
-      showToast(err.body?.error || 'Failed to create client', 'error');
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to create client');
       this.setState({ createLoading: false });
     }
   }
 
   template() {
-    const { clients, loading, search, page, pageSize, total, showCreateModal, createRealmId, createClientId, createName, createClientType, createClientSecret, createRedirectUris, createAllowedScopes, createAllowedGrantTypes, createPkceRequired, createEnabled, createLoading, realms, availableScopes, selectedScopes } = this._state;
+    const { clients, loading, search, page, pageSize, total, showCreateModal, createRealmId, createClientId, createName, createClientType, createClientSecret, createRedirectUris, createAllowedScopes, createAllowedGrantTypes, createPkceRequired, createEnabled, createLoading, realms, availableScopes, selectedScopes, selectedIds } = this._state;
     const columns = [
+      {
+        key: 'select',
+        label: html`<input type="checkbox" aria-label="Select all clients" ?checked=${selectedIds.size === clients.length && clients.length > 0} @change=${() => this._toggleSelectAll()} />`,
+        render: (_, row) => html`<input type="checkbox" aria-label="Select client ${row.client_id}" ?checked=${selectedIds.has(row.id)} @change=${() => this._toggleSelect(row.id)} />`,
+      },
       { key: 'client_id', label: 'Client ID' },
       { key: 'name', label: 'Name' },
       { key: 'client_type', label: 'Type' },
@@ -193,11 +260,14 @@ class ClientsPage extends BaseComponent {
       { key: 'enabled', label: 'Enabled', render: (v) => v ? html`<span style="color:var(--color-success)">Yes</span>` : html`<span style="color:var(--color-danger)">No</span>` },
       { key: 'id', label: 'Actions', render: (_, row) => html`<div style="display:flex;gap:0.5rem"><c-button size="sm" variant="secondary" @click=${() => navigate('/clients/' + row.id)}>Edit</c-button><c-button size="sm" variant="danger" @click=${() => this._deleteClient(row.id)}>Delete</c-button></div>` },
     ];
-    return html`<style>:host{display:block}.toolbar{display:flex;gap:1rem;margin-bottom:1rem;align-items:center}.search-input{flex:1;max-width:24rem;padding:.5rem .75rem;font-size:.875rem;border:1px solid #e2e8f0;border-radius:var(--radius-sm);font-family:inherit}.search-input:focus{outline:none;border-color:var(--color-primary)}.form{max-width:32rem}.field{margin-bottom:1rem}.field-label{display:block;font-size:.875rem;font-weight:500;margin-bottom:.25rem}.field-input,.field-select,.field-textarea{width:100%;padding:.5rem .75rem;font-size:.875rem;border:1px solid #e2e8f0;border-radius:var(--radius-sm);font-family:inherit;box-sizing:border-box}.field-input:focus,.field-select:focus,.field-textarea:focus{outline:none;border-color:var(--color-primary)}.field-textarea{resize:vertical;min-height:4rem}.hint{font-size:.75rem;color:var(--color-text-muted);margin-top:.25rem}.field-checkbox{display:flex;align-items:center;gap:.5rem}.field-checkbox input{width:1rem;height:1rem}.scope-list{max-height:10rem;overflow-y:auto;border:1px solid #e2e8f0;border-radius:var(--radius-sm);padding:.5rem}</style>
+    return html`<style>:host{display:block}.toolbar{display:flex;gap:1rem;margin-bottom:1rem;align-items:center}.search-input{flex:1;max-width:24rem;padding:.5rem .75rem;font-size:.875rem;border:1px solid #e2e8f0;border-radius:var(--radius-sm);font-family:inherit}.search-input:focus{outline:none;border-color:var(--color-primary)}.bulk-bar{display:flex;align-items:center;gap:.75rem;padding:.5rem 1rem;background:#eff6ff;border:1px solid #bfdbfe;border-radius:var(--radius-sm);margin-bottom:1rem;font-size:.875rem}.bulk-bar span{color:var(--color-primary);font-weight:500}.form{max-width:32rem}.field{margin-bottom:1rem}.field-label{display:block;font-size:.875rem;font-weight:500;margin-bottom:.25rem}.field-input,.field-select,.field-textarea{width:100%;padding:.5rem .75rem;font-size:.875rem;border:1px solid #e2e8f0;border-radius:var(--radius-sm);font-family:inherit;box-sizing:border-box}.field-input:focus,.field-select:focus,.field-textarea:focus{outline:none;border-color:var(--color-primary)}.field-textarea{resize:vertical;min-height:4rem}.hint{font-size:.75rem;color:var(--color-text-muted);margin-top:.25rem}.field-checkbox{display:flex;align-items:center;gap:.5rem}.field-checkbox input{width:1rem;height:1rem}.scope-list{max-height:10rem;overflow-y:auto;border:1px solid #e2e8f0;border-radius:var(--radius-sm);padding:.5rem}.grant-type-list{max-height:12rem;overflow-y:auto;border:1px solid #e2e8f0;border-radius:var(--radius-sm);padding:.5rem}.empty-state{text-align:center;padding:3rem 1rem;color:var(--color-text-muted)}.empty-state-icon{font-size:2.5rem;margin-bottom:.75rem;opacity:.5}.empty-state-text{font-size:1rem;margin-bottom:1rem}</style>
       <c-page-layout title="Clients">
         <div slot="actions"><c-button variant="primary" @click=${() => this._openCreateModal()}>+ Add Client</c-button></div>
-        <div class="toolbar"><input class="search-input" type="text" placeholder="Search clients..." .value=${search} @input=${(e) => this._onSearch(e)}/></div>
-        ${loading ? html`<div style="padding:2rem;text-align:center;color:var(--color-text-muted)">Loading...</div>` : html`<c-table .columns=${columns} .rows=${clients}></c-table>`}
+        <div class="toolbar"><input class="search-input" type="text" placeholder="Search clients..." aria-label="Search clients" .value=${search} @input=${(e) => this._onSearch(e)}/></div>
+        ${selectedIds.size > 0 ? html`<div class="bulk-bar"><span>${selectedIds.size} selected</span><c-button size="sm" variant="danger" @click=${() => this._bulkDelete()}>Delete Selected</c-button><c-button size="sm" variant="ghost" @click=${() => this.setState({ selectedIds: new Set() })}>Clear</c-button></div>` : ''}
+        ${loading ? html`<div style="padding:2rem;text-align:center;color:var(--color-text-muted)">Loading...</div>`
+        : clients.length === 0 ? html`<div class="empty-state"><div class="empty-state-icon">&#128220;</div><div class="empty-state-text">${search ? 'No clients match your search' : 'No clients yet'}</div>${!search ? html`<c-button variant="primary" @click=${() => this._openCreateModal()}>+ Add Client</c-button>` : ''}</div>`
+        : html`<c-table .columns=${columns} .rows=${clients}></c-table>`}
         <c-pagination .page=${page} .pageSize=${pageSize} .total=${total} @page-change=${(e) => this._onPageChange(e)}></c-pagination>
       </c-page-layout>
       <c-modal title="Create Client" @close=${() => this._closeCreateModal()}>
@@ -211,7 +281,15 @@ class ClientsPage extends BaseComponent {
           <div class="field"><label class="field-label">Allowed Scopes</label>
             ${availableScopes.length > 0 ? html`<div class="scope-list">${availableScopes.map(s => html`<label class="field-checkbox" style="margin-bottom:.25rem"><input type="checkbox" ?checked=${selectedScopes.includes(s.name)} @change=${(e) => this._toggleScope(s.name, e.target.checked)}/><span style="font-size:.875rem">${s.name}</span>${s.description ? html`<span style="font-size:.75rem;color:var(--color-text-muted);margin-left:.25rem">- ${s.description}</span>` : ''}</label>`)}</div>` : html`<input class="field-input" type="text" placeholder="openid, profile, email" .value=${createAllowedScopes} @input=${(e) => this.setState({ createAllowedScopes: e.target.value })}/><div class="hint">Comma-separated. Create scopes in Scopes page first.</div>`}
           </div>
-          <div class="field"><label class="field-label">Allowed Grant Types</label><input class="field-input" type="text" placeholder="authorization_code, refresh_token" .value=${createAllowedGrantTypes} @input=${(e) => this.setState({ createAllowedGrantTypes: e.target.value })}/><div class="hint">Comma-separated list of grant types</div></div>
+          <div class="field"><label class="field-label">Allowed Grant Types</label>
+            <div class="grant-type-list">${this.constructor.GRANT_TYPES.map(gt => html`
+              <label class="field-checkbox" style="margin-bottom:.25rem">
+                <input type="checkbox" ?checked=${createAllowedGrantTypes.includes(gt.value)} @change=${(e) => this._toggleGrantType(gt.value, e.target.checked)}/>
+                <span style="font-size:.875rem">${gt.label}</span>
+                <span style="font-size:.75rem;color:var(--color-text-muted);margin-left:.25rem">- ${gt.desc}</span>
+              </label>
+            `)}</div>
+          </div>
           <div class="field"><label class="field-checkbox"><input type="checkbox" ?checked=${createPkceRequired} @change=${(e) => this.setState({ createPkceRequired: e.target.checked })}/> PKCE Required</label></div>
           <div class="field"><label class="field-checkbox"><input type="checkbox" ?checked=${createEnabled} @change=${(e) => this.setState({ createEnabled: e.target.checked })}/> Enabled</label></div>
         </div>` : ''}

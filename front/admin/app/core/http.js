@@ -11,6 +11,7 @@ export class HttpError extends Error {
     this.status = status;
     this.statusText = statusText;
     this.body = body;
+    this.name = 'HttpError';
   }
 }
 
@@ -50,7 +51,6 @@ export async function http(url, options = {}) {
     credentials: 'same-origin',
   };
 
-  // Add auth header if authenticated
   if (authService.isAuthenticated()) {
     const token = await authService.getAccessToken();
     if (token) {
@@ -58,7 +58,15 @@ export async function http(url, options = {}) {
     }
   }
 
-  const response = await fetch(fullUrl, opts);
+  let response;
+  try {
+    response = await fetch(fullUrl, opts);
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw err;
+    }
+    throw new HttpError(0, 'Network Error', { error: 'Network connection failed' });
+  }
 
   if (!response.ok) {
     let body = null;
@@ -73,18 +81,18 @@ export async function http(url, options = {}) {
   return response.json();
 }
 
-export function get(url) {
-  return http(url, { method: 'GET' });
+export function get(url, signal) {
+  return http(url, { method: 'GET', signal });
 }
 
-export function post(url, body) {
-  return http(url, { method: 'POST', body: JSON.stringify(body) });
+export function post(url, body, signal) {
+  return http(url, { method: 'POST', body: JSON.stringify(body), signal });
 }
 
-export function put(url, body) {
-  return http(url, { method: 'PUT', body: JSON.stringify(body) });
+export function put(url, body, signal) {
+  return http(url, { method: 'PUT', body: JSON.stringify(body), signal });
 }
 
-export function del(url) {
-  return http(url, { method: 'DELETE' });
+export function del(url, signal) {
+  return http(url, { method: 'DELETE', signal });
 }

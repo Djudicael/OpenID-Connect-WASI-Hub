@@ -10,22 +10,22 @@ function buildQuery(params) {
   return qs.toString() ? `?${qs.toString()}` : '';
 }
 
-export function listRealms(params = {}) {
-  return get(`/api/realms${buildQuery(params)}`);
+export function listRealms(params = {}, signal) {
+  return get(`/api/realms${buildQuery(params)}`, signal);
 }
 
-export function getRealm(id) {
-  return get(`/api/realms/${id}`);
+export function getRealm(id, signal) {
+  return get(`/api/realms/${id}`, signal);
 }
 
-export function createRealm(body) {
-  return post('/api/realms', body);
+export function createRealm(body, signal) {
+  return post('/api/realms', body, signal);
 }
 
-export function updateRealm(id, body) {
-  return put(`/api/realms/${id}`, body);
+export function updateRealm(id, body, signal) {
+  return put(`/api/realms/${id}`, body, signal);
 }
 
-export function deleteRealm(id) {
-  return del(`/api/realms/${id}`);
+export function deleteRealm(id, signal) {
+  return del(`/api/realms/${id}`, signal);
 }
