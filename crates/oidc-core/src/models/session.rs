@@ -48,4 +48,6 @@ pub struct Session {
     pub family_revoked: bool,
     /// RFC 9396 RAR authorization_details granted during authorization.
     pub authorization_details: Option<serde_json::Value>,
+    /// RFC 8707 Resource Indicators — target resource server URIs.
+    pub resource: Vec<String>,
 }

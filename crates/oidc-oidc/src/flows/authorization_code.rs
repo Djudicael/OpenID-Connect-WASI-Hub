@@ -99,6 +99,7 @@ impl AuthorizationCodeFlow {
                     &scopes,
                     dpop_jkt,
                     auth_code.authorization_details.as_ref(),
+                    Some(auth_code.resource.as_slice()),
                 )
                 .await?;
 
@@ -169,6 +170,7 @@ impl AuthorizationCodeFlow {
                 reused_at: None,
                 family_revoked: false,
                 authorization_details: auth_code.authorization_details.clone(),
+                resource: auth_code.resource.clone(),
             };
 
             SessionRepo.create(&mut conn, &session).await?;

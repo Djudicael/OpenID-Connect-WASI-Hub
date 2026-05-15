@@ -97,10 +97,22 @@ pub async fn introspect_handler(
             "Bearer"
         };
 
+        // Extract audience — may be a string or array (RFC 8707)
+        let aud_value = &claims.aud;
+        let client_id_from_aud = match aud_value {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Array(arr) => arr
+                .first()
+                .and_then(|v| v.as_str())
+                .unwrap_or(&claims.aud.to_string())
+                .to_string(),
+            _ => claims.aud.to_string(),
+        };
+
         let mut response = json!({
             "active": true,
             "sub": claims.sub,
-            "client_id": claims.aud,
+            "client_id": client_id_from_aud,
             "aud": claims.aud,
             "scope": claims.scope,
             "token_type": token_type,

@@ -19,7 +19,7 @@ impl AuthCodeRepo {
         let code_hash = oidc_core::utils::sha2_256_hex(code);
         let sql = r#"
             SELECT id, code, client_id, user_id, realm_id, redirect_uri,
-                   scope, code_challenge, code_challenge_method, nonce, used, claims_request, display, response_type, acr_values, expires_at, response_mode, authorization_details
+                   scope, code_challenge, code_challenge_method, nonce, used, claims_request, display, response_type, acr_values, expires_at, response_mode, authorization_details, resource
             FROM authorization_codes
             WHERE code = $1 AND NOT used AND expires_at > NOW() FOR UPDATE
         "#;
@@ -36,8 +36,8 @@ impl AuthCodeRepo {
         let sql = r#"
             INSERT INTO authorization_codes (
                 id, code, client_id, user_id, realm_id, redirect_uri,
-                scope, code_challenge, code_challenge_method, nonce, used, claims_request, display, response_type, acr_values, expires_at, response_mode, authorization_details
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                scope, code_challenge, code_challenge_method, nonce, used, claims_request, display, response_type, acr_values, expires_at, response_mode, authorization_details, resource
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
         "#;
         conn.execute_params(
             sql,
@@ -60,6 +60,7 @@ impl AuthCodeRepo {
                 &entity.expires_at,
                 &entity.response_mode,
                 &entity.authorization_details,
+                &mapper::to_json_value_vec(&entity.resource),
             ],
         )
         .await
@@ -116,6 +117,7 @@ impl AuthCodeRepo {
             expires_at: mapper::datetime(row, 16)?,
             response_mode: mapper::opt_string(row, 17)?,
             authorization_details: row.get::<serde_json::Value>(18).ok(),
+            resource: mapper::json_string_vec(row, 19)?,
         })
     }
 }

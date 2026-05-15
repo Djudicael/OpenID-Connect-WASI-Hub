@@ -122,6 +122,7 @@ fn make_session(user_id: Uuid, realm_id: Uuid, client_id: Uuid, hash: &str) -> S
         reused_at: None,
         family_revoked: false,
         authorization_details: None,
+        resource: vec![],
     }
 }
 
@@ -187,6 +188,7 @@ fn make_auth_code(client_id: Uuid, user_id: Uuid, realm_id: Uuid, code: &str) ->
         expires_at: Utc::now() + chrono::Duration::minutes(10),
         response_mode: None,
         authorization_details: None,
+        resource: vec![],
     }
 }
 

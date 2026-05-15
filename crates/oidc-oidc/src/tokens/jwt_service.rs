@@ -8,6 +8,48 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::sync::Arc;
 
+// ---------------------------------------------------------------------------
+// aud serde helper — serializes as a string when single value, array otherwise
+// ---------------------------------------------------------------------------
+
+mod aud_serde {
+    use serde::{self, Deserialize, Deserializer, Serializer};
+
+    /// Serialize `serde_json::Value` as a string if it's a single-element array,
+    /// otherwise as-is. This ensures `aud` is a string when there's just a
+    /// client_id (backward compatible) and an array when resource indicators
+    /// are present.
+    pub fn serialize<S>(value: &serde_json::Value, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            serde_json::Value::Array(arr) if arr.len() == 1 => {
+                // Single-element array: serialize as a string for backward compatibility
+                if let Some(s) = arr.first().and_then(|v| v.as_str()) {
+                    return serializer.serialize_str(s);
+                }
+                serializer.serialize_some(value)
+            }
+            _ => serializer.serialize_some(value),
+        }
+    }
+
+    /// Deserialize `aud` which can be either a string or an array.
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<serde_json::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        match value {
+            serde_json::Value::String(s) => {
+                Ok(serde_json::Value::Array(vec![serde_json::Value::String(s)]))
+            }
+            other => Ok(other),
+        }
+    }
+}
+
 /// JWT header.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct JwtHeader {
@@ -33,11 +75,19 @@ pub struct ClientAssertionClaims {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AccessTokenClaims {
     pub sub: String,
-    pub aud: String,
+    /// Audience — the client_id and/or resource server URIs (RFC 8707).
+    /// When resource indicators are present, this becomes an array containing
+    /// both the client_id and the resource URIs.
+    #[serde(with = "aud_serde")]
+    pub aud: serde_json::Value,
     pub iss: String,
     pub exp: i64,
     pub iat: i64,
     pub scope: String,
+    /// Authorized party — the client_id that was authorized (RFC 8707 §2).
+    /// Required when `aud` contains resource indicators in addition to client_id.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub azp: Option<String>,
     /// Confirmation claim for DPoP-bound tokens (RFC 9449).
     /// Contains `{"jkt": "<thumbprint>"}` when the token is sender-constrained.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -733,16 +783,42 @@ impl TokenService for JwtTokenService {
         scopes: &[String],
         dpop_jkt: Option<&str>,
         authorization_details: Option<&serde_json::Value>,
+        resource: Option<&[String]>,
     ) -> Result<String, OidcError> {
         let now = self.now();
         let cnf = dpop_jkt.map(|jkt| serde_json::json!({"jkt": jkt}));
+
+        // Build `aud` per RFC 8707:
+        //   - No resource indicators → aud = client_id (string, backward compatible)
+        //   - Resource indicators present → aud = [client_id, resource1, resource2, ...]
+        //     and azp = client_id
+        let (aud, azp) = match resource {
+            Some(resources) if !resources.is_empty() => {
+                let mut aud_arr = vec![serde_json::Value::String(audience.to_string())];
+                aud_arr.extend(
+                    resources
+                        .iter()
+                        .map(|r| serde_json::Value::String(r.clone())),
+                );
+                (
+                    serde_json::Value::Array(aud_arr),
+                    Some(audience.to_string()),
+                )
+            }
+            _ => (
+                serde_json::Value::Array(vec![serde_json::Value::String(audience.to_string())]),
+                None,
+            ),
+        };
+
         let claims = AccessTokenClaims {
             sub: subject.to_string(),
-            aud: audience.to_string(),
+            aud,
             iss: self.issuer.clone(),
             exp: now + self.access_token_ttl_secs,
             iat: now,
             scope: scopes.join(" "),
+            azp,
             cnf,
             authorization_details: authorization_details.cloned(),
         };
@@ -860,7 +936,14 @@ mod tests {
     async fn test_jwt_roundtrip() {
         let service = JwtTokenService::new("https://test.example.com").unwrap();
         let token = service
-            .issue_access_token("user-123", "my-client", &["openid".to_string()], None, None)
+            .issue_access_token(
+                "user-123",
+                "my-client",
+                &["openid".to_string()],
+                None,
+                None,
+                None,
+            )
             .await
             .unwrap();
         assert!(!token.is_empty());
@@ -1079,11 +1162,12 @@ mod tests {
         let now = service.now();
         let claims = AccessTokenClaims {
             sub: "user-ed-123".to_string(),
-            aud: "my-client".to_string(),
+            aud: serde_json::json!(["my-client"]),
             iss: "https://test.example.com".to_string(),
             exp: now + 900,
             iat: now,
             scope: "openid".to_string(),
+            azp: None,
             cnf: None,
             authorization_details: None,
         };
@@ -1107,11 +1191,12 @@ mod tests {
         let now = service.now();
         let claims = AccessTokenClaims {
             sub: "user-ed-456".to_string(),
-            aud: "my-client".to_string(),
+            aud: serde_json::json!(["my-client"]),
             iss: "https://test.example.com".to_string(),
             exp: now + 900,
             iat: now,
             scope: "openid".to_string(),
+            azp: None,
             cnf: None,
             authorization_details: None,
         };
@@ -1132,6 +1217,7 @@ mod tests {
                 "user-rs256",
                 "my-client",
                 &["openid".to_string()],
+                None,
                 None,
                 None,
             )
@@ -1238,11 +1324,12 @@ mod tests {
         let now = service.now();
         let claims = AccessTokenClaims {
             sub: "user-ed-789".to_string(),
-            aud: "my-client".to_string(),
+            aud: serde_json::json!(["my-client"]),
             iss: "https://test.example.com".to_string(),
             exp: now + 900,
             iat: now,
             scope: "openid".to_string(),
+            azp: None,
             cnf: None,
             authorization_details: None,
         };
@@ -1265,11 +1352,12 @@ mod tests {
         let now = service.now();
         let claims = AccessTokenClaims {
             sub: "user-mixed".to_string(),
-            aud: "my-client".to_string(),
+            aud: serde_json::json!(["my-client"]),
             iss: "https://test.example.com".to_string(),
             exp: now + 900,
             iat: now,
             scope: "openid".to_string(),
+            azp: None,
             cnf: None,
             authorization_details: None,
         };

@@ -95,4 +95,6 @@ pub struct AuthCode {
     pub response_mode: Option<String>,
     /// RFC 9396 RAR authorization_details from the authorization request.
     pub authorization_details: Option<serde_json::Value>,
+    /// RFC 8707 Resource Indicators — target resource server URIs.
+    pub resource: Vec<String>,
 }

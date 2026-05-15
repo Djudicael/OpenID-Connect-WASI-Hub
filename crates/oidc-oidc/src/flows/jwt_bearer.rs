@@ -230,6 +230,7 @@ impl JwtBearerFlow {
                     &effective_scopes,
                     dpop_jkt,
                     None,
+                    None,
                 )
                 .await?;
 
@@ -259,6 +260,7 @@ impl JwtBearerFlow {
                 reused_at: None,
                 family_revoked: false,
                 authorization_details: None,
+                resource: vec![],
             };
 
             SessionRepo.create(&mut conn, &session).await?;

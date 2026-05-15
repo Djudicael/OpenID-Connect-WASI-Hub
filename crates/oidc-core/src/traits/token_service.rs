@@ -64,8 +64,9 @@ pub struct IdTokenExtraClaims {
 pub struct VerifiedAccessToken {
     /// Subject (user or client identifier).
     pub sub: String,
-    /// Audience (client_id the token was issued to).
-    pub aud: String,
+    /// Audience — client_id and/or resource server URIs (RFC 8707).
+    /// Stored as a JSON array internally; single-value case is `[client_id]`.
+    pub aud: serde_json::Value,
     /// Issuer.
     pub iss: String,
     /// Expiration timestamp (seconds since epoch).
@@ -96,6 +97,7 @@ pub trait TokenService: Send + Sync {
         scopes: &[String],
         dpop_jkt: Option<&str>,
         authorization_details: Option<&serde_json::Value>,
+        resource: Option<&[String]>,
     ) -> Result<String, OidcError>;
 
     /// Verify an access token and return the subject.

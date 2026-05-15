@@ -195,7 +195,7 @@ impl PasswordFlow {
 
             let token_svc = state.token_service_for_realm(user.realm_id).await?;
             let access_token = token_svc
-                .issue_access_token(&subject, &audience, &scopes, dpop_jkt, None)
+                .issue_access_token(&subject, &audience, &scopes, dpop_jkt, None, None)
                 .await?;
 
             let at_hash = oidc_core::utils::compute_at_hash(&access_token);
@@ -261,6 +261,7 @@ impl PasswordFlow {
                 reused_at: None,
                 family_revoked: false,
                 authorization_details: None,
+                resource: vec![],
             };
 
             SessionRepo.create(&mut conn, &session).await?;

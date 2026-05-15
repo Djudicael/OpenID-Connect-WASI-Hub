@@ -60,6 +60,7 @@ pub async fn discovery_handler(state: OidcState) -> Json<Value> {
             "urn:ietf:params:oauth:token-type:id_token"
         ],
         "code_challenge_methods_supported": ["S256"],
+        "resource_parameter_supported": true,
         "response_modes_supported": ["query", "fragment", "form_post", "jwt", "query.jwt", "fragment.jwt", "form_post.jwt"],
         "authorization_details_types_supported": ["payment_initiation", "account_information", "custom"],
     }))
@@ -123,6 +124,7 @@ pub async fn realm_discovery_handler(state: OidcState, realm: String) -> Json<Va
             "urn:ietf:params:oauth:token-type:id_token"
         ],
         "code_challenge_methods_supported": ["S256"],
+        "resource_parameter_supported": true,
         "response_modes_supported": ["query", "fragment", "form_post", "jwt", "query.jwt", "fragment.jwt", "form_post.jwt"],
         "authorization_details_types_supported": ["payment_initiation", "account_information", "custom"],
     }))

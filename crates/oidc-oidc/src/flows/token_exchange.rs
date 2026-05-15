@@ -333,7 +333,14 @@ impl TokenExchangeFlow {
         // Issue access token — `may_act` is included in the response metadata
         // per RFC 8693 §4.1 (not embedded in the JWT itself).
         let access_token = token_svc
-            .issue_access_token(subject, audience, scopes, dpop_jkt, None)
+            .issue_access_token(
+                subject,
+                audience,
+                scopes,
+                dpop_jkt,
+                None,
+                resource.map(|r| vec![r.to_string()]).as_deref(),
+            )
             .await?;
 
         let access_hash = sha2_256_hex(&access_token);
@@ -362,6 +369,7 @@ impl TokenExchangeFlow {
             reused_at: None,
             family_revoked: false,
             authorization_details: None,
+            resource: resource.map(|r| vec![r.to_string()]).unwrap_or_default(),
         };
 
         SessionRepo.create(conn, &session).await?;
@@ -405,7 +413,14 @@ impl TokenExchangeFlow {
         dpop_jkt: Option<&str>,
     ) -> Result<Value, OidcError> {
         let access_token = token_svc
-            .issue_access_token(subject, audience, scopes, dpop_jkt, None)
+            .issue_access_token(
+                subject,
+                audience,
+                scopes,
+                dpop_jkt,
+                None,
+                resource.map(|r| vec![r.to_string()]).as_deref(),
+            )
             .await?;
 
         let refresh_token_value = generate_opaque_token()?;
@@ -437,6 +452,7 @@ impl TokenExchangeFlow {
             reused_at: None,
             family_revoked: false,
             authorization_details: None,
+            resource: resource.map(|r| vec![r.to_string()]).unwrap_or_default(),
         };
 
         SessionRepo.create(conn, &session).await?;
@@ -481,7 +497,14 @@ impl TokenExchangeFlow {
     ) -> Result<Value, OidcError> {
         // Also issue an access token for the session
         let access_token = token_svc
-            .issue_access_token(subject, audience, scopes, dpop_jkt, None)
+            .issue_access_token(
+                subject,
+                audience,
+                scopes,
+                dpop_jkt,
+                None,
+                resource.map(|r| vec![r.to_string()]).as_deref(),
+            )
             .await?;
 
         let at_hash = oidc_core::utils::compute_at_hash(&access_token);
@@ -540,6 +563,7 @@ impl TokenExchangeFlow {
             reused_at: None,
             family_revoked: false,
             authorization_details: None,
+            resource: resource.map(|r| vec![r.to_string()]).unwrap_or_default(),
         };
 
         SessionRepo.create(conn, &session).await?;

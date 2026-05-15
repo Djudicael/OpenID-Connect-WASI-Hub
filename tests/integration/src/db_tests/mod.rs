@@ -320,6 +320,7 @@ async fn test_session_crud() {
         reused_at: None,
         family_revoked: false,
         authorization_details: None,
+        resource: vec![],
     };
 
     repo.create(&mut conn, &session).await.unwrap();
@@ -470,6 +471,7 @@ async fn test_auth_code_crud() {
         expires_at: Utc::now() + chrono::Duration::minutes(10),
         response_mode: None,
         authorization_details: None,
+        resource: vec![],
     };
 
     repo.create(&mut conn, &code).await.unwrap();
@@ -699,6 +701,7 @@ async fn test_session_token_hash_index_performance() {
             reused_at: None,
             family_revoked: false,
             authorization_details: None,
+            resource: vec![],
         };
         session_repo.create(&mut conn, &session).await.unwrap();
     }
@@ -907,6 +910,7 @@ async fn test_cascade_delete_sessions_on_user_delete() {
         reused_at: None,
         family_revoked: false,
         authorization_details: None,
+        resource: vec![],
     };
     session_repo.create(&mut conn, &session).await.unwrap();
 
@@ -1004,6 +1008,7 @@ async fn test_expired_session_cleanup() {
         reused_at: None,
         family_revoked: false,
         authorization_details: None,
+        resource: vec![],
     };
     session_repo
         .create(&mut conn, &expired_session)
@@ -1086,6 +1091,7 @@ async fn test_expired_auth_code_cleanup() {
         expires_at: Utc::now() - chrono::Duration::minutes(5), // expired 5 minutes ago
         response_mode: None,
         authorization_details: None,
+        resource: vec![],
     };
     auth_code_repo
         .create(&mut conn, &expired_code)

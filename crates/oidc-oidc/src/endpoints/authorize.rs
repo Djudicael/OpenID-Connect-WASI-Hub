@@ -527,6 +527,31 @@ async fn authorize_inner(
         }
     }
 
+    // --- resource parameter handling (RFC 8707 Resource Indicators) ---
+    // The `resource` parameter can appear multiple times.
+    // Each value must be an absolute URI per RFC 8707 §2.
+    let resource_params: Vec<String> = params
+        .iter()
+        .filter(|(k, _)| k.as_str() == "resource")
+        .map(|(_, v)| v.clone())
+        .collect();
+    for res in &resource_params {
+        if url::Url::parse(res).is_err() || !res.contains(':') {
+            return Err((
+                redirect_uri.clone(),
+                "invalid_target".to_string(),
+                "Each resource must be an absolute URI".to_string(),
+            ));
+        }
+        if res.len() > 512 {
+            return Err((
+                redirect_uri.clone(),
+                "invalid_target".to_string(),
+                "Resource URI must not exceed 512 characters".to_string(),
+            ));
+        }
+    }
+
     // --- Client validation ---
     let mut conn = match state.connect().await {
         Ok(c) => c,
@@ -878,6 +903,7 @@ async fn authorize_inner(
             expires_at,
             response_mode: response_mode_param.clone(),
             authorization_details: authorization_details.clone(),
+            resource: resource_params.clone(),
         };
 
         match oidc_repository::repositories::auth_code_repo::AuthCodeRepo
@@ -938,6 +964,7 @@ async fn authorize_inner(
                     &requested_scopes,
                     None,
                     authorization_details.as_ref(),
+                    Some(resource_params.as_slice()),
                 )
                 .await
             {
@@ -975,6 +1002,7 @@ async fn authorize_inner(
                 reused_at: None,
                 family_revoked: false,
                 authorization_details: authorization_details.clone(),
+                resource: resource_params.clone(),
             };
 
             if let Err(e) = oidc_repository::repositories::session_repo::SessionRepo

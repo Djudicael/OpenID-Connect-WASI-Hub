@@ -801,13 +801,14 @@ impl TokenService for MockTokenService {
         scopes: &[String],
         _dpop_jkt: Option<&str>,
         _authorization_details: Option<&serde_json::Value>,
+        _resource: Option<&[String]>,
     ) -> Result<String, OidcError> {
         // Generate a deterministic-ish token for testing
         let token = format!("at:{}:{}:{}", subject, audience, scopes.join(","));
         let cnf = _dpop_jkt.map(|jkt| serde_json::json!({"jkt": jkt}));
         let claims = VerifiedAccessToken {
             sub: subject.to_string(),
-            aud: audience.to_string(),
+            aud: serde_json::Value::Array(vec![serde_json::Value::String(audience.to_string())]),
             iss: self.issuer.clone(),
             exp: chrono::Utc::now().timestamp() + 3600,
             iat: chrono::Utc::now().timestamp(),
@@ -989,6 +990,7 @@ mod tests {
             reused_at: None,
             family_revoked: false,
             authorization_details: None,
+            resource: vec![],
         }
     }
 
@@ -1030,6 +1032,7 @@ mod tests {
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
             response_mode: None,
             authorization_details: None,
+            resource: vec![],
         }
     }
 
@@ -1530,6 +1533,7 @@ mod tests {
                 &["openid".into(), "profile".into()],
                 None,
                 None,
+                None,
             )
             .await
             .unwrap();
@@ -1541,7 +1545,9 @@ mod tests {
         // Verify with claims
         let claims = svc.verify_access_token_with_claims(&token).await.unwrap();
         assert_eq!(claims.sub, "user-1");
-        assert_eq!(claims.aud, "client-1");
+        assert!(claims.aud.is_array());
+        assert_eq!(claims.aud.as_array().unwrap().len(), 1);
+        assert_eq!(claims.aud.as_array().unwrap()[0], "client-1");
         assert_eq!(claims.iss, "https://test.example.com");
         assert_eq!(claims.scope, "openid profile");
     }
