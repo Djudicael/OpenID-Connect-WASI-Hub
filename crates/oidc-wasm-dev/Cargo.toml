@@ -35,4 +35,4 @@ portpicker = "0.1"
 # Workspace
 oidc-core = { path = "../oidc-core" }
 uuid = { workspace = true }
-chrono = { version = "0.4", features = ["serde"] }
+chrono = { workspace = true }

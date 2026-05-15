@@ -10,6 +10,7 @@ use crate::errors::{OidcErrorResponse, from_oidc_error};
 use crate::flows::password::PasswordFlow;
 use crate::session_cookie;
 use crate::state::OidcState;
+use oidc_core::OidcError;
 
 /// Login request body.
 #[derive(Debug, Deserialize)]
@@ -84,13 +85,11 @@ pub async fn login_handler(
         .map_err(|e| from_oidc_error(&e))?;
     let cookie_header = session_cookie::session_cookie_header(&result.session_id, &encryption_key);
 
+    let cookie_value = cookie_header.parse().map_err(|e| {
+        from_oidc_error(&OidcError::Internal(format!("failed to parse session cookie header: {e}")))
+    })?;
     let mut response = body.into_response();
-    response.headers_mut().insert(
-        SET_COOKIE,
-        cookie_header
-            .parse()
-            .expect("session cookie header should be valid"),
-    );
+    response.headers_mut().insert(SET_COOKIE, cookie_value);
 
     Ok(response)
 }

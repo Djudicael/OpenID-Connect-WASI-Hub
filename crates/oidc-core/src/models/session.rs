@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// An OAuth2 session / token issuance record.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct Session {
     /// Unique identifier.
     pub id: Uuid,
@@ -19,8 +19,10 @@ pub struct Session {
     /// The grant type used.
     pub grant_type: String,
     /// SHA-256 hash of the access token.
+    #[serde(skip_serializing)]
     pub access_token_hash: String,
     /// SHA-256 hash of the refresh token (optional).
+    #[serde(skip_serializing)]
     pub refresh_token_hash: Option<String>,
     /// JWT ID of the ID token.
     pub id_token_jti: Option<String>,
@@ -50,4 +52,22 @@ pub struct Session {
     pub authorization_details: Option<serde_json::Value>,
     /// RFC 8707 Resource Indicators — target resource server URIs.
     pub resource: Vec<String>,
+}
+
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Session")
+            .field("id", &self.id)
+            .field("sid", &self.sid)
+            .field("user_id", &self.user_id)
+            .field("realm_id", &self.realm_id)
+            .field("client_id", &self.client_id)
+            .field("grant_type", &self.grant_type)
+            .field("access_token_hash", &"<redacted>")
+            .field("refresh_token_hash", &"<redacted>")
+            .field("revoked", &self.revoked)
+            .field("family_revoked", &self.family_revoked)
+            .field("expires_at", &self.expires_at)
+            .finish_non_exhaustive()
+    }
 }

@@ -944,6 +944,7 @@ async fn start_wasmtime(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
 
     let encryption_key =
         "2a3131371e4b5559606b70777e858f969da4acb3babec5ccc3cdd5dddbe3e9f0".to_string();
+    let pairwise_salt = "0000000000000000000000000000000000000000000000000000000000000000".to_string();
 
     // Generate deterministic dev signing keys so all WASM instances share the
     // same keys. Without this, wasmtime serve creates fresh instances per
@@ -991,6 +992,8 @@ async fn start_wasmtime(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
         .arg(format!("OIDC_SERVER_BIND_ADDRESS={}", BIND_ADDRESS))
         .arg("--env")
         .arg(format!("OIDC_ENCRYPTION_KEY={}", &encryption_key))
+        .arg("--env")
+        .arg(format!("OIDC_PAIRWISE_SALT={}", &pairwise_salt))
         .arg("--env")
         .arg(format!("OIDC_SIGNING_KEY={}", &rsa_pem))
         .arg("--env")

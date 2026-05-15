@@ -68,23 +68,49 @@ mod http_tests {
         serde_json::from_slice(&bytes).unwrap()
     }
 
+    /// Generate RSA and Ed25519 PEM keys once (reuses `helpers::app::test_signing_keys` logic).
+    fn ensure_env() {
+        use std::sync::OnceLock;
+        static INIT: OnceLock<()> = OnceLock::new();
+        INIT.get_or_init(|| {
+            use rand::rngs::OsRng;
+            use rand::RngCore;
+
+            // RSA
+            let rsa_key = rsa::RsaPrivateKey::new(&mut OsRng, 2048).expect("failed to generate RSA key");
+            use rsa::pkcs1::EncodeRsaPrivateKey;
+            let rsa_pem: String = rsa_key
+                .to_pkcs1_pem(rsa::pkcs1::LineEnding::LF)
+                .expect("failed to serialize RSA key")
+                .to_string();
+
+            // Ed25519
+            let mut secret_bytes = [0u8; 32];
+            OsRng.fill_bytes(&mut secret_bytes);
+            let ed_key = ed25519_dalek::SigningKey::from_bytes(&secret_bytes);
+            use pkcs8::EncodePrivateKey;
+            let ed_pem: String = ed_key
+                .to_pkcs8_pem(pkcs8::LineEnding::LF)
+                .expect("failed to serialize Ed25519 key")
+                .to_string();
+
+            unsafe {
+                std::env::set_var("OIDC_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY);
+                std::env::set_var("OIDC_PAIRWISE_SALT", "test-pairwise-salt");
+                std::env::set_var("OIDC_SIGNING_KEY", &rsa_pem);
+                std::env::set_var("OIDC_ED25519_KEY", &ed_pem);
+            }
+        });
+    }
+
     #[tokio::test]
     async fn test_health_endpoint() {
-        // app_router() reads OIDC_ENCRYPTION_KEY from env
-        unsafe {
-            std::env::set_var("OIDC_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY);
-        }
+        ensure_env();
         let app = app_router();
         let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/health")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
             .await
             .unwrap();
-
         assert_eq!(response.status(), StatusCode::OK);
         let body = read_json_body(response).await;
         assert_eq!(body["status"], "ok");
@@ -93,9 +119,7 @@ mod http_tests {
 
     #[tokio::test]
     async fn test_openid_configuration() {
-        unsafe {
-            std::env::set_var("OIDC_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY);
-        }
+        ensure_env();
         let app = app_router();
         let response = app
             .oneshot(
@@ -106,10 +130,8 @@ mod http_tests {
             )
             .await
             .unwrap();
-
         assert_eq!(response.status(), StatusCode::OK);
         let body = read_json_body(response).await;
-
         assert!(body["issuer"].as_str().is_some());
         assert!(body["authorization_endpoint"].as_str().is_some());
         assert!(body["token_endpoint"].as_str().is_some());
@@ -118,37 +140,21 @@ mod http_tests {
         assert!(body["scopes_supported"].as_array().is_some());
         assert!(body["response_types_supported"].as_array().is_some());
         assert!(body["grant_types_supported"].as_array().is_some());
-        assert!(
-            body["id_token_signing_alg_values_supported"]
-                .as_array()
-                .is_some()
-        );
+        assert!(body["id_token_signing_alg_values_supported"].as_array().is_some());
     }
 
     #[tokio::test]
     async fn test_jwks_endpoint() {
-        unsafe {
-            std::env::set_var("OIDC_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY);
-        }
+        ensure_env();
         let app = app_router();
         let response = app
-            .oneshot(
-                Request::builder()
-                    .uri("/oidc/jwks")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::builder().uri("/oidc/jwks").body(Body::empty()).unwrap())
             .await
             .unwrap();
-
         assert_eq!(response.status(), StatusCode::OK);
         let body = read_json_body(response).await;
-
-        let keys = body["keys"]
-            .as_array()
-            .expect("JWKS should have keys array");
+        let keys = body["keys"].as_array().expect("JWKS should have keys array");
         assert!(!keys.is_empty(), "JWKS should contain at least one key");
-
         let key = &keys[0];
         assert_eq!(key["kty"], "RSA");
         assert_eq!(key["alg"], "RS256");

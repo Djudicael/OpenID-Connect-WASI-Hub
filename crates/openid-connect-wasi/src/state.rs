@@ -32,6 +32,10 @@ pub struct AppConfig {
     pub encryption_key: String,
     /// Salt for pairwise subject identifier computation.
     pub pairwise_salt: String,
+    /// RSA signing key in PKCS#1 PEM format (optional, falls back to env var).
+    pub signing_key: Option<String>,
+    /// Ed25519 signing key in PKCS#8 PEM format (optional, falls back to env var).
+    pub ed25519_key: Option<String>,
 }
 
 impl oidc_apikey::ApiKeyVerifierState for AppState {
@@ -44,12 +48,21 @@ impl AppState {
     /// Build state directly from a config struct (no env vars).
     pub fn from_config(config: AppConfig) -> Self {
         let token_service =
-            Arc::new(oidc_oidc::tokens::JwtTokenService::new(&config.issuer).unwrap());
+            Arc::new(
+                oidc_oidc::tokens::JwtTokenService::with_keys(
+                    &config.issuer,
+                    config.signing_key.clone(),
+                    config.ed25519_key.clone(),
+                )
+                .unwrap_or_else(|e| {
+                    panic!("failed to initialize JWT token service with issuer '{}': {e}", config.issuer)
+                }),
+            );
         let hasher = Arc::new(oidc_core::traits::hasher::Argon2idHasher::new());
         let email_sender = Arc::new(oidc_core::traits::noop_email::NoOpEmailSender);
 
         let db_config = wasi_pg_client::Config::from_uri(&config.database_url)
-            .unwrap_or_else(|_| wasi_pg_client::Config::new());
+            .unwrap_or_else(|e| panic!("invalid OIDC_DATABASE_URL '{}': {e}", config.database_url));
 
         Self {
             config: Arc::new(config),
@@ -62,21 +75,35 @@ impl AppState {
 
     /// Load state from environment variables.
     pub fn from_env() -> Self {
+        let database_url = std::env::var("OIDC_DATABASE_URL")
+            .unwrap_or_else(|_| "postgresql://localhost/oidc_hub".into());
+        if !std::env::var("OIDC_DATABASE_URL").is_ok() {
+            tracing::warn!("OIDC_DATABASE_URL not set — using default (not suitable for production)");
+        }
+
+        let issuer = std::env::var("OIDC_ISSUER")
+            .unwrap_or_else(|_| "http://localhost:8080".into());
+        if !std::env::var("OIDC_ISSUER").is_ok() {
+            tracing::warn!("OIDC_ISSUER not set — using default localhost (not suitable for production)");
+        }
+
         let config = AppConfig {
-            database_url: std::env::var("OIDC_DATABASE_URL")
-                .unwrap_or_else(|_| "postgresql://localhost/oidc_hub".into()),
+            database_url,
             bind_address: std::env::var("OIDC_SERVER_BIND_ADDRESS")
                 .unwrap_or_else(|_| "0.0.0.0".into()),
             port: std::env::var("OIDC_SERVER_PORT")
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(8080),
-            issuer: std::env::var("OIDC_ISSUER").unwrap_or_else(|_| "http://localhost:8080".into()),
+            issuer,
             encryption_key: std::env::var("OIDC_ENCRYPTION_KEY").expect(
                 "OIDC_ENCRYPTION_KEY environment variable must be set (32-byte base64 key)",
             ),
-            pairwise_salt: std::env::var("OIDC_PAIRWISE_SALT")
-                .unwrap_or_else(|_| "default-pairwise-salt-change-me".into()),
+            pairwise_salt: std::env::var("OIDC_PAIRWISE_SALT").expect(
+                "OIDC_PAIRWISE_SALT environment variable must be set — a predictable salt breaks pairwise subject identifier privacy guarantees",
+            ),
+            signing_key: None,
+            ed25519_key: None,
         };
         Self::from_config(config)
     }

@@ -73,7 +73,7 @@ mod tests {
 }
 
 /// A user within a realm.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct User {
     /// Unique identifier (UUID v7).
     pub id: Uuid,
@@ -86,6 +86,7 @@ pub struct User {
     /// Optional username.
     pub username: Option<String>,
     /// Argon2id password hash (None for federated users).
+    #[serde(skip_serializing)]
     pub password_hash: Option<String>,
     /// Given (first) name.
     pub given_name: Option<String>,
@@ -134,9 +135,26 @@ pub struct User {
     /// Whether the account is enabled.
     pub enabled: bool,
     /// When the user was soft-deleted.
+    #[serde(skip_serializing)]
     pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
     /// When the user record was last updated.
     pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl std::fmt::Debug for User {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("User")
+            .field("id", &self.id)
+            .field("realm_id", &self.realm_id)
+            .field("email", &self.email)
+            .field("email_verified", &self.email_verified)
+            .field("username", &self.username)
+            .field("password_hash", &"<redacted>")
+            .field("enabled", &self.enabled)
+            .field("deleted_at", &"<redacted>")
+            .field("updated_at", &self.updated_at)
+            .finish_non_exhaustive()
+    }
 }
 
 impl User {

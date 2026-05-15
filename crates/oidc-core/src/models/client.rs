@@ -4,7 +4,7 @@ use uuid::Uuid;
 use crate::OidcError;
 
 /// An OAuth2/OIDC client registered within a realm.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct Client {
     /// Unique identifier.
     pub id: Uuid,
@@ -15,6 +15,7 @@ pub struct Client {
     /// Client type: confidential or public.
     pub client_type: ClientType,
     /// Argon2id hash of the client_secret (None for public clients).
+    #[serde(skip_serializing)]
     pub client_secret_hash: Option<String>,
     /// Human-readable name.
     pub name: String,
@@ -29,6 +30,7 @@ pub struct Client {
     /// Whether the client is enabled.
     pub enabled: bool,
     /// When the client was soft-deleted.
+    #[serde(skip_serializing)]
     pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
     /// Token endpoint authentication method.
     pub token_endpoint_auth_method: String,
@@ -39,6 +41,7 @@ pub struct Client {
     /// Registered request URIs (e.g. for request objects).
     pub request_uris: Vec<String>,
     /// Encrypted client secret for `client_secret_jwt` authentication.
+    #[serde(skip_serializing)]
     pub client_secret_encrypted: Option<String>,
     /// Front-channel logout URI (Front-Channel Logout §6).
     /// The OP sends an iframe to this URI when the user logs out.
@@ -66,6 +69,7 @@ pub struct Client {
     pub id_token_encrypted_response_enc: Option<String>,
     /// Symmetric key for JWE "dir" encryption, encrypted with the server's encryption key.
     /// At rest, the raw 32-byte key is encrypted (not hashed) because we need it for encryption.
+    #[serde(skip_serializing)]
     pub id_token_encryption_key_encrypted: Option<String>,
     /// Client's RSA public key for JWE "RSA-OAEP-256" encryption (PEM format).
     /// Stored as-is (public information, no need to encrypt).
@@ -76,9 +80,28 @@ pub struct Client {
     /// JWE content encryption algorithm for request objects. Default: "A256GCM"
     pub request_object_encryption_enc: Option<String>,
     /// Symmetric key for JWE "dir" encryption of request objects, encrypted with the server's encryption key.
+    #[serde(skip_serializing)]
     pub request_object_encryption_key_encrypted: Option<String>,
     /// Client's RSA public key for JWE "RSA-OAEP-256" encryption of request objects (PEM format).
     pub request_object_encryption_key_pem: Option<String>,
+}
+
+impl std::fmt::Debug for Client {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Client")
+            .field("id", &self.id)
+            .field("realm_id", &self.realm_id)
+            .field("client_id", &self.client_id)
+            .field("client_type", &self.client_type)
+            .field("client_secret_hash", &"<redacted>")
+            .field("name", &self.name)
+            .field("enabled", &self.enabled)
+            .field("deleted_at", &"<redacted>")
+            .field("client_secret_encrypted", &"<redacted>")
+            .field("id_token_encryption_key_encrypted", &"<redacted>")
+            .field("request_object_encryption_key_encrypted", &"<redacted>")
+            .finish_non_exhaustive()
+    }
 }
 
 /// The type of OAuth2 client.

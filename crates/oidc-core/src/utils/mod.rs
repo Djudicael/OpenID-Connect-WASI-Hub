@@ -1,6 +1,7 @@
 //! Utilities shared across the workspace.
 
 pub mod acr;
+pub mod html;
 pub mod id;
 pub mod jwe;
 pub mod pkce;
@@ -13,6 +14,7 @@ pub use acr::{
     AMR_TOKEN_EXCHANGE, ResolvedAcrAmr, SUPPORTED_ACR_VALUES, SUPPORTED_AMR_VALUES,
     resolve_acr_amr, resolve_locale,
 };
+pub use html::html_escape;
 pub use id::generate_uuid_v7;
 pub use jwe::{
     decrypt_jwe, decrypt_jwe_dir, decrypt_jwe_rsa_oaep_256, encrypt_id_token_if_configured,

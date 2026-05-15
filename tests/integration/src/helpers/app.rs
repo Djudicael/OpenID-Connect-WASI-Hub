@@ -12,6 +12,37 @@ use uuid::Uuid;
 use crate::harness::database_url;
 use crate::helpers::fixtures;
 
+/// Generate RSA (PKCS#1) and Ed25519 (PKCS#8) PEM strings once, cached.
+fn test_signing_keys() -> &'static (String, String) {
+    use std::sync::OnceLock;
+    static KEYS: OnceLock<(String, String)> = OnceLock::new();
+    KEYS.get_or_init(|| {
+        use rand::rngs::OsRng;
+        use rand::RngCore;
+
+        // RSA 2048-bit → PKCS#1 PEM
+        let rsa_key = rsa::RsaPrivateKey::new(&mut OsRng, 2048)
+            .expect("failed to generate RSA key");
+        use rsa::pkcs1::EncodeRsaPrivateKey;
+        let rsa_pem: String = rsa_key
+            .to_pkcs1_pem(rsa::pkcs1::LineEnding::LF)
+            .expect("failed to serialize RSA key")
+            .to_string();
+
+        // Ed25519 → PKCS#8 PEM
+        let mut secret_bytes = [0u8; 32];
+        OsRng.fill_bytes(&mut secret_bytes);
+        let ed_key = ed25519_dalek::SigningKey::from_bytes(&secret_bytes);
+        use pkcs8::EncodePrivateKey;
+        let ed_pem: String = ed_key
+            .to_pkcs8_pem(pkcs8::LineEnding::LF)
+            .expect("failed to serialize Ed25519 key")
+            .to_string();
+
+        (rsa_pem, ed_pem)
+    })
+}
+
 // ===================================================================
 // TestApp
 // ===================================================================
@@ -104,13 +135,18 @@ impl TestApp {
 
         // Build the router with an explicit config so there is NO env-var
         // race when tests run in parallel.
-        let config = openid_connect_wasi::state::AppConfig {
-            database_url: test_db_url.clone(),
-            bind_address: "127.0.0.1".to_string(),
-            port,
-            issuer: issuer.clone(),
-            encryption_key: fixtures::TEST_ENCRYPTION_KEY.to_string(),
-            pairwise_salt: "test-pairwise-salt".to_string(),
+        let config = {
+            let (rsa_pem, ed_pem) = test_signing_keys();
+            openid_connect_wasi::state::AppConfig {
+                database_url: test_db_url.clone(),
+                bind_address: "127.0.0.1".to_string(),
+                port,
+                issuer: issuer.clone(),
+                encryption_key: fixtures::TEST_ENCRYPTION_KEY.to_string(),
+                pairwise_salt: "test-pairwise-salt".to_string(),
+                signing_key: Some(rsa_pem.clone()),
+                ed25519_key: Some(ed_pem.clone()),
+            }
         };
         let app = openid_connect_wasi::app_router_with_config(config);
 

@@ -42,7 +42,7 @@ getrandom = "0.4"
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
 webpki-roots = "0.26"
 sha2 = "0.10"
-rsa = { version = "0.9", features = ["sha2"] }
+rsa = { version = "0.9", features = ["sha2", "pem"] }
 
 # Utils
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
@@ -62,6 +62,12 @@ password-hash = "0.5"
 base64 = "0.22"
 hmac = "0.12"
 subtle = "2"
+pkcs8 = { version = "0.10", features = ["pem"] }
 
 # Dev
 tokio = { version = "1", features = ["rt", "macros", "time"] }
+
+# Time / Random / Encoding
+chrono = { version = "0.4", features = ["serde"] }
+rand = { version = "0.8", features = ["getrandom"] }
+hex = "0.4"

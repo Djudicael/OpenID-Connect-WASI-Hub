@@ -8,9 +8,10 @@ use axum::http::HeaderMap;
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use std::collections::HashMap;
 
+use oidc_core::OidcError;
 use oidc_core::models::{AuthCode, ResponseType};
 use oidc_core::traits::TokenService;
-use oidc_core::utils::generate_uuid_v7;
+use oidc_core::utils::{generate_uuid_v7, html_escape};
 use oidc_repository::repositories::client_repo::ClientRepo;
 use oidc_repository::repositories::realm_repo::RealmRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
@@ -1117,7 +1118,14 @@ async fn authorize_inner(
     let resolved_locale = oidc_core::utils::resolve_locale(&user.locale, &claims_locales);
 
     // --- Generate authorization code ---
-    let code_value = generate_auth_code();
+    let code_value = generate_auth_code().map_err(|e| {
+        tracing::error!("Failed to generate auth code: {e}");
+        (
+            redirect_uri.clone(),
+            "server_error".to_string(),
+            "An internal error occurred".to_string(),
+        )
+    })?;
     let expires_at = chrono::Utc::now() + chrono::Duration::seconds(60); // 60 seconds per plan
 
     // --- For implicit/hybrid flows, issue tokens directly ---
@@ -1460,10 +1468,11 @@ async fn authorize_inner(
     }
 }
 
-fn generate_auth_code() -> String {
+fn generate_auth_code() -> Result<String, OidcError> {
     let mut buf = [0u8; 32];
-    getrandom::fill(&mut buf).expect("getrandom failed");
-    base64_encode_url_safe_no_pad(&buf)
+    getrandom::fill(&mut buf)
+        .map_err(|e| OidcError::Internal(format!("getrandom failed: {e}")))?;
+    Ok(base64_encode_url_safe_no_pad(&buf))
 }
 
 fn base64_encode_url_safe_no_pad(data: &[u8]) -> String {
@@ -1575,14 +1584,7 @@ fn render_form_post_multi_html(redirect_uri: &str, fields: &[(String, String)]) 
     )
 }
 
-/// Minimal HTML attribute/element escaping to prevent XSS in form_post pages.
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#x27;")
-}
+
 
 // ---------------------------------------------------------------------------
 // Error URL builder

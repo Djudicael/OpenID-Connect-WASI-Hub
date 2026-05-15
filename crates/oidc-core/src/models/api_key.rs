@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// An API key for machine-to-machine authentication.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct ApiKey {
     /// Unique identifier.
     pub id: Uuid,
@@ -14,6 +14,7 @@ pub struct ApiKey {
     /// Prefix for display/lookup (first 8 chars).
     pub prefix: String,
     /// Argon2id hash of the secret portion.
+    #[serde(skip_serializing)]
     pub hashed_secret: String,
     /// Granted scopes.
     pub scopes: Vec<String>,
@@ -31,6 +32,21 @@ pub struct ApiKey {
     pub created_by: Option<Uuid>,
     /// When this key was rotated (old key grace period).
     pub rotated_at: Option<DateTime<Utc>>,
+}
+
+impl std::fmt::Debug for ApiKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApiKey")
+            .field("id", &self.id)
+            .field("realm_id", &self.realm_id)
+            .field("name", &self.name)
+            .field("prefix", &self.prefix)
+            .field("hashed_secret", &"<redacted>")
+            .field("revoked", &self.revoked)
+            .field("request_count", &self.request_count)
+            .field("created_at", &self.created_at)
+            .finish_non_exhaustive()
+    }
 }
 
 impl ApiKey {

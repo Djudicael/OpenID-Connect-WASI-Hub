@@ -256,9 +256,21 @@ impl JwtTokenService {
     /// If the variables are absent, fresh random keys are generated (fine for
     /// single-instance dev, fatal for multi-request production).
     pub fn new(issuer: impl Into<String>) -> Result<Self, OidcError> {
+        Self::with_keys(issuer, None, None)
+    }
+
+    /// Create a new token service with programmatic signing keys.
+    ///
+    /// When `rsa_pem` or `ed_pem` is `None`, the corresponding env var
+    /// (`OIDC_SIGNING_KEY` / `OIDC_ED25519_KEY`) is used as fallback.
+    pub fn with_keys(
+        issuer: impl Into<String>,
+        rsa_pem: Option<String>,
+        ed_pem: Option<String>,
+    ) -> Result<Self, OidcError> {
         let issuer = issuer.into();
-        let (rsa_private_key, rsa_kid) = load_rsa_key()?;
-        let (ed_signing_key, ed_kid) = load_ed25519_key()?;
+        let (rsa_private_key, rsa_kid) = load_rsa_key(rsa_pem.as_deref())?;
+        let (ed_signing_key, ed_kid) = load_ed25519_key(ed_pem.as_deref())?;
 
         Ok(Self {
             issuer,
@@ -275,8 +287,8 @@ impl JwtTokenService {
     /// Create a new token service with a custom clock (for testing).
     pub fn with_clock(issuer: impl Into<String>, clock: Arc<dyn Clock>) -> Result<Self, OidcError> {
         let issuer = issuer.into();
-        let (rsa_private_key, rsa_kid) = load_rsa_key()?;
-        let (ed_signing_key, ed_kid) = load_ed25519_key()?;
+        let (rsa_private_key, rsa_kid) = load_rsa_key(None)?;
+        let (ed_signing_key, ed_kid) = load_ed25519_key(None)?;
 
         Ok(Self {
             issuer,
@@ -931,41 +943,41 @@ pub fn verify_client_secret_jwt(
     Ok(claims)
 }
 
-fn load_rsa_key() -> Result<(RsaPrivateKey, String), OidcError> {
-    match std::env::var("OIDC_SIGNING_KEY") {
-        Ok(pem) => {
-            use rsa::pkcs1::DecodeRsaPrivateKey;
-            let key = RsaPrivateKey::from_pkcs1_pem(&pem)
-                .map_err(|e| OidcError::Internal(format!("invalid OIDC_SIGNING_KEY PEM: {e}")))?;
-            let kid = std::env::var("OIDC_SIGNING_KID").unwrap_or_else(|_| "key-1".to_string());
-            Ok((key, kid))
-        }
-        Err(_) => {
-            use rand::rngs::OsRng;
-            let mut rng = OsRng;
-            let key = RsaPrivateKey::new(&mut rng, 2048)
-                .map_err(|e| OidcError::Internal(e.to_string()))?;
-            Ok((key, "key-1".to_string()))
-        }
-    }
+fn load_rsa_key(pem_override: Option<&str>) -> Result<(RsaPrivateKey, String), OidcError> {
+    let pem = match pem_override {
+        Some(p) => p.to_string(),
+        None => std::env::var("OIDC_SIGNING_KEY").map_err(|_| {
+            OidcError::Internal(
+                "OIDC_SIGNING_KEY environment variable must be set (RSA PKCS#1 PEM). \
+                 Without a persistent key, all previously issued tokens become invalid on restart."
+                    .to_string(),
+            )
+        })?,
+    };
+    use rsa::pkcs1::DecodeRsaPrivateKey;
+    let key = RsaPrivateKey::from_pkcs1_pem(&pem)
+        .map_err(|e| OidcError::Internal(format!("invalid OIDC_SIGNING_KEY PEM: {e}")))?;
+    let kid = std::env::var("OIDC_SIGNING_KID").unwrap_or_else(|_| "key-1".to_string());
+    Ok((key, kid))
 }
 
-/// Load the Ed25519 private key from `OIDC_ED25519_KEY` env var (PKCS8 PEM), or generate a fresh one.
-fn load_ed25519_key() -> Result<(SigningKey, String), OidcError> {
-    match std::env::var("OIDC_ED25519_KEY") {
-        Ok(pem) => {
-            use pkcs8::DecodePrivateKey;
-            let signing_key = SigningKey::from_pkcs8_pem(&pem)
-                .map_err(|e| OidcError::Internal(format!("invalid OIDC_ED25519_KEY PEM: {e}")))?;
-            let kid = std::env::var("OIDC_ED25519_KID").unwrap_or_else(|_| "ed-key-1".to_string());
-            Ok((signing_key, kid))
-        }
-        Err(_) => {
-            let secret_key: [u8; 32] = rand::random();
-            let signing_key = SigningKey::from_bytes(&secret_key);
-            Ok((signing_key, "ed-key-1".to_string()))
-        }
-    }
+/// Load the Ed25519 private key from `OIDC_ED25519_KEY` env var (PKCS8 PEM).
+fn load_ed25519_key(pem_override: Option<&str>) -> Result<(SigningKey, String), OidcError> {
+    let pem = match pem_override {
+        Some(p) => p.to_string(),
+        None => std::env::var("OIDC_ED25519_KEY").map_err(|_| {
+            OidcError::Internal(
+                "OIDC_ED25519_KEY environment variable must be set (Ed25519 PKCS#8 PEM). \
+                 Without a persistent key, all previously issued tokens become invalid on restart."
+                    .to_string(),
+            )
+        })?,
+    };
+    use pkcs8::DecodePrivateKey;
+    let signing_key = SigningKey::from_pkcs8_pem(&pem)
+        .map_err(|e| OidcError::Internal(format!("invalid OIDC_ED25519_KEY PEM: {e}")))?;
+    let kid = std::env::var("OIDC_ED25519_KID").unwrap_or_else(|_| "ed-key-1".to_string());
+    Ok((signing_key, kid))
 }
 
 #[async_trait::async_trait]
@@ -1129,10 +1141,41 @@ pub fn b64_decode(data: &str) -> Result<Vec<u8>, base64::DecodeError> {
 mod tests {
     use super::*;
     use base64::Engine;
+    use rand::rngs::OsRng;
+    use rand::RngCore;
+
+    /// Generate RSA + Ed25519 test keys once and set env vars.
+    fn test_token_service() -> JwtTokenService {
+        use std::sync::OnceLock;
+        static KEYS: OnceLock<()> = OnceLock::new();
+        KEYS.get_or_init(|| {
+            // RSA
+            let rsa_key = RsaPrivateKey::new(&mut OsRng, 2048).expect("failed to generate RSA key");
+            use rsa::pkcs1::EncodeRsaPrivateKey;
+            let rsa_pem: String = rsa_key
+                .to_pkcs1_pem(rsa::pkcs1::LineEnding::LF)
+                .expect("failed to serialize RSA key")
+                .to_string();
+            // Ed25519
+            let mut secret_bytes = [0u8; 32];
+            OsRng.fill_bytes(&mut secret_bytes);
+            let ed_key = SigningKey::from_bytes(&secret_bytes);
+            use pkcs8::EncodePrivateKey;
+            let ed_pem: String = ed_key
+                .to_pkcs8_pem(pkcs8::LineEnding::LF)
+                .expect("failed to serialize Ed25519 key")
+                .to_string();
+            unsafe {
+                std::env::set_var("OIDC_SIGNING_KEY", &rsa_pem);
+                std::env::set_var("OIDC_ED25519_KEY", &ed_pem);
+            }
+        });
+        JwtTokenService::new("https://test.example.com").unwrap()
+    }
 
     #[tokio::test]
     async fn test_jwt_roundtrip() {
-        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let service = test_token_service();
         let token = service
             .issue_access_token(
                 "user-123",
@@ -1153,7 +1196,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_jwks_output() {
-        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let service = test_token_service();
         let jwks = service.jwks().unwrap();
         assert_eq!(jwks.keys.len(), 2);
 
@@ -1175,7 +1218,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_id_token() {
-        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let service = test_token_service();
         let extra = IdTokenExtraClaims {
             nonce: Some("abc123".to_string()),
             ..Default::default()
@@ -1198,7 +1241,7 @@ mod tests {
             base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string().as_bytes());
         let fake_token = format!("{}.{}.", header_b64, claims_b64); // empty signature
 
-        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let service = test_token_service();
         let result = service.verify_access_token(&fake_token).await;
         assert!(result.is_err(), "Should reject alg:none token");
     }
@@ -1214,7 +1257,7 @@ mod tests {
             base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string().as_bytes());
         let fake_token = format!("{}.{}.fakesignature", header_b64, claims_b64);
 
-        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let service = test_token_service();
         let result = service.verify_access_token(&fake_token).await;
         assert!(result.is_err(), "Should reject alg:HS256 token");
         assert!(matches!(
@@ -1225,7 +1268,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_id_token_with_hashes() {
-        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let service = test_token_service();
         let extra = IdTokenExtraClaims {
             at_hash: Some("at_hash_value".to_string()),
             c_hash: Some("c_hash_value".to_string()),
@@ -1246,7 +1289,7 @@ mod tests {
     async fn test_jwt_rejects_corrupted_base64_header() {
         // Header with invalid base64url characters
         let fake_token = "!!!invalid!!!.eyJzdWIiOiJ1c2VyLTEyMyJ9.c2lnbmF0dXJl";
-        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let service = test_token_service();
         let result = service.verify_access_token(fake_token).await;
         assert!(result.is_err());
         assert!(matches!(
@@ -1260,7 +1303,7 @@ mod tests {
         // Valid header base64 but corrupted claims
         let header_b64 = b64_encode(r#"{"alg":"RS256","typ":"JWT","kid":"key-1"}"#.as_bytes());
         let fake_token = format!("{}.!!!invalid!!!.c2lnbmF0dXJl", header_b64);
-        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let service = test_token_service();
         let result = service.verify_access_token(&fake_token).await;
         assert!(result.is_err());
         assert!(matches!(
@@ -1275,7 +1318,7 @@ mod tests {
         let header_b64 = b64_encode(r#"{"alg":"RS256","typ":"JWT","kid":"key-1"}"#.as_bytes());
         let claims_b64 = b64_encode(r#"{"sub":"user-123","aud":"my-client","iss":"https://test.example.com","exp":9999999999,"iat":1000000,"scope":"openid"}"#.as_bytes());
         let fake_token = format!("{}.{}.!!!invalid!!!", header_b64, claims_b64);
-        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let service = test_token_service();
         let result = service.verify_access_token(&fake_token).await;
         assert!(result.is_err());
         assert!(matches!(
@@ -1290,7 +1333,7 @@ mod tests {
         let header_b64 = b64_encode(r#"{"alg":"RS256","typ":"JWT","kid":"key-1"}"#.as_bytes());
         let claims_b64 = b64_encode(r#"{"sub":"user-123","aud":"my-client","iss":"https://test.example.com","exp":9999999999,"iat":1000000,"scope":"openid"}"#.as_bytes());
         let fake_token = format!("{}.{}.{}", header_b64, claims_b64, "");
-        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let service = test_token_service();
         let result = service.verify_access_token(&fake_token).await;
         assert!(result.is_err());
         assert!(matches!(
@@ -1301,7 +1344,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_jwt_rejects_wrong_number_of_segments() {
-        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let service = test_token_service();
         // Only two segments
         let result = service.verify_access_token("a.b").await;
         assert!(result.is_err());
@@ -1327,7 +1370,7 @@ mod tests {
         let header_b64 = b64_encode(&non_utf8_bytes);
         let claims_b64 = b64_encode(r#"{"sub":"user-123"}"#.as_bytes());
         let fake_token = format!("{}.{}.c2lnbmF0dXJl", header_b64, claims_b64);
-        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let service = test_token_service();
         let result = service.verify_access_token(&fake_token).await;
         assert!(result.is_err());
         assert!(matches!(
@@ -1342,7 +1385,7 @@ mod tests {
         let header_b64 = b64_encode(r#"{"alg":"RS256","typ":"JWT","kid":"wrong-key"}"#.as_bytes());
         let claims_b64 = b64_encode(r#"{"sub":"user-123","aud":"my-client","iss":"https://test.example.com","exp":9999999999,"iat":1000000,"scope":"openid"}"#.as_bytes());
         let fake_token = format!("{}.{}.c2lnbmF0dXJl", header_b64, claims_b64);
-        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let service = test_token_service();
         let result = service.verify_access_token(&fake_token).await;
         assert!(result.is_err());
         // Wrong kid still results in signature failure since the key won't match
@@ -1356,7 +1399,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_eddsa_roundtrip() {
-        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let service = test_token_service();
         let now = service.now();
         let claims = AccessTokenClaims {
             sub: "user-ed-123".to_string(),
@@ -1385,7 +1428,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_eddsa_verify_via_verify_access_token() {
-        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let service = test_token_service();
         let now = service.now();
         let claims = AccessTokenClaims {
             sub: "user-ed-456".to_string(),
@@ -1408,7 +1451,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_rs256_tokens_still_verified() {
-        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let service = test_token_service();
         // issue_access_token uses RS256 by default
         let token = service
             .issue_access_token(
@@ -1436,7 +1479,7 @@ mod tests {
             base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string().as_bytes());
         let fake_token = format!("{}.{}.", header_b64, claims_b64);
 
-        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let service = test_token_service();
         let result = service.verify_access_token(&fake_token).await;
         assert!(result.is_err(), "Should reject alg:none token");
     }
@@ -1451,7 +1494,7 @@ mod tests {
             base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(claims.to_string().as_bytes());
         let fake_token = format!("{}.{}.fakesignature", header_b64, claims_b64);
 
-        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let service = test_token_service();
         let result = service.verify_access_token(&fake_token).await;
         assert!(result.is_err(), "Should reject alg:HS256 token");
         assert!(matches!(
@@ -1462,7 +1505,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_jwks_includes_both_keys() {
-        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let service = test_token_service();
         let jwks = service.jwks().unwrap();
         assert_eq!(jwks.keys.len(), 2);
 
@@ -1474,7 +1517,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_eddsa_id_token_roundtrip() {
-        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let service = test_token_service();
         let now = service.now();
         let claims = IdTokenClaims {
             sub: "user-ed-id".to_string(),
@@ -1522,7 +1565,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_eddsa_rejects_wrong_signature() {
-        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let service = test_token_service();
         let now = service.now();
         let claims = AccessTokenClaims {
             sub: "user-ed-789".to_string(),
@@ -1550,7 +1593,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_eddsa_verify_rejects_rs256_token() {
-        let service = JwtTokenService::new("https://test.example.com").unwrap();
+        let service = test_token_service();
         let now = service.now();
         let claims = AccessTokenClaims {
             sub: "user-mixed".to_string(),
