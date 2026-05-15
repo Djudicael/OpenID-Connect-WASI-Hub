@@ -172,6 +172,8 @@ fn make_client_with_client_id(client_id: String) -> Client {
         backchannel_logout_uri: None,
         backchannel_logout_session_required: false,
         post_logout_redirect_uris: vec![],
+        subject_type: "public".into(),
+        sector_identifier_uri: None,
     }
 }
 

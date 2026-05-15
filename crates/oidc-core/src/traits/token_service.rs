@@ -53,6 +53,10 @@ pub struct IdTokenExtraClaims {
     pub phone_number_verified: Option<bool>,
     /// When the user record was last updated (Unix seconds).
     pub updated_at: Option<i64>,
+    /// ACR (Authentication Context Class Reference) value.
+    pub acr: Option<String>,
+    /// AMR (Authentication Methods References) — list of methods used.
+    pub amr: Option<Vec<String>>,
 }
 
 /// Verified access token claims returned by the token service.

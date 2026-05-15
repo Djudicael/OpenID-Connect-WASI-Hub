@@ -65,6 +65,32 @@ pub fn router() -> Router<AppState> {
         .route("/oidc/login", post(|State(state): State<AppState>, json: Json<oidc_oidc::endpoints::login::LoginRequest>| async move {
             oidc_oidc::endpoints::login::login_handler(State(state.oidc_state()), json).await
         }))
+        // Password reset
+        .route("/oidc/password-reset/request", post(|State(state): State<AppState>, Json(req): Json<oidc_oidc::endpoints::password_reset::PasswordResetRequestRequest>| async move {
+            match oidc_oidc::endpoints::password_reset::password_reset_request_handler(State(state.oidc_state()), Json(req)).await {
+                Ok(json) => json.into_response(),
+                Err(e) => oidc_oidc::errors::from_oidc_error(&e).into_response(),
+            }
+        }))
+        .route("/oidc/password-reset/confirm", post(|State(state): State<AppState>, Json(req): Json<oidc_oidc::endpoints::password_reset::PasswordResetConfirmRequest>| async move {
+            match oidc_oidc::endpoints::password_reset::password_reset_confirm_handler(State(state.oidc_state()), Json(req)).await {
+                Ok(json) => json.into_response(),
+                Err(e) => oidc_oidc::errors::from_oidc_error(&e).into_response(),
+            }
+        }))
+        // Email verification
+        .route("/oidc/email-verification/request", post(|State(state): State<AppState>, Json(req): Json<oidc_oidc::endpoints::email_verification::EmailVerificationRequestRequest>| async move {
+            match oidc_oidc::endpoints::email_verification::email_verification_request_handler(State(state.oidc_state()), Json(req)).await {
+                Ok(json) => json.into_response(),
+                Err(e) => oidc_oidc::errors::from_oidc_error(&e).into_response(),
+            }
+        }))
+        .route("/oidc/email-verification/confirm", post(|State(state): State<AppState>, Json(req): Json<oidc_oidc::endpoints::email_verification::EmailVerificationConfirmRequest>| async move {
+            match oidc_oidc::endpoints::email_verification::email_verification_confirm_handler(State(state.oidc_state()), Json(req)).await {
+                Ok(json) => json.into_response(),
+                Err(e) => oidc_oidc::errors::from_oidc_error(&e).into_response(),
+            }
+        }))
         // Per-realm login endpoint (Keycloak-compatible path)
         .route("/realms/{realm}/protocol/openid-connect/token", post(per_realm_token_handler))
         .route("/realms/{realm}/protocol/openid-connect/auth", get(per_realm_authorize_handler))
@@ -72,6 +98,10 @@ pub fn router() -> Router<AppState> {
         .route("/realms/{realm}/protocol/openid-connect/certs", get(per_realm_certs_handler))
         .route("/realms/{realm}/login", get(per_realm_login_page_handler))
         .route("/realms/{realm}/login", post(per_realm_login_handler))
+        // Social login / federation
+        .route("/realms/{realm}/protocol/openid-connect/social", get(per_realm_list_identity_providers_handler))
+        .route("/realms/{realm}/protocol/openid-connect/social/{provider}", get(per_realm_social_login_initiate_handler))
+        .route("/realms/{realm}/protocol/openid-connect/social/{provider}/callback", get(per_realm_social_login_callback_handler))
         .route("/oidc/error", get(error_handler))
 }
 
@@ -152,6 +182,46 @@ async fn per_realm_certs_handler(
             (status, axum::Json(body)).into_response()
         }
     }
+}
+
+/// Per-realm social login: list available identity providers.
+async fn per_realm_list_identity_providers_handler(
+    State(state): State<AppState>,
+    Path(realm): Path<String>,
+) -> axum::response::Response {
+    oidc_oidc::endpoints::social_login::list_identity_providers_handler(
+        State(state.oidc_state()),
+        Path(realm),
+    )
+    .await
+}
+
+/// Per-realm social login: initiate login with an upstream IdP.
+async fn per_realm_social_login_initiate_handler(
+    State(state): State<AppState>,
+    Path((realm, provider)): Path<(String, String)>,
+    Query(params): Query<oidc_oidc::endpoints::social_login::SocialLoginParams>,
+) -> axum::response::Response {
+    oidc_oidc::endpoints::social_login::social_login_initiate_handler(
+        State(state.oidc_state()),
+        Path((realm, provider)),
+        Query(params),
+    )
+    .await
+}
+
+/// Per-realm social login: callback from the upstream IdP.
+async fn per_realm_social_login_callback_handler(
+    State(state): State<AppState>,
+    Path((realm, provider)): Path<(String, String)>,
+    Query(params): Query<oidc_oidc::endpoints::social_login::SocialLoginCallbackParams>,
+) -> axum::response::Response {
+    oidc_oidc::endpoints::social_login::social_login_callback_handler(
+        State(state.oidc_state()),
+        Path((realm, provider)),
+        Query(params),
+    )
+    .await
 }
 
 /// Simple error page for OIDC authorization failures.

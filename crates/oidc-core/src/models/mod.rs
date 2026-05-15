@@ -4,6 +4,10 @@ pub mod api_key;
 pub mod audit_event;
 pub mod auth_code;
 pub mod client;
+pub mod email_verification_token;
+pub mod federated_identity;
+pub mod identity_provider;
+pub mod password_reset_token;
 pub mod pushed_authorization_request;
 
 pub mod realm;
@@ -18,6 +22,10 @@ pub use api_key::ApiKey;
 pub use audit_event::{ActorType, AuditEvent};
 pub use auth_code::{AuthCode, CodeChallengeMethod};
 pub use client::{Client, ClientType};
+pub use email_verification_token::EmailVerificationToken;
+pub use federated_identity::FederatedIdentity;
+pub use identity_provider::{IdentityProvider, IdentityProviderType};
+pub use password_reset_token::PasswordResetToken;
 pub use pushed_authorization_request::PushedAuthorizationRequest;
 
 pub use realm::Realm;

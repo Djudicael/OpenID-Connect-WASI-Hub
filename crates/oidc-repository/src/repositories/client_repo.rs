@@ -31,7 +31,8 @@ const CLIENT_COLUMNS: &str = r#"
     client_secret_encrypted,
     frontchannel_logout_uri, frontchannel_logout_session_required,
     backchannel_logout_uri, backchannel_logout_session_required,
-    post_logout_redirect_uris
+    post_logout_redirect_uris,
+    subject_type, sector_identifier_uri
 "#;
 
 impl ClientRepo {
@@ -97,8 +98,9 @@ impl ClientRepo {
                 client_secret_encrypted,
                 frontchannel_logout_uri, frontchannel_logout_session_required,
                 backchannel_logout_uri, backchannel_logout_session_required,
-                post_logout_redirect_uris
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+                post_logout_redirect_uris,
+                subject_type, sector_identifier_uri
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
         "#;
         let client_type_str = match entity.client_type {
             ClientType::Confidential => "confidential",
@@ -128,6 +130,8 @@ impl ClientRepo {
                 &entity.backchannel_logout_uri,
                 &entity.backchannel_logout_session_required,
                 &mapper::to_json_value_vec(&entity.post_logout_redirect_uris),
+                &entity.subject_type,
+                &entity.sector_identifier_uri,
             ],
         )
         .await
@@ -158,8 +162,10 @@ impl ClientRepo {
                 backchannel_logout_uri = $17,
                 backchannel_logout_session_required = $18,
                 post_logout_redirect_uris = $19,
+                subject_type = $20,
+                sector_identifier_uri = $21,
                 updated_at = NOW()
-            WHERE id = $20 AND deleted_at IS NULL
+            WHERE id = $22 AND deleted_at IS NULL
         "#;
         let client_type_str = match entity.client_type {
             ClientType::Confidential => "confidential",
@@ -187,6 +193,8 @@ impl ClientRepo {
                 &entity.backchannel_logout_uri,
                 &entity.backchannel_logout_session_required,
                 &mapper::to_json_value_vec(&entity.post_logout_redirect_uris),
+                &entity.subject_type,
+                &entity.sector_identifier_uri,
                 &entity.id,
             ],
         )
@@ -322,6 +330,8 @@ impl ClientRepo {
             backchannel_logout_uri: mapper::opt_string(row, 19)?,
             backchannel_logout_session_required: mapper::bool_(row, 20)?,
             post_logout_redirect_uris: mapper::json_string_vec(row, 21)?,
+            subject_type: mapper::string(row, 22)?,
+            sector_identifier_uri: mapper::opt_string(row, 23)?,
         })
     }
 }

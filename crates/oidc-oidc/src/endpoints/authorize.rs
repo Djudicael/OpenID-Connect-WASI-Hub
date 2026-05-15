@@ -362,6 +362,12 @@ async fn authorize_inner(
         .get("claims")
         .and_then(|c| serde_json::from_str(c).ok());
 
+    // --- acr_values parameter handling (OIDC Core §3.1.2.1) ---
+    let acr_values: Vec<String> = params
+        .get("acr_values")
+        .map(|v| v.split(' ').map(|s| s.to_string()).collect())
+        .unwrap_or_default();
+
     // --- Client validation ---
     let mut conn = match state.connect().await {
         Ok(c) => c,
@@ -709,6 +715,7 @@ async fn authorize_inner(
             claims_request,
             display,
             response_type,
+            acr_values,
             expires_at,
         };
 
@@ -746,7 +753,20 @@ async fn authorize_inner(
             }
         };
 
-        let subject = user.id.to_string();
+        let subject = if client.subject_type == "pairwise" {
+            let sector = oidc_core::utils::extract_sector_identifier(
+                client.sector_identifier_uri.as_deref(),
+                &client.redirect_uris,
+            )
+            .unwrap_or_default();
+            oidc_core::utils::compute_pairwise_sub(
+                &user.id.to_string(),
+                &sector,
+                &state.pairwise_salt,
+            )
+        } else {
+            user.id.to_string()
+        };
         let audience = client.client_id.clone();
 
         if response_type.has_token() {
@@ -844,6 +864,8 @@ async fn authorize_inner(
                 phone_number: user.phone_number.clone(),
                 phone_number_verified: user.phone_number_verified,
                 updated_at: Some(user.updated_at.timestamp()),
+                acr: Some("urn:mace:incommon:iap:silver".to_string()),
+                amr: Some(vec!["pwd".to_string()]),
             };
 
             let id_token = match token_svc

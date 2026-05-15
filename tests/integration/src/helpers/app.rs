@@ -110,6 +110,7 @@ impl TestApp {
             port,
             issuer: issuer.clone(),
             encryption_key: fixtures::TEST_ENCRYPTION_KEY.to_string(),
+            pairwise_salt: "test-pairwise-salt".to_string(),
         };
         let app = openid_connect_wasi::app_router_with_config(config);
 

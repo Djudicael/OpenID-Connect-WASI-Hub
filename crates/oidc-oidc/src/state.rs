@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use oidc_core::traits::Hasher;
+use oidc_core::traits::email::EmailSender;
 use oidc_repository::Connection;
 
 use crate::tokens::JwtTokenService;
@@ -15,12 +16,16 @@ pub struct OidcState {
     pub token_service: Arc<JwtTokenService>,
     /// Password/API-key hasher.
     pub hasher: Arc<dyn Hasher>,
+    /// Email sender service.
+    pub email_sender: Arc<dyn EmailSender>,
     /// Database configuration for per-request connections.
     pub db_config: wasi_pg_client::Config,
     /// Encryption key for session cookie HMAC (hex-encoded 32 bytes).
     pub encryption_key: String,
     /// Per-realm token services loaded on demand.
     pub realm_token_services: Arc<std::sync::Mutex<HashMap<uuid::Uuid, Arc<JwtTokenService>>>>,
+    /// Salt for pairwise subject identifier computation.
+    pub pairwise_salt: String,
 }
 
 impl OidcState {

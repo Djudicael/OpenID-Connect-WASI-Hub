@@ -70,7 +70,21 @@ impl AuthorizationCodeFlow {
             };
 
             // --- Issue tokens ---
-            let subject = auth_code.user_id.to_string();
+            // Compute subject based on client's subject_type
+            let subject = if client.subject_type == "pairwise" {
+                let sector = oidc_core::utils::extract_sector_identifier(
+                    client.sector_identifier_uri.as_deref(),
+                    &client.redirect_uris,
+                )
+                .unwrap_or_default();
+                oidc_core::utils::compute_pairwise_sub(
+                    &auth_code.user_id.to_string(),
+                    &sector,
+                    &state.pairwise_salt,
+                )
+            } else {
+                auth_code.user_id.to_string()
+            };
             let audience = client.client_id.clone();
             let scopes = auth_code.scope.clone();
 
@@ -109,6 +123,8 @@ impl AuthorizationCodeFlow {
                 phone_number: user.phone_number.clone(),
                 phone_number_verified: user.phone_number_verified,
                 updated_at: Some(user.updated_at.timestamp()),
+                acr: Some("urn:mace:incommon:iap:silver".to_string()),
+                amr: Some(vec!["pwd".to_string()]),
             };
 
             let id_token = token_svc

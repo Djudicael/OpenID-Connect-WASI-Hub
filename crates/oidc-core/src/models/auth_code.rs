@@ -87,6 +87,8 @@ pub struct AuthCode {
     pub display: Option<String>,
     /// OIDC Core §3 response_type from the authorization request.
     pub response_type: ResponseType,
+    /// OIDC Core §3.1.2.1 acr_values from the authorization request.
+    pub acr_values: Vec<String>,
     /// When the authorization code expires.
     pub expires_at: chrono::DateTime<chrono::Utc>,
 }

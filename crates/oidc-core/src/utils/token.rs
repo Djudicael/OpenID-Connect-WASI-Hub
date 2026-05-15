@@ -87,6 +87,45 @@ pub fn compute_c_hash(code: &str) -> String {
     base64_encode_url_safe_no_pad(left)
 }
 
+/// Compute a pairwise subject identifier per OIDC Core §8.1.
+///
+/// The pairwise `sub` value is: `Base64url(SHA-256(user_id + "|" + sector_identifier + "|" + salt))`
+/// where:
+/// - `user_id` is the user's unique identifier
+/// - `sector_identifier` is the sector identifier for the client
+/// - `salt` is a stable salt value (per-OP or per-realm)
+///
+/// This produces a different `sub` value for each sector, preventing correlation
+/// of the same user across different RPs.
+pub fn compute_pairwise_sub(user_id: &str, sector_identifier: &str, salt: &str) -> String {
+    let input = format!("{}|{}|{}", user_id, sector_identifier, salt);
+    let mut hasher = Sha256::new();
+    hasher.update(input.as_bytes());
+    let hash = hasher.finalize();
+    base64_encode_url_safe_no_pad(&hash)
+}
+
+/// Extract the sector identifier from a client's configuration.
+///
+/// Per OIDC Core §8.1:
+/// - If `sector_identifier_uri` is set, use its host as the sector identifier
+/// - Otherwise, use the host of the first `redirect_uri`
+///
+/// Returns `None` if no valid URL can be found.
+pub fn extract_sector_identifier(
+    sector_identifier_uri: Option<&str>,
+    redirect_uris: &[String],
+) -> Option<String> {
+    if let Some(uri) = sector_identifier_uri {
+        let parsed = url::Url::parse(uri).ok()?;
+        parsed.host_str().map(|h| h.to_string())
+    } else {
+        let first = redirect_uris.first()?;
+        let parsed = url::Url::parse(first).ok()?;
+        parsed.host_str().map(|h| h.to_string())
+    }
+}
+
 fn base64_encode_url_safe_no_pad(data: &[u8]) -> String {
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
     URL_SAFE_NO_PAD.encode(data)
@@ -209,5 +248,101 @@ mod tests {
     fn test_extract_origin_no_path() {
         let origin = extract_origin("https://example.com").unwrap();
         assert_eq!(origin, "https://example.com");
+    }
+
+    #[test]
+    fn test_compute_pairwise_sub_deterministic() {
+        let sub1 = compute_pairwise_sub("user-123", "example.com", "salt-value");
+        let sub2 = compute_pairwise_sub("user-123", "example.com", "salt-value");
+        assert_eq!(
+            sub1, sub2,
+            "pairwise sub should be deterministic for same inputs"
+        );
+    }
+
+    #[test]
+    fn test_compute_pairwise_sub_different_sectors() {
+        let sub1 = compute_pairwise_sub("user-123", "sector-a.com", "salt-value");
+        let sub2 = compute_pairwise_sub("user-123", "sector-b.com", "salt-value");
+        assert_ne!(
+            sub1, sub2,
+            "different sectors should produce different sub values"
+        );
+    }
+
+    #[test]
+    fn test_compute_pairwise_sub_different_users() {
+        let sub1 = compute_pairwise_sub("user-123", "example.com", "salt-value");
+        let sub2 = compute_pairwise_sub("user-456", "example.com", "salt-value");
+        assert_ne!(
+            sub1, sub2,
+            "different users should produce different sub values"
+        );
+    }
+
+    #[test]
+    fn test_compute_pairwise_sub_different_salts() {
+        let sub1 = compute_pairwise_sub("user-123", "example.com", "salt-a");
+        let sub2 = compute_pairwise_sub("user-123", "example.com", "salt-b");
+        assert_ne!(
+            sub1, sub2,
+            "different salts should produce different sub values"
+        );
+    }
+
+    #[test]
+    fn test_compute_pairwise_sub_output_format() {
+        let sub = compute_pairwise_sub("user-123", "example.com", "salt-value");
+        // SHA-256 produces 32 bytes, base64url no-pad = 43 chars
+        assert_eq!(sub.len(), 43, "SHA-256 base64url no-pad should be 43 chars");
+        assert!(
+            sub.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+            "sub should be base64url no-pad"
+        );
+    }
+
+    #[test]
+    fn test_extract_sector_identifier_from_redirect_uri() {
+        let sector = extract_sector_identifier(None, &vec!["https://example.com/callback".into()]);
+        assert_eq!(sector, Some("example.com".to_string()));
+    }
+
+    #[test]
+    fn test_extract_sector_identifier_from_sector_uri() {
+        let sector = extract_sector_identifier(
+            Some("https://sector.example.com"),
+            &vec!["https://other.com/callback".into()],
+        );
+        assert_eq!(sector, Some("sector.example.com".to_string()));
+    }
+
+    #[test]
+    fn test_extract_sector_identifier_sector_uri_takes_precedence() {
+        let sector = extract_sector_identifier(
+            Some("https://sector.example.com"),
+            &vec!["https://other.com/callback".into()],
+        );
+        // sector_identifier_uri should take precedence over redirect_uri
+        assert_eq!(sector, Some("sector.example.com".to_string()));
+    }
+
+    #[test]
+    fn test_extract_sector_identifier_empty_redirect_uris() {
+        let sector = extract_sector_identifier(None, &vec![]);
+        assert_eq!(sector, None);
+    }
+
+    #[test]
+    fn test_extract_sector_identifier_invalid_url() {
+        let sector = extract_sector_identifier(None, &vec!["not-a-url".into()]);
+        assert_eq!(sector, None);
+    }
+
+    #[test]
+    fn test_extract_sector_identifier_with_port() {
+        let sector =
+            extract_sector_identifier(None, &vec!["https://example.com:8443/callback".into()]);
+        assert_eq!(sector, Some("example.com".to_string()));
     }
 }

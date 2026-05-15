@@ -11,6 +11,8 @@ pub struct AppState {
     pub token_service: Arc<oidc_oidc::tokens::JwtTokenService>,
     /// Password/API-key hasher.
     pub hasher: Arc<dyn oidc_core::traits::Hasher>,
+    /// Email sender service.
+    pub email_sender: Arc<dyn oidc_core::traits::EmailSender>,
     /// Database configuration for per-request connections.
     pub db_config: wasi_pg_client::Config,
 }
@@ -28,6 +30,8 @@ pub struct AppConfig {
     pub issuer: String,
     /// Encryption key for cookies/JWE (base64, 32 bytes).
     pub encryption_key: String,
+    /// Salt for pairwise subject identifier computation.
+    pub pairwise_salt: String,
 }
 
 impl oidc_apikey::ApiKeyVerifierState for AppState {
@@ -42,6 +46,7 @@ impl AppState {
         let token_service =
             Arc::new(oidc_oidc::tokens::JwtTokenService::new(&config.issuer).unwrap());
         let hasher = Arc::new(oidc_core::traits::hasher::Argon2idHasher::new());
+        let email_sender = Arc::new(oidc_core::traits::noop_email::NoOpEmailSender);
 
         let db_config = wasi_pg_client::Config::from_uri(&config.database_url)
             .unwrap_or_else(|_| wasi_pg_client::Config::new());
@@ -50,6 +55,7 @@ impl AppState {
             config: Arc::new(config),
             token_service,
             hasher,
+            email_sender,
             db_config,
         }
     }
@@ -69,6 +75,8 @@ impl AppState {
             encryption_key: std::env::var("OIDC_ENCRYPTION_KEY").expect(
                 "OIDC_ENCRYPTION_KEY environment variable must be set (32-byte base64 key)",
             ),
+            pairwise_salt: std::env::var("OIDC_PAIRWISE_SALT")
+                .unwrap_or_else(|_| "default-pairwise-salt-change-me".into()),
         };
         Self::from_config(config)
     }
@@ -79,12 +87,14 @@ impl AppState {
             issuer: self.config.issuer.clone(),
             token_service: self.token_service.clone(),
             hasher: self.hasher.clone(),
+            email_sender: self.email_sender.clone(),
             db_config: wasi_pg_client::Config::from_uri(&self.config.database_url)
                 .unwrap_or_else(|_| wasi_pg_client::Config::new()),
             encryption_key: self.config.encryption_key.clone(),
             realm_token_services: std::sync::Arc::new(std::sync::Mutex::new(
                 std::collections::HashMap::new(),
             )),
+            pairwise_salt: self.config.pairwise_salt.clone(),
         }
     }
 }

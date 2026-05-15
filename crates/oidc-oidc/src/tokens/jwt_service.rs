@@ -97,6 +97,10 @@ pub struct IdTokenClaims {
     pub phone_number_verified: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub acr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub amr: Option<Vec<String>>,
 }
 
 /// A JWK (JSON Web Key) entry for JWKS endpoint — supports RSA and OKP (Ed25519).
@@ -824,6 +828,8 @@ impl TokenService for JwtTokenService {
             phone_number: extra.phone_number,
             phone_number_verified: extra.phone_number_verified,
             updated_at: extra.updated_at,
+            acr: extra.acr,
+            amr: extra.amr,
         };
         self.encode_jwt(&claims)
     }
@@ -1201,6 +1207,8 @@ mod tests {
             phone_number: None,
             phone_number_verified: None,
             updated_at: None,
+            acr: None,
+            amr: None,
         };
 
         let token = service.sign_eddsa(&claims).unwrap();

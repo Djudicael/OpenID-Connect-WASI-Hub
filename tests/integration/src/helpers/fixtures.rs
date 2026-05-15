@@ -121,6 +121,8 @@ pub fn test_client(realm_id: Uuid, client_id: &str, redirect_uris: Vec<String>) 
         backchannel_logout_uri: None,
         backchannel_logout_session_required: false,
         post_logout_redirect_uris: vec![],
+        subject_type: "public".into(),
+        sector_identifier_uri: None,
     }
 }
 
@@ -160,5 +162,7 @@ pub fn test_public_client(realm_id: Uuid, client_id: &str, redirect_uris: Vec<St
         backchannel_logout_uri: None,
         backchannel_logout_session_required: false,
         post_logout_redirect_uris: vec![],
+        subject_type: "public".into(),
+        sector_identifier_uri: None,
     }
 }

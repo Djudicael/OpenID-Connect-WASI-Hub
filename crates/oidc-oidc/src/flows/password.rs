@@ -167,7 +167,21 @@ impl PasswordFlow {
             };
 
             // Issue tokens
-            let subject = user.id.to_string();
+            // Compute subject based on client's subject_type
+            let subject = if client.subject_type == "pairwise" {
+                let sector = oidc_core::utils::extract_sector_identifier(
+                    client.sector_identifier_uri.as_deref(),
+                    &client.redirect_uris,
+                )
+                .unwrap_or_default();
+                oidc_core::utils::compute_pairwise_sub(
+                    &user.id.to_string(),
+                    &sector,
+                    &state.pairwise_salt,
+                )
+            } else {
+                user.id.to_string()
+            };
             let audience = client.client_id.clone();
             let scopes = vec![
                 "openid".to_string(),
@@ -210,6 +224,8 @@ impl PasswordFlow {
                 phone_number: user.phone_number.clone(),
                 phone_number_verified: user.phone_number_verified,
                 updated_at: Some(user.updated_at.timestamp()),
+                acr: Some("urn:mace:incommon:iap:silver".to_string()),
+                amr: Some(vec!["pwd".to_string()]),
             };
 
             let id_token = token_svc

@@ -5,6 +5,7 @@ use oidc_core::models::Session;
 use oidc_core::traits::token_service::{IdTokenExtraClaims, TokenService};
 use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, sha2_256_hex};
 use oidc_repository::mapper::pg_err;
+use oidc_repository::repositories::client_repo::ClientRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 use oidc_repository::with_transaction;
@@ -88,7 +89,28 @@ impl RefreshTokenFlow {
             };
 
             // --- Issue new tokens ---
-            let subject = user_id.to_string();
+            // Compute subject based on client's subject_type
+            // We need to look up the client to check subject_type
+            let client = match ClientRepo.find_by_id(&mut conn, session.client_id).await? {
+                Some(c) if c.enabled => c,
+                Some(_) => return Err(OidcError::InvalidClient),
+                None => return Err(OidcError::InvalidClient),
+            };
+
+            let subject = if client.subject_type == "pairwise" {
+                let sector = oidc_core::utils::extract_sector_identifier(
+                    client.sector_identifier_uri.as_deref(),
+                    &client.redirect_uris,
+                )
+                .unwrap_or_default();
+                oidc_core::utils::compute_pairwise_sub(
+                    &user_id.to_string(),
+                    &sector,
+                    &state.pairwise_salt,
+                )
+            } else {
+                user_id.to_string()
+            };
             let audience = session.client_id.to_string();
             let scopes = session.scope.clone();
 
@@ -111,6 +133,8 @@ impl RefreshTokenFlow {
                 name: user.username.clone(),
                 given_name: user.given_name.clone(),
                 family_name: user.family_name.clone(),
+                acr: Some("urn:mace:incommon:iap:silver".to_string()),
+                amr: Some(vec!["pwd".to_string()]),
                 ..Default::default()
             };
 

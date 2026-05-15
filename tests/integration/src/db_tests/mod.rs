@@ -86,6 +86,8 @@ fn test_client(realm_id: Uuid, client_id: &str, name: &str) -> Client {
         backchannel_logout_uri: None,
         backchannel_logout_session_required: false,
         post_logout_redirect_uris: vec![],
+        subject_type: "public".into(),
+        sector_identifier_uri: None,
     }
 }
 // ===================================================================
@@ -224,6 +226,8 @@ async fn test_client_crud() {
         backchannel_logout_uri: None,
         backchannel_logout_session_required: false,
         post_logout_redirect_uris: vec![],
+        subject_type: "public".into(),
+        sector_identifier_uri: None,
     };
 
     repo.create(&mut conn, &client).await.unwrap();
@@ -425,6 +429,8 @@ async fn test_auth_code_crud() {
         backchannel_logout_uri: None,
         backchannel_logout_session_required: false,
         post_logout_redirect_uris: vec![],
+        subject_type: "public".into(),
+        sector_identifier_uri: None,
     };
     client_repo.create(&mut conn, &client).await.unwrap();
 
@@ -444,6 +450,7 @@ async fn test_auth_code_crud() {
         claims_request: None,
         display: None,
         response_type: ResponseType::CODE,
+        acr_values: vec![],
         expires_at: Utc::now() + chrono::Duration::minutes(10),
     };
 
@@ -1055,6 +1062,7 @@ async fn test_expired_auth_code_cleanup() {
         claims_request: None,
         display: None,
         response_type: ResponseType::CODE,
+        acr_values: vec![],
         expires_at: Utc::now() - chrono::Duration::minutes(5), // expired 5 minutes ago
     };
     auth_code_repo

@@ -19,7 +19,7 @@ impl AuthCodeRepo {
         let code_hash = oidc_core::utils::sha2_256_hex(code);
         let sql = r#"
             SELECT id, code, client_id, user_id, realm_id, redirect_uri,
-                   scope, code_challenge, code_challenge_method, nonce, used, claims_request, display, response_type, expires_at
+                   scope, code_challenge, code_challenge_method, nonce, used, claims_request, display, response_type, acr_values, expires_at
             FROM authorization_codes
             WHERE code = $1 AND NOT used AND expires_at > NOW() FOR UPDATE
         "#;
@@ -36,8 +36,8 @@ impl AuthCodeRepo {
         let sql = r#"
             INSERT INTO authorization_codes (
                 id, code, client_id, user_id, realm_id, redirect_uri,
-                scope, code_challenge, code_challenge_method, nonce, used, claims_request, display, response_type, expires_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+                scope, code_challenge, code_challenge_method, nonce, used, claims_request, display, response_type, acr_values, expires_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         "#;
         conn.execute_params(
             sql,
@@ -56,6 +56,7 @@ impl AuthCodeRepo {
                 &entity.claims_request,
                 &entity.display,
                 &entity.response_type.to_string(),
+                &mapper::to_json_value_vec(&entity.acr_values),
                 &entity.expires_at,
             ],
         )
@@ -109,7 +110,8 @@ impl AuthCodeRepo {
                     OidcError::Internal(format!("Invalid response_type: {}", rt_str))
                 })?
             },
-            expires_at: mapper::datetime(row, 14)?,
+            acr_values: mapper::json_string_vec(row, 15)?,
+            expires_at: mapper::datetime(row, 16)?,
         })
     }
 }

@@ -88,6 +88,8 @@ fn make_client(realm_id: Uuid, client_id: &str) -> Client {
         backchannel_logout_uri: None,
         backchannel_logout_session_required: false,
         post_logout_redirect_uris: vec![],
+        subject_type: "public".into(),
+        sector_identifier_uri: None,
     }
 }
 
@@ -175,6 +177,7 @@ fn make_auth_code(client_id: Uuid, user_id: Uuid, realm_id: Uuid, code: &str) ->
         claims_request: None,
         display: None,
         response_type: ResponseType::CODE,
+        acr_values: vec![],
         expires_at: Utc::now() + chrono::Duration::minutes(10),
     }
 }
@@ -474,6 +477,8 @@ async fn test_client_confidential_with_secret() {
         backchannel_logout_uri: None,
         backchannel_logout_session_required: false,
         post_logout_redirect_uris: vec![],
+        subject_type: "public".into(),
+        sector_identifier_uri: None,
     };
     ClientRepo
         .create(&mut conn, &client)

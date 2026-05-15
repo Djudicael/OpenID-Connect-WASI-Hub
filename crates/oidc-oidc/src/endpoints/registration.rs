@@ -44,6 +44,10 @@ pub struct RegisterClientRequest {
     pub jwks_uri: Option<String>,
     /// Client's JSON Web Key Set (inline, optional).
     pub jwks: Option<serde_json::Value>,
+    /// Subject identifier type: "public" (default) or "pairwise".
+    pub subject_type: Option<String>,
+    /// Sector identifier URI for pairwise subject identifiers (OIDC Core §8).
+    pub sector_identifier_uri: Option<String>,
 }
 
 /// Validate a single redirect URI per RFC 7591 §2:
@@ -198,6 +202,8 @@ pub async fn register_handler(
         backchannel_logout_uri: None,
         backchannel_logout_session_required: false,
         post_logout_redirect_uris: vec![],
+        subject_type: req.subject_type.unwrap_or_else(|| "public".into()),
+        sector_identifier_uri: req.sector_identifier_uri,
     };
 
     with_transaction!(conn, pg_err, {
@@ -242,6 +248,8 @@ mod tests {
             realm_id: Uuid::new_v4(),
             jwks_uri: None,
             jwks: None,
+            subject_type: None,
+            sector_identifier_uri: None,
         }
     }
 

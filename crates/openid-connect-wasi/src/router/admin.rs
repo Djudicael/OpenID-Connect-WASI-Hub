@@ -427,6 +427,8 @@ async fn list_clients(
                 "allowed_grant_types": c.allowed_grant_types,
                 "pkce_required": c.pkce_required,
                 "enabled": c.enabled,
+                "subject_type": c.subject_type,
+                "sector_identifier_uri": c.sector_identifier_uri,
             })
         })
         .collect();
@@ -460,6 +462,8 @@ async fn get_client(
             "allowed_grant_types": c.allowed_grant_types,
             "pkce_required": c.pkce_required,
             "enabled": c.enabled,
+            "subject_type": c.subject_type,
+            "sector_identifier_uri": c.sector_identifier_uri,
         }))
         .into_response(),
         Ok(None) => (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response(),
@@ -482,6 +486,8 @@ struct UpdateClientRequest {
     allowed_grant_types: Option<Vec<String>>,
     pkce_required: Option<bool>,
     enabled: Option<bool>,
+    subject_type: Option<String>,
+    sector_identifier_uri: Option<String>,
 }
 
 async fn update_client(
@@ -542,6 +548,12 @@ async fn update_client(
     }
     if let Some(v) = req.enabled {
         client.enabled = v;
+    }
+    if let Some(v) = req.subject_type {
+        client.subject_type = v;
+    }
+    if let Some(v) = req.sector_identifier_uri {
+        client.sector_identifier_uri = Some(v);
     }
 
     match ClientRepo.update(&mut conn, &client).await {
@@ -1148,6 +1160,8 @@ struct CreateClientRequest {
     allowed_grant_types: Option<Vec<String>>,
     pkce_required: Option<bool>,
     enabled: Option<bool>,
+    subject_type: Option<String>,
+    sector_identifier_uri: Option<String>,
 }
 
 async fn create_client(State(state): State<AppState>, auth: AdminAuth, body: String) -> Response {
@@ -1255,6 +1269,8 @@ async fn create_client(State(state): State<AppState>, auth: AdminAuth, body: Str
         backchannel_logout_uri: None,
         backchannel_logout_session_required: false,
         post_logout_redirect_uris: vec![],
+        subject_type: req.subject_type.unwrap_or_else(|| "public".into()),
+        sector_identifier_uri: req.sector_identifier_uri,
     };
 
     match ClientRepo.create(&mut conn, &client).await {
@@ -1281,6 +1297,8 @@ async fn create_client(State(state): State<AppState>, auth: AdminAuth, body: Str
         "allowed_grant_types": client.allowed_grant_types,
         "pkce_required": client.pkce_required,
         "enabled": client.enabled,
+        "subject_type": client.subject_type,
+        "sector_identifier_uri": client.sector_identifier_uri,
     });
     if let Some(secret) = plain_secret {
         resp["client_secret"] = json!(secret);

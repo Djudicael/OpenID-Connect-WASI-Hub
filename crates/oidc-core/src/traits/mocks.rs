@@ -954,6 +954,8 @@ mod tests {
             backchannel_logout_uri: None,
             backchannel_logout_session_required: false,
             post_logout_redirect_uris: vec![],
+            subject_type: "public".into(),
+            sector_identifier_uri: None,
         }
     }
 
@@ -1016,6 +1018,7 @@ mod tests {
             claims_request: None,
             display: None,
             response_type: ResponseType::CODE,
+            acr_values: vec![],
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
         }
     }
