@@ -2,6 +2,7 @@ use ed25519_dalek::SigningKey;
 use oidc_core::errors::OidcError;
 use oidc_core::traits::Clock;
 use oidc_core::traits::token_service::{IdTokenExtraClaims, TokenService};
+use oidc_core::utils::generate_opaque_token;
 use rsa::traits::PublicKeyParts;
 use rsa::{RsaPrivateKey, RsaPublicKey};
 use serde::{Deserialize, Serialize};
@@ -163,6 +164,12 @@ pub struct IdTokenClaims {
     /// Returned when the `address` scope is requested.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub address: Option<oidc_core::models::AddressClaim>,
+    /// User roles (RBAC). Included in ID tokens when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roles: Option<Vec<String>>,
+    /// User groups. Included in ID tokens when available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub groups: Option<Vec<String>>,
 }
 
 /// A JWK (JSON Web Key) entry for JWKS endpoint — supports RSA and OKP (Ed25519).
@@ -639,6 +646,59 @@ impl JwtTokenService {
 
         Ok(claims)
     }
+
+    /// Encode an access token with an `act` (actor) claim for impersonation (RFC 8693 style).
+    ///
+    /// The token's `sub` is the target user, and `act.sub` is the admin who is impersonating.
+    /// The token is short-lived (typically 5 minutes) for security.
+    pub fn encode_access_token_with_act(
+        &self,
+        sub: &str,
+        act_sub: &str,
+        scope: &str,
+        audience: &[String],
+        expires_in: i64,
+    ) -> Result<String, OidcError> {
+        let now = self.now();
+        let exp = now + expires_in;
+        let jti = generate_opaque_token()?;
+
+        let claims = serde_json::json!({
+            "iss": self.issuer,
+            "sub": sub,
+            "aud": audience,
+            "exp": exp,
+            "iat": now,
+            "jti": jti,
+            "scope": scope,
+            "act": { "sub": act_sub }
+        });
+
+        self.encode_claims(&claims)
+    }
+
+    /// Encode arbitrary claims as a JWT (RS256 signed).
+    fn encode_claims(&self, claims: &serde_json::Value) -> Result<String, OidcError> {
+        let header = JwtHeader {
+            alg: "RS256".to_string(),
+            typ: "JWT".to_string(),
+            kid: self.rsa_kid.clone(),
+        };
+
+        let header_json = serde_json::to_string(&header)
+            .map_err(|e| OidcError::Internal(format!("jwt header serialize: {e}")))?;
+        let claims_json = serde_json::to_string(claims)
+            .map_err(|e| OidcError::Internal(format!("jwt claims serialize: {e}")))?;
+
+        let header_b64 = b64_encode(header_json.as_bytes());
+        let claims_b64 = b64_encode(claims_json.as_bytes());
+        let signing_input = format!("{}.{}", header_b64, claims_b64);
+
+        let signature = self.sign_rs256(signing_input.as_bytes())?;
+        let signature_b64 = b64_encode(&signature);
+
+        Ok(format!("{}.{}", signing_input, signature_b64))
+    }
 }
 
 /// Load the RSA private key from `OIDC_SIGNING_KEY` env var, or generate a fresh one.
@@ -923,6 +983,8 @@ impl TokenService for JwtTokenService {
             amr: extra.amr,
             azp: extra.azp,
             address: extra.address,
+            roles: extra.roles,
+            groups: extra.groups,
         };
         self.encode_jwt(&claims)
     }
@@ -1322,6 +1384,8 @@ mod tests {
             amr: None,
             azp: None,
             address: None,
+            roles: None,
+            groups: None,
         };
 
         let token = service.sign_eddsa(&claims).unwrap();

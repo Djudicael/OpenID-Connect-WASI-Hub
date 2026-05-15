@@ -152,6 +152,29 @@ impl AuthorizationCodeFlow {
                 } else {
                     None
                 },
+                // Fetch user roles and groups for ID token
+                roles: {
+                    let roles = oidc_repository::repositories::role_repo::RoleRepo
+                        .find_by_user_id(&mut conn, user.id)
+                        .await
+                        .unwrap_or_default();
+                    if roles.is_empty() {
+                        None
+                    } else {
+                        Some(roles.iter().map(|r| r.name.clone()).collect())
+                    }
+                },
+                groups: {
+                    let groups = oidc_repository::repositories::group_repo::GroupRepo
+                        .find_by_user_id(&mut conn, user.id)
+                        .await
+                        .unwrap_or_default();
+                    if groups.is_empty() {
+                        None
+                    } else {
+                        Some(groups.iter().map(|g| g.name.clone()).collect())
+                    }
+                },
             };
 
             let id_token = token_svc

@@ -4,6 +4,8 @@ import { BaseComponent } from '../../core/component.js';
 const links = [
   { path: '/', label: 'Dashboard' },
   { path: '/users', label: 'Users' },
+  { path: '/roles', label: 'Roles' },
+  { path: '/groups', label: 'Groups' },
   { path: '/clients', label: 'Clients' },
   { path: '/realms', label: 'Realms' },
   { path: '/sessions', label: 'Sessions' },

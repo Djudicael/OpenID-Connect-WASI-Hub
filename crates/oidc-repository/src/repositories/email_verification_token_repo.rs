@@ -61,6 +61,16 @@ impl EmailVerificationTokenRepo {
         Ok(())
     }
 
+    /// Delete expired email verification tokens. Returns the number of deleted rows.
+    pub async fn cleanup_expired(&self, conn: &mut Connection) -> Result<u64, OidcError> {
+        let sql = "DELETE FROM email_verification_tokens WHERE expires_at <= NOW()";
+        let affected = conn
+            .execute_params(sql, &[])
+            .await
+            .map_err(mapper::pg_err)?;
+        Ok(affected)
+    }
+
     fn map_row(row: &wasi_pg_client::Row) -> Result<EmailVerificationToken, OidcError> {
         Ok(EmailVerificationToken {
             id: mapper::uuid(row, 0)?,

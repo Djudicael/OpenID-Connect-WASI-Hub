@@ -1204,6 +1204,8 @@ async fn authorize_inner(
                 } else {
                     None
                 },
+                roles: None,
+                groups: None,
             };
 
             let id_token = match token_svc

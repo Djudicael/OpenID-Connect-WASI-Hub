@@ -96,6 +96,15 @@ pub fn is_valid_username(username: &str) -> bool {
         .all(|c| c.is_ascii_alphanumeric() || c == ' ' || c == '-')
 }
 
+/// Validate a password against a password policy.
+/// Returns a list of violated rule names, or empty if all rules pass.
+pub fn validate_password_against_policy(
+    password: &str,
+    policy: &crate::models::PasswordPolicy,
+) -> Result<(), crate::models::PasswordPolicyViolation> {
+    policy.validate_password(password)
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------

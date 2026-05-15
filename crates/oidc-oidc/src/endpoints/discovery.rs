@@ -38,9 +38,10 @@ pub async fn discovery_handler(state: OidcState) -> Json<Value> {
         "id_token_encryption_alg_values_supported": ["dir", "RSA-OAEP-256"],
         "id_token_encryption_enc_values_supported": ["A256GCM"],
         "dpop_signing_alg_values_supported": ["RS256", "EdDSA"],
+        "account_recovery_endpoint": format!("{}/oidc/account-recovery/confirm", state.issuer),
         "claims_supported": [
             "sub", "iss", "aud", "exp", "iat", "auth_time", "nonce", "at_hash", "c_hash",
-            "sid", "acr", "amr", "azp",
+            "sid", "acr", "amr", "azp", "roles", "groups",
             "name", "given_name", "family_name", "middle_name", "nickname", "preferred_username",
             "profile", "picture", "website", "gender", "birthdate", "zoneinfo", "locale",
             "email", "email_verified",
@@ -104,9 +105,10 @@ pub async fn realm_discovery_handler(state: OidcState, realm: String) -> Json<Va
         "id_token_encryption_alg_values_supported": ["dir", "RSA-OAEP-256"],
         "id_token_encryption_enc_values_supported": ["A256GCM"],
         "dpop_signing_alg_values_supported": ["RS256", "EdDSA"],
+        "account_recovery_endpoint": format!("{}/protocol/openid-connect/account-recovery/confirm", realm_base),
         "claims_supported": [
             "sub", "iss", "aud", "exp", "iat", "auth_time", "nonce", "at_hash", "c_hash",
-            "sid", "acr", "amr", "azp",
+            "sid", "acr", "amr", "azp", "roles", "groups",
             "name", "given_name", "family_name", "middle_name", "nickname", "preferred_username",
             "profile", "picture", "website", "gender", "birthdate", "zoneinfo", "locale",
             "email", "email_verified",

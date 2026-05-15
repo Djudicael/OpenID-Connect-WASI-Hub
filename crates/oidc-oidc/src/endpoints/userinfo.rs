@@ -7,6 +7,8 @@ use axum::response::{IntoResponse, Response};
 use serde_json::json;
 
 use oidc_core::traits::TokenService;
+use oidc_repository::repositories::group_repo::GroupRepo;
+use oidc_repository::repositories::role_repo::RoleRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 
@@ -182,6 +184,30 @@ pub async fn userinfo_handler(
             }
         }
     }
+
+    // Always include roles and groups in UserInfo when available
+    if let Ok(roles) = RoleRepo.find_by_user_id(&mut conn, user.id).await {
+        if !roles.is_empty() {
+            if let Some(obj) = claims.as_object_mut() {
+                obj.insert(
+                    "roles".to_string(),
+                    json!(roles.iter().map(|r| r.name.clone()).collect::<Vec<_>>()),
+                );
+            }
+        }
+    }
+    if let Ok(groups) = GroupRepo.find_by_user_id(&mut conn, user.id).await {
+        if !groups.is_empty() {
+            if let Some(obj) = claims.as_object_mut() {
+                obj.insert(
+                    "groups".to_string(),
+                    json!(groups.iter().map(|g| g.name.clone()).collect::<Vec<_>>()),
+                );
+            }
+        }
+    }
+
+    let _ = conn.close().await;
 
     Json(claims).into_response()
 }

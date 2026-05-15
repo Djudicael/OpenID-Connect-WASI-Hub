@@ -65,6 +65,16 @@ impl PasswordResetTokenRepo {
         Ok(())
     }
 
+    /// Delete expired password reset tokens. Returns the number of deleted rows.
+    pub async fn cleanup_expired(&self, conn: &mut Connection) -> Result<u64, OidcError> {
+        let sql = "DELETE FROM password_reset_tokens WHERE expires_at <= NOW()";
+        let affected = conn
+            .execute_params(sql, &[])
+            .await
+            .map_err(mapper::pg_err)?;
+        Ok(affected)
+    }
+
     fn map_row(row: &wasi_pg_client::Row) -> Result<PasswordResetToken, OidcError> {
         Ok(PasswordResetToken {
             id: mapper::uuid(row, 0)?,

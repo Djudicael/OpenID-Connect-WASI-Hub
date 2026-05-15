@@ -11,20 +11,35 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use oidc_core::models::ClientType;
+use oidc_core::models::Group;
+use oidc_core::models::PasswordPolicy;
+use oidc_core::models::Role;
 use oidc_core::models::Scope;
+use oidc_core::models::account_recovery_token::AccountRecoveryToken;
 use oidc_core::models::audit_event::ActorType;
 
 use oidc_core::utils::{
     generate_opaque_token, generate_uuid_v7, is_strong_password, is_valid_email, is_valid_username,
 };
 use oidc_repository::Connection;
+use oidc_repository::repositories::account_recovery_token_repo::AccountRecoveryTokenRepo;
 use oidc_repository::repositories::audit_event_repo::AuditEventRepo;
+use oidc_repository::repositories::auth_code_repo::AuthCodeRepo;
 use oidc_repository::repositories::client_repo::ClientRepo;
+use oidc_repository::repositories::device_code_repo::DeviceCodeRepo;
+use oidc_repository::repositories::email_verification_token_repo::EmailVerificationTokenRepo;
+use oidc_repository::repositories::group_repo::GroupRepo;
+use oidc_repository::repositories::group_role_repo::GroupRoleRepo;
+use oidc_repository::repositories::par_repo::ParRepo;
+use oidc_repository::repositories::password_reset_token_repo::PasswordResetTokenRepo;
 use oidc_repository::repositories::realm_repo::RealmRepo;
 use oidc_repository::repositories::realm_signing_keys_repo::RealmSigningKeysRepo;
+use oidc_repository::repositories::role_repo::RoleRepo;
 use oidc_repository::repositories::scope_repo::ScopeRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
+use oidc_repository::repositories::user_group_repo::UserGroupRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
+use oidc_repository::repositories::user_role_repo::UserRoleRepo;
 
 use crate::middleware::admin_auth::AdminAuth;
 use crate::state::AppState;
@@ -67,6 +82,54 @@ pub fn router() -> Router<AppState> {
         .route("/api/scopes/{id}", get(get_scope))
         .route("/api/scopes/{id}", put(update_scope))
         .route("/api/scopes/{id}", delete(delete_scope))
+        // Roles
+        .route("/api/roles", get(list_roles))
+        .route("/api/roles", post(create_role))
+        .route("/api/roles/{id}", get(get_role))
+        .route("/api/roles/{id}", put(update_role))
+        .route("/api/roles/{id}", delete(delete_role))
+        // User-Role assignments
+        .route("/api/users/{id}/roles", get(list_user_roles))
+        .route("/api/users/{id}/roles", post(assign_role_to_user))
+        .route(
+            "/api/users/{id}/roles/{role_id}",
+            delete(unassign_role_from_user),
+        )
+        // Groups
+        .route("/api/groups", get(list_groups))
+        .route("/api/groups", post(create_group))
+        .route("/api/groups/{id}", get(get_group))
+        .route("/api/groups/{id}", put(update_group))
+        .route("/api/groups/{id}", delete(delete_group))
+        // User-Group assignments
+        .route("/api/users/{id}/groups", get(list_user_groups))
+        .route("/api/users/{id}/groups", post(assign_group_to_user))
+        .route(
+            "/api/users/{id}/groups/{group_id}",
+            delete(unassign_group_from_user),
+        )
+        // Group-Role assignments
+        .route("/api/groups/{id}/roles", get(list_group_roles))
+        .route("/api/groups/{id}/roles", post(assign_role_to_group))
+        .route(
+            "/api/groups/{id}/roles/{role_id}",
+            delete(unassign_role_from_group),
+        )
+        // Account Recovery
+        .route(
+            "/api/users/{id}/account-recovery",
+            post(initiate_account_recovery),
+        )
+        // User Impersonation
+        .route("/api/users/{id}/impersonate", post(impersonate_user))
+        // Token Cleanup
+        .route("/api/maintenance/cleanup", post(cleanup_expired))
+        // Password Policy
+        .route("/api/realms/{id}/password-policy", get(get_password_policy))
+        .route(
+            "/api/realms/{id}/password-policy",
+            put(update_password_policy),
+        )
 }
 
 async fn admin_index_handler(
@@ -1663,6 +1726,1617 @@ async fn delete_scope(
         Ok(()) => Json(json!({"deleted": true})).into_response(),
         Err(e) => {
             tracing::error!("delete scope error: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+// ─── Roles CRUD ────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct RoleListQuery {
+    realm_id: Uuid,
+    search: Option<String>,
+    #[serde(default = "default_limit")]
+    limit: i64,
+    #[serde(default = "default_offset")]
+    offset: i64,
+}
+
+async fn list_roles(
+    State(state): State<AppState>,
+    Query(query): Query<RoleListQuery>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let items = match RoleRepo
+        .list(
+            &mut conn,
+            query.realm_id,
+            query.search.as_deref(),
+            query.limit,
+            query.offset,
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("list roles error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    };
+    let total = RoleRepo.count(&mut conn, query.realm_id).await.unwrap_or(0);
+    let rows: Vec<Value> = items
+        .into_iter()
+        .map(|r| {
+            json!({
+                "id": r.id.to_string(),
+                "realm_id": r.realm_id.to_string(),
+                "name": r.name,
+                "description": r.description,
+                "permissions": r.permissions,
+                "created_at": r.created_at.to_rfc3339(),
+                "updated_at": r.updated_at.to_rfc3339(),
+            })
+        })
+        .collect();
+    Json(json!({"items": rows, "total": total})).into_response()
+}
+
+#[derive(Deserialize)]
+struct CreateRoleRequest {
+    realm_id: Uuid,
+    name: String,
+    description: Option<String>,
+    permissions: Vec<String>,
+}
+
+async fn create_role(State(state): State<AppState>, auth: AdminAuth, body: String) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let req: CreateRoleRequest = match serde_json::from_str(&body) {
+        Ok(r) => r,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "bad_request"})),
+            )
+                .into_response();
+        }
+    };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let now = chrono::Utc::now();
+    let role = Role {
+        id: generate_uuid_v7(),
+        realm_id: req.realm_id,
+        name: req.name.clone(),
+        description: req.description.clone(),
+        permissions: req.permissions.clone(),
+        created_at: now,
+        updated_at: now,
+    };
+    if let Err(e) = role.validate() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("{e}")})),
+        )
+            .into_response();
+    }
+    // Check for duplicate name in realm
+    if let Ok(Some(_)) = RoleRepo
+        .find_by_name(&mut conn, req.realm_id, &req.name)
+        .await
+    {
+        return (StatusCode::CONFLICT, Json(json!({"error": "duplicate"}))).into_response();
+    }
+    match RoleRepo.create(&mut conn, &role).await {
+        Ok(()) => {
+            // Audit event
+            let audit = oidc_core::models::AuditEvent {
+                id: generate_uuid_v7(),
+                realm_id: Some(role.realm_id),
+                event_type: "role.created".to_string(),
+                actor_id: Uuid::parse_str(&auth.subject).ok(),
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
+                target_type: Some("role".to_string()),
+                target_id: Some(role.id),
+                details: json!({"name": role.name}),
+                ip_address: None,
+                user_agent: None,
+                created_at: chrono::Utc::now(),
+            };
+            let _ = AuditEventRepo.create(&mut conn, &audit).await;
+            let _ = conn.close().await;
+            Json(json!({
+                "id": role.id.to_string(),
+                "realm_id": role.realm_id.to_string(),
+                "name": role.name,
+                "description": role.description,
+                "permissions": role.permissions,
+            }))
+            .into_response()
+        }
+        Err(e) => {
+            tracing::error!("create role error: {e}");
+            let _ = conn.close().await;
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn get_role(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    match RoleRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(r)) => {
+            let _ = conn.close().await;
+            Json(json!({
+                "id": r.id.to_string(),
+                "realm_id": r.realm_id.to_string(),
+                "name": r.name,
+                "description": r.description,
+                "permissions": r.permissions,
+                "created_at": r.created_at.to_rfc3339(),
+                "updated_at": r.updated_at.to_rfc3339(),
+            }))
+            .into_response()
+        }
+        Ok(None) => (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response(),
+        Err(e) => {
+            tracing::error!("get role error: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct UpdateRoleRequest {
+    name: Option<String>,
+    description: Option<String>,
+    permissions: Option<Vec<String>>,
+}
+
+async fn update_role(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+    body: String,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let req: UpdateRoleRequest = match serde_json::from_str(&body) {
+        Ok(r) => r,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "bad_request"})),
+            )
+                .into_response();
+        }
+    };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let mut role = match RoleRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response();
+        }
+        Err(e) => {
+            tracing::error!("update role fetch error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    };
+    if let Some(v) = req.name {
+        role.name = v;
+    }
+    if req.description.is_some() {
+        role.description = req.description;
+    }
+    if let Some(v) = req.permissions {
+        role.permissions = v;
+    }
+    if let Err(e) = role.validate() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("{e}")})),
+        )
+            .into_response();
+    }
+    match RoleRepo.update(&mut conn, &role).await {
+        Ok(()) => {
+            // Audit event
+            let audit = oidc_core::models::AuditEvent {
+                id: generate_uuid_v7(),
+                realm_id: Some(role.realm_id),
+                event_type: "role.updated".to_string(),
+                actor_id: Uuid::parse_str(&auth.subject).ok(),
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
+                target_type: Some("role".to_string()),
+                target_id: Some(role.id),
+                details: json!({"name": role.name}),
+                ip_address: None,
+                user_agent: None,
+                created_at: chrono::Utc::now(),
+            };
+            let _ = AuditEventRepo.create(&mut conn, &audit).await;
+            let _ = conn.close().await;
+            Json(json!({"updated": true})).into_response()
+        }
+        Err(e) => {
+            tracing::error!("update role error: {e}");
+            let _ = conn.close().await;
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn delete_role(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    // Fetch role for audit before deleting
+    let role = match RoleRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response();
+        }
+        Err(e) => {
+            tracing::error!("delete role fetch error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    };
+    match RoleRepo.delete(&mut conn, id).await {
+        Ok(()) => {
+            // Audit event
+            let audit = oidc_core::models::AuditEvent {
+                id: generate_uuid_v7(),
+                realm_id: Some(role.realm_id),
+                event_type: "role.deleted".to_string(),
+                actor_id: Uuid::parse_str(&auth.subject).ok(),
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
+                target_type: Some("role".to_string()),
+                target_id: Some(role.id),
+                details: json!({"name": role.name}),
+                ip_address: None,
+                user_agent: None,
+                created_at: chrono::Utc::now(),
+            };
+            let _ = AuditEventRepo.create(&mut conn, &audit).await;
+            let _ = conn.close().await;
+            Json(json!({"deleted": true})).into_response()
+        }
+        Err(e) => {
+            tracing::error!("delete role error: {e}");
+            let _ = conn.close().await;
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+// ─── User-Role assignments ─────────────────────────────────────────────────────
+
+async fn list_user_roles(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let roles = match RoleRepo.find_by_user_id(&mut conn, id).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("list user roles error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    };
+    let _ = conn.close().await;
+    let rows: Vec<Value> = roles
+        .into_iter()
+        .map(|r| {
+            json!({
+                "id": r.id.to_string(),
+                "realm_id": r.realm_id.to_string(),
+                "name": r.name,
+                "description": r.description,
+                "permissions": r.permissions,
+            })
+        })
+        .collect();
+    Json(json!({"items": rows})).into_response()
+}
+
+#[derive(Deserialize)]
+struct AssignRoleRequest {
+    role_id: Uuid,
+}
+
+async fn assign_role_to_user(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+    body: String,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let req: AssignRoleRequest = match serde_json::from_str(&body) {
+        Ok(r) => r,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "bad_request"})),
+            )
+                .into_response();
+        }
+    };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    match UserRoleRepo.assign(&mut conn, id, req.role_id).await {
+        Ok(()) => {
+            // Audit event
+            let audit = oidc_core::models::AuditEvent {
+                id: generate_uuid_v7(),
+                realm_id: None,
+                event_type: "user.role_assigned".to_string(),
+                actor_id: Uuid::parse_str(&auth.subject).ok(),
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
+                target_type: Some("user".to_string()),
+                target_id: Some(id),
+                details: json!({"role_id": req.role_id.to_string()}),
+                ip_address: None,
+                user_agent: None,
+                created_at: chrono::Utc::now(),
+            };
+            let _ = AuditEventRepo.create(&mut conn, &audit).await;
+            let _ = conn.close().await;
+            Json(json!({"assigned": true})).into_response()
+        }
+        Err(e) => {
+            tracing::error!("assign role to user error: {e}");
+            let _ = conn.close().await;
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn unassign_role_from_user(
+    State(state): State<AppState>,
+    axum::extract::Path((id, role_id)): axum::extract::Path<(Uuid, Uuid)>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    match UserRoleRepo.unassign(&mut conn, id, role_id).await {
+        Ok(()) => {
+            // Audit event
+            let audit = oidc_core::models::AuditEvent {
+                id: generate_uuid_v7(),
+                realm_id: None,
+                event_type: "user.role_unassigned".to_string(),
+                actor_id: Uuid::parse_str(&auth.subject).ok(),
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
+                target_type: Some("user".to_string()),
+                target_id: Some(id),
+                details: json!({"role_id": role_id.to_string()}),
+                ip_address: None,
+                user_agent: None,
+                created_at: chrono::Utc::now(),
+            };
+            let _ = AuditEventRepo.create(&mut conn, &audit).await;
+            let _ = conn.close().await;
+            Json(json!({"unassigned": true})).into_response()
+        }
+        Err(e) => {
+            tracing::error!("unassign role from user error: {e}");
+            let _ = conn.close().await;
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+// ─── Groups CRUD ────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct GroupListQuery {
+    realm_id: Uuid,
+    search: Option<String>,
+    #[serde(default = "default_limit")]
+    limit: i64,
+    #[serde(default = "default_offset")]
+    offset: i64,
+}
+
+async fn list_groups(
+    State(state): State<AppState>,
+    Query(query): Query<GroupListQuery>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let items = match GroupRepo
+        .list(
+            &mut conn,
+            query.realm_id,
+            query.search.as_deref(),
+            query.limit,
+            query.offset,
+        )
+        .await
+    {
+        Ok(g) => g,
+        Err(e) => {
+            tracing::error!("list groups error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    };
+    let total = GroupRepo
+        .count(&mut conn, query.realm_id)
+        .await
+        .unwrap_or(0);
+    let rows: Vec<Value> = items
+        .into_iter()
+        .map(|g| {
+            json!({
+                "id": g.id.to_string(),
+                "realm_id": g.realm_id.to_string(),
+                "name": g.name,
+                "description": g.description,
+                "parent_id": g.parent_id.map(|p| p.to_string()),
+                "created_at": g.created_at.to_rfc3339(),
+                "updated_at": g.updated_at.to_rfc3339(),
+            })
+        })
+        .collect();
+    Json(json!({"items": rows, "total": total})).into_response()
+}
+
+#[derive(Deserialize)]
+struct CreateGroupRequest {
+    realm_id: Uuid,
+    name: String,
+    description: Option<String>,
+    parent_id: Option<Uuid>,
+}
+
+async fn create_group(State(state): State<AppState>, auth: AdminAuth, body: String) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let req: CreateGroupRequest = match serde_json::from_str(&body) {
+        Ok(r) => r,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "bad_request"})),
+            )
+                .into_response();
+        }
+    };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let now = chrono::Utc::now();
+    let group = Group {
+        id: generate_uuid_v7(),
+        realm_id: req.realm_id,
+        name: req.name.clone(),
+        description: req.description.clone(),
+        parent_id: req.parent_id,
+        created_at: now,
+        updated_at: now,
+    };
+    if let Err(e) = group.validate() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("{e}")})),
+        )
+            .into_response();
+    }
+    // Check for duplicate name in realm
+    if let Ok(Some(_)) = GroupRepo
+        .find_by_name(&mut conn, req.realm_id, &req.name)
+        .await
+    {
+        return (StatusCode::CONFLICT, Json(json!({"error": "duplicate"}))).into_response();
+    }
+    match GroupRepo.create(&mut conn, &group).await {
+        Ok(()) => {
+            // Audit event
+            let audit = oidc_core::models::AuditEvent {
+                id: generate_uuid_v7(),
+                realm_id: Some(group.realm_id),
+                event_type: "group.created".to_string(),
+                actor_id: Uuid::parse_str(&auth.subject).ok(),
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
+                target_type: Some("group".to_string()),
+                target_id: Some(group.id),
+                details: json!({"name": group.name}),
+                ip_address: None,
+                user_agent: None,
+                created_at: chrono::Utc::now(),
+            };
+            let _ = AuditEventRepo.create(&mut conn, &audit).await;
+            let _ = conn.close().await;
+            Json(json!({
+                "id": group.id.to_string(),
+                "realm_id": group.realm_id.to_string(),
+                "name": group.name,
+                "description": group.description,
+                "parent_id": group.parent_id.map(|p| p.to_string()),
+            }))
+            .into_response()
+        }
+        Err(e) => {
+            tracing::error!("create group error: {e}");
+            let _ = conn.close().await;
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn get_group(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    match GroupRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(g)) => {
+            let _ = conn.close().await;
+            Json(json!({
+                "id": g.id.to_string(),
+                "realm_id": g.realm_id.to_string(),
+                "name": g.name,
+                "description": g.description,
+                "parent_id": g.parent_id.map(|p| p.to_string()),
+                "created_at": g.created_at.to_rfc3339(),
+                "updated_at": g.updated_at.to_rfc3339(),
+            }))
+            .into_response()
+        }
+        Ok(None) => (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response(),
+        Err(e) => {
+            tracing::error!("get group error: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct UpdateGroupRequest {
+    name: Option<String>,
+    description: Option<String>,
+    parent_id: Option<Option<Uuid>>,
+}
+
+async fn update_group(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+    body: String,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let req: UpdateGroupRequest = match serde_json::from_str(&body) {
+        Ok(r) => r,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "bad_request"})),
+            )
+                .into_response();
+        }
+    };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let mut group = match GroupRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(g)) => g,
+        Ok(None) => {
+            return (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response();
+        }
+        Err(e) => {
+            tracing::error!("update group fetch error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    };
+    if let Some(v) = req.name {
+        group.name = v;
+    }
+    if req.description.is_some() {
+        group.description = req.description;
+    }
+    if let Some(v) = req.parent_id {
+        group.parent_id = v;
+    }
+    if let Err(e) = group.validate() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("{e}")})),
+        )
+            .into_response();
+    }
+    match GroupRepo.update(&mut conn, &group).await {
+        Ok(()) => {
+            // Audit event
+            let audit = oidc_core::models::AuditEvent {
+                id: generate_uuid_v7(),
+                realm_id: Some(group.realm_id),
+                event_type: "group.updated".to_string(),
+                actor_id: Uuid::parse_str(&auth.subject).ok(),
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
+                target_type: Some("group".to_string()),
+                target_id: Some(group.id),
+                details: json!({"name": group.name}),
+                ip_address: None,
+                user_agent: None,
+                created_at: chrono::Utc::now(),
+            };
+            let _ = AuditEventRepo.create(&mut conn, &audit).await;
+            let _ = conn.close().await;
+            Json(json!({"updated": true})).into_response()
+        }
+        Err(e) => {
+            tracing::error!("update group error: {e}");
+            let _ = conn.close().await;
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn delete_group(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    // Fetch group for audit before deleting
+    let group = match GroupRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(g)) => g,
+        Ok(None) => {
+            return (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response();
+        }
+        Err(e) => {
+            tracing::error!("delete group fetch error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    };
+    match GroupRepo.delete(&mut conn, id).await {
+        Ok(()) => {
+            // Audit event
+            let audit = oidc_core::models::AuditEvent {
+                id: generate_uuid_v7(),
+                realm_id: Some(group.realm_id),
+                event_type: "group.deleted".to_string(),
+                actor_id: Uuid::parse_str(&auth.subject).ok(),
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
+                target_type: Some("group".to_string()),
+                target_id: Some(group.id),
+                details: json!({"name": group.name}),
+                ip_address: None,
+                user_agent: None,
+                created_at: chrono::Utc::now(),
+            };
+            let _ = AuditEventRepo.create(&mut conn, &audit).await;
+            let _ = conn.close().await;
+            Json(json!({"deleted": true})).into_response()
+        }
+        Err(e) => {
+            tracing::error!("delete group error: {e}");
+            let _ = conn.close().await;
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+// ─── User-Group assignments ─────────────────────────────────────────────────────
+
+async fn list_user_groups(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let groups = match UserGroupRepo.find_groups_by_user(&mut conn, id).await {
+        Ok(g) => g,
+        Err(e) => {
+            tracing::error!("list user groups error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    };
+    let _ = conn.close().await;
+    let rows: Vec<Value> = groups
+        .into_iter()
+        .map(|g| {
+            json!({
+                "id": g.id.to_string(),
+                "realm_id": g.realm_id.to_string(),
+                "name": g.name,
+                "description": g.description,
+                "parent_id": g.parent_id.map(|p| p.to_string()),
+            })
+        })
+        .collect();
+    Json(json!({"items": rows})).into_response()
+}
+
+#[derive(Deserialize)]
+struct AssignGroupRequest {
+    group_id: Uuid,
+}
+
+async fn assign_group_to_user(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+    body: String,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let req: AssignGroupRequest = match serde_json::from_str(&body) {
+        Ok(r) => r,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "bad_request"})),
+            )
+                .into_response();
+        }
+    };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    match UserGroupRepo.assign(&mut conn, id, req.group_id).await {
+        Ok(()) => {
+            // Audit event
+            let audit = oidc_core::models::AuditEvent {
+                id: generate_uuid_v7(),
+                realm_id: None,
+                event_type: "user.group_assigned".to_string(),
+                actor_id: Uuid::parse_str(&auth.subject).ok(),
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
+                target_type: Some("user".to_string()),
+                target_id: Some(id),
+                details: json!({"group_id": req.group_id.to_string()}),
+                ip_address: None,
+                user_agent: None,
+                created_at: chrono::Utc::now(),
+            };
+            let _ = AuditEventRepo.create(&mut conn, &audit).await;
+            let _ = conn.close().await;
+            Json(json!({"assigned": true})).into_response()
+        }
+        Err(e) => {
+            tracing::error!("assign group to user error: {e}");
+            let _ = conn.close().await;
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn unassign_group_from_user(
+    State(state): State<AppState>,
+    axum::extract::Path((id, group_id)): axum::extract::Path<(Uuid, Uuid)>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    match UserGroupRepo.unassign(&mut conn, id, group_id).await {
+        Ok(()) => {
+            // Audit event
+            let audit = oidc_core::models::AuditEvent {
+                id: generate_uuid_v7(),
+                realm_id: None,
+                event_type: "user.group_unassigned".to_string(),
+                actor_id: Uuid::parse_str(&auth.subject).ok(),
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
+                target_type: Some("user".to_string()),
+                target_id: Some(id),
+                details: json!({"group_id": group_id.to_string()}),
+                ip_address: None,
+                user_agent: None,
+                created_at: chrono::Utc::now(),
+            };
+            let _ = AuditEventRepo.create(&mut conn, &audit).await;
+            let _ = conn.close().await;
+            Json(json!({"unassigned": true})).into_response()
+        }
+        Err(e) => {
+            tracing::error!("unassign group from user error: {e}");
+            let _ = conn.close().await;
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+// ─── Group-Role assignments ─────────────────────────────────────────────────────
+
+async fn list_group_roles(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let roles = match GroupRoleRepo.find_roles_by_group(&mut conn, id).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("list group roles error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    };
+    let _ = conn.close().await;
+    let rows: Vec<Value> = roles
+        .into_iter()
+        .map(|r| {
+            json!({
+                "id": r.id.to_string(),
+                "realm_id": r.realm_id.to_string(),
+                "name": r.name,
+                "description": r.description,
+                "permissions": r.permissions,
+            })
+        })
+        .collect();
+    Json(json!({"items": rows})).into_response()
+}
+
+#[derive(Deserialize)]
+struct AssignRoleToGroupRequest {
+    role_id: Uuid,
+}
+
+async fn assign_role_to_group(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+    body: String,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let req: AssignRoleToGroupRequest = match serde_json::from_str(&body) {
+        Ok(r) => r,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "bad_request"})),
+            )
+                .into_response();
+        }
+    };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    match GroupRoleRepo.assign(&mut conn, id, req.role_id).await {
+        Ok(()) => {
+            // Audit event
+            let audit = oidc_core::models::AuditEvent {
+                id: generate_uuid_v7(),
+                realm_id: None,
+                event_type: "group.role_assigned".to_string(),
+                actor_id: Uuid::parse_str(&auth.subject).ok(),
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
+                target_type: Some("group".to_string()),
+                target_id: Some(id),
+                details: json!({"role_id": req.role_id.to_string()}),
+                ip_address: None,
+                user_agent: None,
+                created_at: chrono::Utc::now(),
+            };
+            let _ = AuditEventRepo.create(&mut conn, &audit).await;
+            let _ = conn.close().await;
+            Json(json!({"assigned": true})).into_response()
+        }
+        Err(e) => {
+            tracing::error!("assign role to group error: {e}");
+            let _ = conn.close().await;
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+async fn unassign_role_from_group(
+    State(state): State<AppState>,
+    axum::extract::Path((id, role_id)): axum::extract::Path<(Uuid, Uuid)>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    match GroupRoleRepo.unassign(&mut conn, id, role_id).await {
+        Ok(()) => {
+            // Audit event
+            let audit = oidc_core::models::AuditEvent {
+                id: generate_uuid_v7(),
+                realm_id: None,
+                event_type: "group.role_unassigned".to_string(),
+                actor_id: Uuid::parse_str(&auth.subject).ok(),
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
+                target_type: Some("group".to_string()),
+                target_id: Some(id),
+                details: json!({"role_id": role_id.to_string()}),
+                ip_address: None,
+                user_agent: None,
+                created_at: chrono::Utc::now(),
+            };
+            let _ = AuditEventRepo.create(&mut conn, &audit).await;
+            let _ = conn.close().await;
+            Json(json!({"unassigned": true})).into_response()
+        }
+        Err(e) => {
+            tracing::error!("unassign role from group error: {e}");
+            let _ = conn.close().await;
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+// ─── Account Recovery ──────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct AccountRecoveryRequest {
+    creator_ip: Option<String>,
+}
+
+async fn initiate_account_recovery(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+    body: String,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let req: AccountRecoveryRequest = match serde_json::from_str(&body) {
+        Ok(r) => r,
+        Err(_) => {
+            // Body is optional for this endpoint, use defaults
+            AccountRecoveryRequest { creator_ip: None }
+        }
+    };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    // Fetch user by ID
+    let user = match UserRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "user not found"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!("account recovery user fetch error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    };
+    // Parse admin ID from auth.subject
+    let admin_uuid = match Uuid::parse_str(&auth.subject) {
+        Ok(u) => u,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "invalid admin identity"})),
+            )
+                .into_response();
+        }
+    };
+    // Create account recovery token
+    let (token_entity, raw_token) =
+        match AccountRecoveryToken::new(user.id, user.realm_id, admin_uuid, req.creator_ip) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!("account recovery token creation error: {e}");
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": "internal"})),
+                )
+                    .into_response();
+            }
+        };
+    // Store the token
+    match AccountRecoveryTokenRepo
+        .create(&mut conn, &token_entity)
+        .await
+    {
+        Ok(()) => {
+            // Audit event
+            let audit = oidc_core::models::AuditEvent {
+                id: generate_uuid_v7(),
+                realm_id: Some(user.realm_id),
+                event_type: "user.account_recovery_initiated".to_string(),
+                actor_id: Some(admin_uuid),
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
+                target_type: Some("user".to_string()),
+                target_id: Some(user.id),
+                details: json!({}),
+                ip_address: None,
+                user_agent: None,
+                created_at: chrono::Utc::now(),
+            };
+            let _ = AuditEventRepo.create(&mut conn, &audit).await;
+            let _ = conn.close().await;
+            Json(json!({
+                "recovery_token": raw_token,
+                "user_id": user.id.to_string(),
+                "expires_at": token_entity.expires_at.to_rfc3339(),
+            }))
+            .into_response()
+        }
+        Err(e) => {
+            tracing::error!("account recovery token store error: {e}");
+            let _ = conn.close().await;
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response()
+        }
+    }
+}
+
+// ─── User Impersonation ────────────────────────────────────────────────────────
+
+async fn impersonate_user(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    // Fetch user by ID
+    let user = match UserRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "user not found"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!("impersonate user fetch error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    };
+    // Verify user is enabled
+    if !user.enabled {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "user is disabled"})),
+        )
+            .into_response();
+    }
+    // Create impersonation access token with act claim
+    let sub = user.id.to_string();
+    let act_sub = auth.subject.clone();
+    let scope = "openid profile email";
+    let audience = vec!["account".to_string()];
+    let token = match state.token_service.encode_access_token_with_act(
+        &sub, &act_sub, scope, &audience, 300, // 5 minutes
+    ) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::error!("impersonate token encode error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    };
+    // Audit event
+    let audit = oidc_core::models::AuditEvent {
+        id: generate_uuid_v7(),
+        realm_id: Some(user.realm_id),
+        event_type: "user.impersonated".to_string(),
+        actor_id: Uuid::parse_str(&auth.subject).ok(),
+        actor_type: if auth.is_api_key {
+            ActorType::ApiKey
+        } else {
+            ActorType::User
+        },
+        target_type: Some("user".to_string()),
+        target_id: Some(user.id),
+        details: json!({
+            "impersonated_user_id": user.id.to_string(),
+            "impersonated_by": auth.subject,
+        }),
+        ip_address: None,
+        user_agent: None,
+        created_at: chrono::Utc::now(),
+    };
+    let _ = AuditEventRepo.create(&mut conn, &audit).await;
+    let _ = conn.close().await;
+    Json(json!({
+        "access_token": token,
+        "token_type": "Bearer",
+        "expires_in": 300,
+        "impersonated_user_id": user.id.to_string(),
+        "impersonated_by": auth.subject,
+    }))
+    .into_response()
+}
+
+// ─── Token Cleanup ─────────────────────────────────────────────────────────────
+
+async fn cleanup_expired(State(state): State<AppState>, auth: AdminAuth) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let sessions_deleted = SessionRepo.cleanup_expired(&mut conn).await.unwrap_or(0);
+    let password_reset_deleted = PasswordResetTokenRepo
+        .cleanup_expired(&mut conn)
+        .await
+        .unwrap_or(0);
+    let email_verification_deleted = EmailVerificationTokenRepo
+        .cleanup_expired(&mut conn)
+        .await
+        .unwrap_or(0);
+    let account_recovery_deleted = AccountRecoveryTokenRepo
+        .cleanup_expired(&mut conn)
+        .await
+        .unwrap_or(0);
+    let device_codes_deleted = DeviceCodeRepo.cleanup_expired(&mut conn).await.unwrap_or(0);
+    let auth_codes_deleted = AuthCodeRepo.cleanup_expired(&mut conn).await.unwrap_or(0);
+    let par_deleted = ParRepo.cleanup_expired(&mut conn).await.unwrap_or(0);
+    // Audit event
+    let audit = oidc_core::models::AuditEvent {
+        id: generate_uuid_v7(),
+        realm_id: None,
+        event_type: "maintenance.cleanup".to_string(),
+        actor_id: Uuid::parse_str(&auth.subject).ok(),
+        actor_type: if auth.is_api_key {
+            ActorType::ApiKey
+        } else {
+            ActorType::User
+        },
+        target_type: None,
+        target_id: None,
+        details: json!({
+            "sessions_deleted": sessions_deleted,
+            "password_reset_deleted": password_reset_deleted,
+            "email_verification_deleted": email_verification_deleted,
+            "account_recovery_deleted": account_recovery_deleted,
+            "device_codes_deleted": device_codes_deleted,
+            "auth_codes_deleted": auth_codes_deleted,
+            "par_deleted": par_deleted,
+        }),
+        ip_address: None,
+        user_agent: None,
+        created_at: chrono::Utc::now(),
+    };
+    let _ = AuditEventRepo.create(&mut conn, &audit).await;
+    let _ = conn.close().await;
+    Json(json!({
+        "sessions_deleted": sessions_deleted,
+        "password_reset_deleted": password_reset_deleted,
+        "email_verification_deleted": email_verification_deleted,
+        "account_recovery_deleted": account_recovery_deleted,
+        "device_codes_deleted": device_codes_deleted,
+        "auth_codes_deleted": auth_codes_deleted,
+        "par_deleted": par_deleted,
+    }))
+    .into_response()
+}
+
+// ─── Password Policy ───────────────────────────────────────────────────────────
+
+async fn get_password_policy(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let realm = match RealmRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response();
+        }
+        Err(e) => {
+            tracing::error!("get password policy realm fetch error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    };
+    let policy = PasswordPolicy::from_realm_config(&realm.config);
+    let _ = conn.close().await;
+    Json(json!({
+        "min_length": policy.min_length,
+        "max_length": policy.max_length,
+        "require_uppercase": policy.require_uppercase,
+        "require_lowercase": policy.require_lowercase,
+        "require_digit": policy.require_digit,
+        "require_special": policy.require_special,
+        "min_unique_chars": policy.min_unique_chars,
+        "password_history_count": policy.password_history_count,
+        "max_identical_consecutive": policy.max_identical_consecutive,
+        "disallowed_passwords": policy.disallowed_passwords,
+    }))
+    .into_response()
+}
+
+#[derive(Deserialize)]
+struct UpdatePasswordPolicyRequest {
+    min_length: Option<usize>,
+    max_length: Option<usize>,
+    require_uppercase: Option<bool>,
+    require_lowercase: Option<bool>,
+    require_digit: Option<bool>,
+    require_special: Option<bool>,
+    min_unique_chars: Option<usize>,
+    password_history_count: Option<usize>,
+    max_identical_consecutive: Option<usize>,
+    disallowed_passwords: Option<Vec<String>>,
+}
+
+async fn update_password_policy(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+    body: String,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let req: UpdatePasswordPolicyRequest = match serde_json::from_str(&body) {
+        Ok(r) => r,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "bad_request"})),
+            )
+                .into_response();
+        }
+    };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let mut realm = match RealmRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return (StatusCode::NOT_FOUND, Json(json!({"error": "not found"}))).into_response();
+        }
+        Err(e) => {
+            tracing::error!("update password policy realm fetch error: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    };
+    // Get current policy and apply updates
+    let current = PasswordPolicy::from_realm_config(&realm.config);
+    let updated_policy = PasswordPolicy {
+        min_length: req.min_length.unwrap_or(current.min_length),
+        max_length: req.max_length.unwrap_or(current.max_length),
+        require_uppercase: req.require_uppercase.unwrap_or(current.require_uppercase),
+        require_lowercase: req.require_lowercase.unwrap_or(current.require_lowercase),
+        require_digit: req.require_digit.unwrap_or(current.require_digit),
+        require_special: req.require_special.unwrap_or(current.require_special),
+        min_unique_chars: req.min_unique_chars.unwrap_or(current.min_unique_chars),
+        password_history_count: req
+            .password_history_count
+            .unwrap_or(current.password_history_count),
+        max_identical_consecutive: req
+            .max_identical_consecutive
+            .unwrap_or(current.max_identical_consecutive),
+        disallowed_passwords: req
+            .disallowed_passwords
+            .unwrap_or(current.disallowed_passwords),
+    };
+    // Update realm config with the new password_policy
+    let config = realm.config.as_object_mut();
+    if let Some(config_map) = config {
+        config_map.insert(
+            "password_policy".to_string(),
+            serde_json::to_value(&updated_policy).unwrap_or_default(),
+        );
+    }
+    match RealmRepo.update(&mut conn, &realm).await {
+        Ok(()) => {
+            // Audit event
+            let audit = oidc_core::models::AuditEvent {
+                id: generate_uuid_v7(),
+                realm_id: Some(realm.id),
+                event_type: "realm.password_policy_updated".to_string(),
+                actor_id: Uuid::parse_str(&auth.subject).ok(),
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
+                target_type: Some("realm".to_string()),
+                target_id: Some(realm.id),
+                details: json!({}),
+                ip_address: None,
+                user_agent: None,
+                created_at: chrono::Utc::now(),
+            };
+            let _ = AuditEventRepo.create(&mut conn, &audit).await;
+            let _ = conn.close().await;
+            Json(json!({
+                "min_length": updated_policy.min_length,
+                "max_length": updated_policy.max_length,
+                "require_uppercase": updated_policy.require_uppercase,
+                "require_lowercase": updated_policy.require_lowercase,
+                "require_digit": updated_policy.require_digit,
+                "require_special": updated_policy.require_special,
+                "min_unique_chars": updated_policy.min_unique_chars,
+                "password_history_count": updated_policy.password_history_count,
+                "max_identical_consecutive": updated_policy.max_identical_consecutive,
+                "disallowed_passwords": updated_policy.disallowed_passwords,
+            }))
+            .into_response()
+        }
+        Err(e) => {
+            tracing::error!("update password policy error: {e}");
+            let _ = conn.close().await;
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(json!({"error": "internal"})),

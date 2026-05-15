@@ -97,6 +97,10 @@ pub fn router() -> Router<AppState> {
                 Err(e) => oidc_oidc::errors::from_oidc_error(&e).into_response(),
             }
         }))
+        // Account Recovery (public endpoint)
+        .route("/oidc/account-recovery/confirm", post(|State(state): State<AppState>, Json(req): Json<oidc_oidc::endpoints::account_recovery::AccountRecoveryConfirmRequest>| async move {
+            oidc_oidc::endpoints::account_recovery::confirm_account_recovery(State(state.oidc_state()), Json(req)).await
+        }))
         // Device Authorization Grant (RFC 8628)
         .route("/oidc/device/authorize", post(|State(state): State<AppState>, headers: axum::http::HeaderMap, Form(params): Form<HashMap<String, String>>| async move {
             let oidc_state = state.oidc_state();

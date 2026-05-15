@@ -228,6 +228,8 @@ impl PasswordFlow {
                 amr: Some(vec![oidc_core::utils::AMR_PWD.to_string()]),
                 azp: None, // Password flow does not currently support resource indicators
                 address: None,
+                roles: None,
+                groups: None,
             };
 
             let id_token = token_svc

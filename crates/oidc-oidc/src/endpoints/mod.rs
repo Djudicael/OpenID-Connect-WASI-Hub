@@ -1,5 +1,6 @@
 //! OIDC protocol endpoints.
 
+pub mod account_recovery;
 pub mod authorize;
 pub mod device_authorization;
 pub mod discovery;

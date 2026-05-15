@@ -21,7 +21,9 @@ pub use token::{
     extract_sector_identifier, generate_opaque_token, generate_sid, generate_user_code,
     sha2_256_hex,
 };
-pub use validation::{is_strong_password, is_valid_email, is_valid_username};
+pub use validation::{
+    is_strong_password, is_valid_email, is_valid_username, validate_password_against_policy,
+};
 
 #[cfg(test)]
 mod proptest_tests;

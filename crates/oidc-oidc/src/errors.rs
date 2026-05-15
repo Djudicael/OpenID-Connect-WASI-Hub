@@ -2,6 +2,7 @@
 
 use axum::{
     Json,
+    http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde_json::json;
@@ -128,6 +129,28 @@ impl OidcErrorResponse {
         Self {
             error: "expired_token".to_string(),
             error_description: Some("The device code has expired".to_string()),
+            error_uri: None,
+        }
+    }
+
+    /// Create an error response from an HTTP status code.
+    /// Used for simple status-based errors that don't fit standard OAuth2 categories.
+    pub fn from_status(status: StatusCode) -> Self {
+        let error = match status.as_u16() {
+            400 => "invalid_request",
+            401 => "invalid_client",
+            403 => "access_denied",
+            404 => "not_found",
+            500 | _ => "server_error",
+        };
+        Self {
+            error: error.to_string(),
+            error_description: Some(
+                status
+                    .canonical_reason()
+                    .unwrap_or("Unknown error")
+                    .to_string(),
+            ),
             error_uri: None,
         }
     }

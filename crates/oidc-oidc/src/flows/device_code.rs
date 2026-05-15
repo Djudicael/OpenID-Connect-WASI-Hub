@@ -143,6 +143,8 @@ impl DeviceCodeFlow {
                 amr: Some(vec![oidc_core::utils::AMR_DEVICE_CODE.to_string()]),
                 azp: None, // Device code flow does not currently support resource indicators
                 address: None,
+                roles: None,
+                groups: None,
             };
 
             let id_token = token_svc

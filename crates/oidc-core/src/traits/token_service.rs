@@ -64,6 +64,10 @@ pub struct IdTokenExtraClaims {
     /// Structured address claim (OIDC Core §5.1.1).
     /// Returned when the `address` scope is requested.
     pub address: Option<crate::models::AddressClaim>,
+    /// User roles (RBAC). Included when the client has `roles` scope or always for ID tokens.
+    pub roles: Option<Vec<String>>,
+    /// User groups. Included when the client has `groups` scope or always for ID tokens.
+    pub groups: Option<Vec<String>>,
 }
 
 /// Verified access token claims returned by the token service.

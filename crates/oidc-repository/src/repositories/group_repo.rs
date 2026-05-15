@@ -1,0 +1,220 @@
+use crate::connection::Connection;
+use crate::mapper;
+use oidc_core::OidcError;
+use oidc_core::models::Group;
+use uuid::Uuid;
+
+/// Escape special LIKE pattern characters (`%`, `_`, `\`) in a search string.
+fn escape_like(s: &str) -> String {
+    let mut escaped = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '%' | '_' | '\\' => {
+                escaped.push('\\');
+                escaped.push(ch);
+            }
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
+/// PostgreSQL implementation of the Group repository.
+pub struct GroupRepo;
+
+/// Column list for group SELECT queries (order must match map_row indices).
+const GROUP_COLUMNS: &str = r#"
+    id, realm_id, name, description, parent_id, created_at, updated_at
+"#;
+
+impl GroupRepo {
+    /// Find a group by its primary key.
+    pub async fn find_by_id(
+        &self,
+        conn: &mut Connection,
+        id: Uuid,
+    ) -> Result<Option<Group>, OidcError> {
+        let sql = &format!("SELECT {GROUP_COLUMNS} FROM groups WHERE id = $1 AND deleted_at IS NULL");
+        let row = conn
+            .query_one_params(sql, &[&id])
+            .await
+            .map_err(mapper::pg_err)?;
+        row.map(|r| Self::map_row(&r)).transpose()
+    }
+
+    /// Find a group by name within a realm.
+    pub async fn find_by_name(
+        &self,
+        conn: &mut Connection,
+        realm_id: Uuid,
+        name: &str,
+    ) -> Result<Option<Group>, OidcError> {
+        let sql = &format!(
+            "SELECT {GROUP_COLUMNS} FROM groups WHERE realm_id = $1 AND name = $2 AND deleted_at IS NULL"
+        );
+        let row = conn
+            .query_one_params(sql, &[&realm_id, &name])
+            .await
+            .map_err(mapper::pg_err)?;
+        row.map(|r| Self::map_row(&r)).transpose()
+    }
+
+    /// Insert a new group.
+    pub async fn create(&self, conn: &mut Connection, entity: &Group) -> Result<(), OidcError> {
+        let sql = r#"
+            INSERT INTO groups (
+                id, realm_id, name, description, parent_id, created_at, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        "#;
+        conn.execute_params(
+            sql,
+            &[
+                &entity.id,
+                &entity.realm_id,
+                &entity.name,
+                &entity.description,
+                &entity.parent_id,
+                &entity.created_at,
+                &entity.updated_at,
+            ],
+        )
+        .await
+        .map_err(mapper::pg_err)?;
+        Ok(())
+    }
+
+    /// Update an existing group.
+    pub async fn update(&self, conn: &mut Connection, entity: &Group) -> Result<(), OidcError> {
+        let sql = r#"
+            UPDATE groups SET
+                name = $1,
+                description = $2,
+                parent_id = $3,
+                updated_at = NOW()
+            WHERE id = $4 AND deleted_at IS NULL
+        "#;
+        conn.execute_params(
+            sql,
+            &[
+                &entity.name,
+                &entity.description,
+                &entity.parent_id,
+                &entity.id,
+            ],
+        )
+        .await
+        .map_err(mapper::pg_err)?;
+        Ok(())
+    }
+
+    /// Soft-delete a group by ID.
+    pub async fn delete(&self, conn: &mut Connection, id: Uuid) -> Result<(), OidcError> {
+        let sql = "UPDATE groups SET deleted_at = NOW() WHERE id = $1";
+        conn.execute_params(sql, &[&id])
+            .await
+            .map_err(mapper::pg_err)?;
+        Ok(())
+    }
+
+    /// List groups in a realm with optional search and pagination.
+    pub async fn list(
+        &self,
+        conn: &mut Connection,
+        realm_id: Uuid,
+        search: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<Group>, OidcError> {
+        let mut where_clauses = vec!["deleted_at IS NULL".to_string(), format!("realm_id = $1")];
+        let mut param_idx = 2usize;
+
+        if search.is_some() {
+            where_clauses.push(format!(
+                "(name ILIKE ${} OR description ILIKE ${})",
+                param_idx, param_idx
+            ));
+            param_idx += 1;
+        }
+
+        let where_sql = where_clauses.join(" AND ");
+        let limit_idx = param_idx;
+        let offset_idx = param_idx + 1;
+
+        let sql = format!(
+            "SELECT {GROUP_COLUMNS} FROM groups WHERE {where_sql} ORDER BY created_at DESC LIMIT ${limit_idx} OFFSET ${offset_idx}"
+        );
+
+        let pattern = search.map(|s| format!("%{}%", escape_like(s)));
+
+        let mut params: Vec<&dyn wasi_pg_client::pg_types::ToSql> = Vec::new();
+        params.push(&realm_id);
+        if let Some(ref p) = pattern {
+            params.push(p);
+        }
+        params.push(&limit);
+        params.push(&offset);
+
+        let result = conn
+            .query_params(&sql, &params)
+            .await
+            .map_err(mapper::pg_err)?;
+        result
+            .into_rows()
+            .iter()
+            .map(|r| Self::map_row(r))
+            .collect::<Result<Vec<_>, _>>()
+    }
+
+    /// Count groups in a realm.
+    pub async fn count(
+        &self,
+        conn: &mut Connection,
+        realm_id: Uuid,
+    ) -> Result<i64, OidcError> {
+        let sql = "SELECT COUNT(*) FROM groups WHERE deleted_at IS NULL AND realm_id = $1";
+        let result = conn
+            .query_params(sql, &[&realm_id])
+            .await
+            .map_err(mapper::pg_err)?;
+        let row = result
+            .into_rows()
+            .into_iter()
+            .next()
+            .ok_or(OidcError::Internal("count returned no rows".into()))?;
+        mapper::i64_(&row, 0)
+    }
+
+    /// Find all groups assigned to a user (through user_groups junction).
+    pub async fn find_by_user_id(
+        &self,
+        conn: &mut Connection,
+        user_id: Uuid,
+    ) -> Result<Vec<Group>, OidcError> {
+        let sql = &format!(
+            "SELECT g.{GROUP_COLUMNS} FROM groups g \
+             INNER JOIN user_groups ug ON ug.group_id = g.id \
+             WHERE ug.user_id = $1 AND g.deleted_at IS NULL"
+        );
+        let result = conn
+            .query_params(sql, &[&user_id])
+            .await
+            .map_err(mapper::pg_err)?;
+        result
+            .into_rows()
+            .iter()
+            .map(|r| Self::map_row(r))
+            .collect::<Result<Vec<_>, _>>()
+    }
+
+    fn map_row(row: &wasi_pg_client::Row) -> Result<Group, OidcError> {
+        Ok(Group {
+            id: mapper::uuid(row, 0)?,
+            realm_id: mapper::uuid(row, 1)?,
+            name: mapper::string(row, 2)?,
+            description: mapper::opt_string(row, 3)?,
+            parent_id: mapper::opt_uuid(row, 4)?,
+            created_at: mapper::datetime(row, 5)?,
+            updated_at: mapper::datetime(row, 6)?,
+        })
+    }
+}
