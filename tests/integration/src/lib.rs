@@ -47,6 +47,12 @@ pub mod security_tests;
 pub mod repo_tests;
 
 #[cfg(test)]
+pub mod endpoint_tests;
+
+#[cfg(test)]
+pub mod admin_tests;
+
+#[cfg(test)]
 mod http_tests {
     use axum::body::Body;
     use axum::http::{Request, StatusCode};

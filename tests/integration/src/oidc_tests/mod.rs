@@ -39,13 +39,25 @@ fn parse_redirect_params(location: &str) -> (String, Option<String>) {
     (code.unwrap_or_default(), state)
 }
 
-/// Extract a query parameter from a redirect Location header.
+/// Extract a query or fragment parameter from a redirect Location header.
 fn parse_redirect_query(location: &str, key: &str) -> Option<String> {
     let url =
         url::Url::parse(location).unwrap_or_else(|_| panic!("invalid redirect URL: {location}"));
-    url.query_pairs()
-        .find(|(k, _)| k == key)
-        .map(|(_, v)| v.to_string())
+    // Check query parameters first
+    if let Some((_, v)) = url.query_pairs().find(|(k, _)| k == key) {
+        return Some(v.to_string());
+    }
+    // Check fragment parameters (used by implicit/hybrid flows)
+    if let Some(fragment) = url.fragment() {
+        for pair in fragment.split('&') {
+            if let Some((k, v)) = pair.split_once('=') {
+                if k == key {
+                    return Some(urlencoding::decode(v).ok()?.to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Login via the direct password grant and return the full response body.
