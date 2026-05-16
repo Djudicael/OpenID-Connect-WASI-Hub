@@ -55,8 +55,6 @@ allow-build-scripts = [
 # Source / origin checking
 # ---------------------------------------------------------------------------
 [sources]
-# Only allow crates from crates.io and our own git repos
-unknown-registry = "warn"
-unknown-git = "warn"
-# Allow the pg_client git dependency
-allow-git = ["https://github.com/Djudicael/pg_client"]
+# Only allow crates from crates.io
+unknown-registry = "deny"
+unknown-git = "deny"
