@@ -57,119 +57,6 @@ class LoginPage extends BaseComponent {
   template() {
     const { error, loading, mode, realm } = this._state;
     return html`
-      <style>
-        :host { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-        .login-box {
-          background: var(--color-surface);
-          padding: 2.5rem;
-          border-radius: var(--radius-md);
-          box-shadow: var(--shadow-md);
-          width: 100%;
-          max-width: 24rem;
-          text-align: center;
-        }
-        .login-title {
-          font-size: 1.5rem;
-          font-weight: 600;
-          margin-bottom: 0.5rem;
-        }
-        .login-subtitle {
-          color: var(--color-text-muted);
-          margin-bottom: 1.5rem;
-          font-size: 0.875rem;
-        }
-        .login-form {
-          display: flex;
-          flex-direction: column;
-          gap: 1rem;
-          margin-bottom: 1rem;
-        }
-        .form-group {
-          text-align: left;
-        }
-        .form-group label {
-          display: block;
-          font-size: 0.875rem;
-          font-weight: 500;
-          margin-bottom: 0.25rem;
-          color: var(--color-text);
-        }
-        .form-group input, .form-group select {
-          width: 100%;
-          padding: 0.625rem;
-          border: 1px solid var(--color-border);
-          border-radius: var(--radius-sm);
-          font-size: 0.875rem;
-          background: var(--color-bg);
-          color: var(--color-text);
-          box-sizing: border-box;
-        }
-        .form-group input:focus, .form-group select:focus {
-          outline: none;
-          border-color: var(--color-primary);
-          box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1);
-        }
-        .login-btn {
-          width: 100%;
-          padding: 0.75rem;
-          font-size: 1rem;
-          font-weight: 500;
-          background: var(--color-primary);
-          color: #fff;
-          border: none;
-          border-radius: var(--radius-sm);
-          cursor: pointer;
-        }
-        .login-btn:hover { background: var(--color-primary-dark); }
-        .login-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-        .divider {
-          display: flex;
-          align-items: center;
-          gap: 0.75rem;
-          margin: 1rem 0;
-          color: var(--color-text-muted);
-          font-size: 0.75rem;
-        }
-        .divider::before, .divider::after {
-          content: '';
-          flex: 1;
-          height: 1px;
-          background: var(--color-border);
-        }
-        .oidc-btn {
-          width: 100%;
-          padding: 0.75rem;
-          font-size: 0.875rem;
-          font-weight: 500;
-          background: var(--color-surface);
-          color: var(--color-text);
-          border: 1px solid var(--color-border);
-          border-radius: var(--radius-sm);
-          cursor: pointer;
-        }
-        .oidc-btn:hover { background: var(--color-bg); }
-        .toggle-link {
-          color: var(--color-primary);
-          font-size: 0.875rem;
-          cursor: pointer;
-          background: none;
-          border: none;
-          text-decoration: underline;
-        }
-        .error {
-          color: var(--color-danger);
-          font-size: 0.875rem;
-          margin-top: 1rem;
-          padding: 0.75rem;
-          background: #fef2f2;
-          border-radius: var(--radius-sm);
-        }
-        .hint {
-          color: var(--color-text-muted);
-          font-size: 0.75rem;
-          margin-top: 0.5rem;
-        }
-      </style>
       <div class="login-box">
         <h1 class="login-title">OpenID Connect Hub</h1>
         <p class="login-subtitle">Admin Console</p>
@@ -188,12 +75,10 @@ class LoginPage extends BaseComponent {
             </div>
             <div class="form-group">
               <label for="password">Password</label>
-              <div style="position:relative">
-                <input id="password" type="password" placeholder="••••••••" required ?disabled=${loading}
-                  style="padding-right:2.5rem" />
+              <div class="password-wrap">
+                <input id="password" type="password" placeholder="••••••••" required ?disabled=${loading} />
                 <button type="button" class="toggle-password" @click=${(e) => this._togglePassword(e)}
-                  aria-label="Toggle password visibility" tabindex="-1"
-                  style="position:absolute;right:0.5rem;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:1rem;color:var(--color-text-muted);padding:0.25rem;">
+                  aria-label="Toggle password visibility">
                   &#128065;
                 </button>
               </div>

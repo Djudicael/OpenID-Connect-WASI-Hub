@@ -69,35 +69,6 @@ class Pagination extends BaseComponent {
     for (let i = start; i <= end; i++) pages.push(i);
 
     return html`
-      <style>
-        :host { display: flex; justify-content: center; margin-top: 1rem; }
-        .pagination {
-          display: flex;
-          gap: 0.25rem;
-          align-items: center;
-        }
-        .page-btn {
-          padding: 0.375rem 0.625rem;
-          font-size: 0.875rem;
-          border: 1px solid #e2e8f0;
-          background: var(--color-surface);
-          color: var(--color-text);
-          border-radius: var(--radius-sm);
-          cursor: pointer;
-        }
-        .page-btn:hover:not(:disabled) { background: var(--color-bg); }
-        .page-btn.active {
-          background: var(--color-primary);
-          color: #fff;
-          border-color: var(--color-primary);
-        }
-        .page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-        .page-info {
-          font-size: 0.875rem;
-          color: var(--color-text-muted);
-          margin-left: 0.75rem;
-        }
-      </style>
       <div class="pagination">
         <button class="page-btn" ?disabled=${page <= 1} @click=${() => this._goTo(page - 1)}>Prev</button>
         ${pages.map(p => html`

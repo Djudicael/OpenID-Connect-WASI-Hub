@@ -103,8 +103,7 @@ class ScopesPage extends BaseComponent {
       { key: 'id', label: 'Actions', render: (_, row) => html`<div style="display:flex;gap:0.5rem"><c-button size="sm" variant="danger" @click=${() => this._deleteScope(row.id)}>Delete</c-button></div>` },
     ];
 
-    return html`<style>:host{display:block}.toolbar{display:flex;gap:1rem;margin-bottom:1rem;align-items:center}.realm-select{padding:.375rem .75rem;font-size:.875rem;border:1px solid #e2e8f0;border-radius:var(--radius-sm);font-family:inherit;background:var(--color-surface);min-width:12rem}.form{max-width:32rem}.field{margin-bottom:1rem}.field-label{display:block;font-size:.875rem;font-weight:500;margin-bottom:.25rem}.field-input{width:100%;padding:.5rem .75rem;font-size:.875rem;border:1px solid #e2e8f0;border-radius:var(--radius-sm);font-family:inherit;box-sizing:border-box}.field-input:focus{outline:none;border-color:var(--color-primary)}.field-checkbox{display:flex;align-items:center;gap:.5rem}.field-checkbox input{width:1rem;height:1rem}</style>
-      <c-page-layout title="Scopes">
+    return html`<c-page-layout title="Scopes">
         <div slot="actions"><c-button variant="primary" @click=${() => this._openCreateModal()}>+ Add Scope</c-button></div>
         <div class="toolbar">
           <label style="font-size:.875rem;color:var(--color-text-muted)">Realm:

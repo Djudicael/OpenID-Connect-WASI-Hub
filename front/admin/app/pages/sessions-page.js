@@ -127,39 +127,6 @@ class SessionsPage extends BaseComponent {
     ];
 
     return html`
-      <style>
-        :host { display: block; }
-        .toolbar {
-          display: flex;
-          gap: 1rem;
-          margin-bottom: 1rem;
-          align-items: center;
-          flex-wrap: wrap;
-        }
-        .filter-label {
-          font-size: 0.875rem;
-          color: var(--color-text-muted);
-        }
-        .bulk-bar {
-          display: flex;
-          align-items: center;
-          gap: 0.75rem;
-          padding: 0.5rem 1rem;
-          background: #fef2f2;
-          border: 1px solid #fecaca;
-          border-radius: var(--radius-sm);
-          margin-bottom: 1rem;
-          font-size: 0.875rem;
-        }
-        .bulk-bar span { color: var(--color-danger); font-weight: 500; }
-        .empty-state {
-          text-align: center;
-          padding: 3rem 1rem;
-          color: var(--color-text-muted);
-        }
-        .empty-state-icon { font-size: 2.5rem; margin-bottom: 0.75rem; opacity: 0.5; }
-        .empty-state-text { font-size: 1rem; margin-bottom: 1rem; }
-      </style>
       <c-page-layout title="Sessions">
         <div class="toolbar">
           <label class="filter-label">

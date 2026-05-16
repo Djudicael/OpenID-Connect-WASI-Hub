@@ -19,7 +19,8 @@ app.use((req, res, next) => {
   res.setHeader('Content-Security-Policy',
     "default-src 'self'; " +
     "script-src 'self'; " +
-    "style-src 'self' 'unsafe-inline'; " +
+    "style-src-elem 'self'; " +
+    "style-src-attr 'unsafe-inline'; " +
     "img-src 'self' data:; " +
     "font-src 'self'; " +
     "connect-src 'self'; " +
@@ -50,8 +51,11 @@ Canonical: ${req.protocol}://${req.get('host')}/.well-known/security.txt
 `);
 });
 
-// SPA fallback — serve index.html for all non-API routes
+// SPA fallback — serve index.html only for non-file routes (not for .js, .css, etc.)
 app.get('/*', (req, res) => {
+  if (/\.(js|css|json|png|jpg|jpeg|gif|ico|svg|woff2?|ttf|eot)$/i.test(req.path)) {
+    return res.status(404).send('Not Found');
+  }
   res.sendFile(join(__dirname, 'index.html'));
 });
 

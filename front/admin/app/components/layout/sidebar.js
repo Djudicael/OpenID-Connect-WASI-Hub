@@ -45,50 +45,6 @@ class Sidebar extends BaseComponent {
   template() {
     const current = this._state.currentPath;
     return html`
-      <style>
-        :host { display: block; }
-        .sidebar {
-          width: 14rem;
-          background: var(--color-surface);
-          border-right: 1px solid #e2e8f0;
-          min-height: 100vh;
-          padding: 1rem 0;
-        }
-        .sidebar-brand {
-          padding: 0 1.25rem 1rem;
-          font-size: 1rem;
-          font-weight: 700;
-          color: var(--color-primary);
-          letter-spacing: -0.01em;
-        }
-        .sidebar-nav {
-          list-style: none;
-          margin: 0;
-          padding: 0;
-        }
-        .sidebar-nav li {
-          margin: 0;
-        }
-        .sidebar-nav a {
-          display: block;
-          padding: 0.625rem 1.25rem;
-          color: var(--color-text-muted);
-          text-decoration: none;
-          font-size: 0.875rem;
-          font-weight: 500;
-          border-left: 3px solid transparent;
-          transition: all 0.15s;
-        }
-        .sidebar-nav a:hover {
-          color: var(--color-text);
-          background: #f8fafc;
-        }
-        .sidebar-nav a.active {
-          color: var(--color-primary);
-          background: #eff6ff;
-          border-left-color: var(--color-primary);
-        }
-      </style>
       <nav class="sidebar">
         <div class="sidebar-brand">OIDC Hub</div>
         <ul class="sidebar-nav">

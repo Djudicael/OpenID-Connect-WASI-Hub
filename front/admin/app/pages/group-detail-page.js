@@ -60,7 +60,7 @@ class GroupDetailPage extends BaseComponent {
       this.setState({ group, savedGroup: { ...group }, loading: false, dirty: false });
       this._loadGroupRoles(id);
       this._loadGroupMembers(id);
-    } catch (err) {
+    } catch (err) { if (err.name === "AbortError") return;
       showToast('Failed to load group', 'error');
       this.setState({ loading: false });
     }
@@ -71,7 +71,7 @@ class GroupDetailPage extends BaseComponent {
     try {
       const data = await listGroupRoles(id);
       this.setState({ groupRoles: data.items || data || [], rolesLoading: false });
-    } catch (err) {
+    } catch (err) { if (err.name === "AbortError") return;
       this.setState({ groupRoles: [], rolesLoading: false });
     }
   }
@@ -82,7 +82,7 @@ class GroupDetailPage extends BaseComponent {
       // The group object may include members; if not, we leave it empty
       const group = this._state.group;
       this.setState({ groupMembers: group.members || [], membersLoading: false });
-    } catch (err) {
+    } catch (err) { if (err.name === "AbortError") return;
       this.setState({ groupMembers: [], membersLoading: false });
     }
   }
@@ -99,7 +99,7 @@ class GroupDetailPage extends BaseComponent {
       showToast('Group updated', 'success');
       const savedGroup = { ...group };
       this.setState({ saving: false, savedGroup, dirty: false });
-    } catch (err) {
+    } catch (err) { if (err.name === "AbortError") return;
       showToast('Failed to update group', 'error');
       this.setState({ saving: false });
     }
@@ -149,7 +149,7 @@ class GroupDetailPage extends BaseComponent {
       const assignedIds = new Set((this._state.groupRoles || []).map(r => r.id));
       const available = allRoles.filter(r => !assignedIds.has(r.id));
       this.setState({ availableRoles: available });
-    } catch (err) {
+    } catch (err) { if (err.name === "AbortError") return;
       this.setState({ availableRoles: [] });
     }
   }
@@ -163,7 +163,7 @@ class GroupDetailPage extends BaseComponent {
       showToast('Role assigned', 'success');
       this._closeAddRoleModal();
       this._loadGroupRoles(group.id);
-    } catch (err) {
+    } catch (err) { if (err.name === "AbortError") return;
       showToast('Failed to assign role', 'error');
       this.setState({ addRoleLoading: false });
     }
@@ -176,7 +176,7 @@ class GroupDetailPage extends BaseComponent {
       await unassignRoleFromGroup(group.id, roleId);
       showToast('Role removed', 'success');
       this._loadGroupRoles(group.id);
-    } catch (err) {
+    } catch (err) { if (err.name === "AbortError") return;
       showToast('Failed to remove role', 'error');
     }
   }
@@ -184,106 +184,6 @@ class GroupDetailPage extends BaseComponent {
   template() {
     const { group, loading, saving, dirty, groupRoles, groupMembers, rolesLoading, showAddRoleModal, availableRoles, addRoleLoading } = this._state;
     return html`
-      <style>
-        :host { display: block; }
-        .back-link {
-          display: inline-flex;
-          align-items: center;
-          gap: 0.25rem;
-          color: var(--color-primary);
-          text-decoration: none;
-          font-size: 0.875rem;
-          margin-bottom: 1rem;
-          cursor: pointer;
-        }
-        .dirty-indicator {
-          display: inline-block;
-          width: 0.5rem;
-          height: 0.5rem;
-          border-radius: 50%;
-          background: var(--color-warning, #f59e0b);
-          margin-left: 0.5rem;
-          vertical-align: middle;
-        }
-        .form { max-width: 32rem; }
-        .field { margin-bottom: 1rem; }
-        .field-label {
-          display: block;
-          font-size: 0.875rem;
-          font-weight: 500;
-          margin-bottom: 0.25rem;
-        }
-        .field-input {
-          width: 100%;
-          padding: 0.5rem 0.75rem;
-          font-size: 0.875rem;
-          border: 1px solid #e2e8f0;
-          border-radius: var(--radius-sm);
-          font-family: inherit;
-          box-sizing: border-box;
-        }
-        .field-input:focus {
-          outline: none;
-          border-color: var(--color-primary);
-        }
-        .actions { display: flex; gap: 0.5rem; margin-top: 1.5rem; }
-        .section {
-          margin-top: 2rem;
-          padding-top: 1.5rem;
-          border-top: 1px solid #e2e8f0;
-        }
-        .section-title {
-          font-size: 1rem;
-          font-weight: 600;
-          margin-bottom: 1rem;
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-        }
-        .section-actions {
-          margin-bottom: 0.75rem;
-        }
-        .item-list {
-          list-style: none;
-          padding: 0;
-          margin: 0;
-        }
-        .item-list li {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 0.5rem 0.75rem;
-          border: 1px solid #e2e8f0;
-          border-radius: var(--radius-sm);
-          margin-bottom: 0.375rem;
-          font-size: 0.875rem;
-        }
-        .item-list li .item-name {
-          font-weight: 500;
-        }
-        .item-list li .item-desc {
-          color: var(--color-text-muted);
-          margin-left: 0.5rem;
-        }
-        .empty-state {
-          color: var(--color-text-muted);
-          font-size: 0.875rem;
-          padding: 0.5rem 0;
-        }
-        .field-select {
-          width: 100%;
-          padding: 0.5rem 0.75rem;
-          font-size: 0.875rem;
-          border: 1px solid #e2e8f0;
-          border-radius: var(--radius-sm);
-          font-family: inherit;
-          box-sizing: border-box;
-        }
-        .field-select:focus {
-          outline: none;
-          border-color: var(--color-primary);
-        }
-      </style>
       <c-page-layout title="Group Details">
         <span class="back-link" @click=${() => this._navigateAway('/groups')}>
           &larr; Back to Groups
@@ -370,7 +270,7 @@ class GroupDetailPage extends BaseComponent {
         <div slot="footer">
           <c-button variant="secondary" @click=${() => this._closeAddRoleModal()}>Cancel</c-button>
           <c-button variant="primary" ?disabled=${addRoleLoading} @click=${() => {
-        const select = this.shadowRoot.getElementById('role-select');
+        const select = this.shadowRoot.querySelector('#role-select');
         if (select && select.value) this._addRole(select.value);
       }}>
             ${addRoleLoading ? 'Adding...' : 'Add Role'}

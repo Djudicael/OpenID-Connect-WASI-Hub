@@ -50,7 +50,7 @@ class RoleDetailPage extends BaseComponent {
         permissions: Array.isArray(role.permissions) ? role.permissions.join(', ') : (role.permissions || ''),
       };
       this.setState({ role: normalized, savedRole: { ...normalized }, loading: false, dirty: false });
-    } catch (err) {
+    } catch (err) { if (err.name === "AbortError") return;
       showToast('Failed to load role', 'error');
       this.setState({ loading: false });
     }
@@ -72,7 +72,7 @@ class RoleDetailPage extends BaseComponent {
       showToast('Role updated', 'success');
       const savedRole = { ...role };
       this.setState({ saving: false, savedRole, dirty: false });
-    } catch (err) {
+    } catch (err) { if (err.name === "AbortError") return;
       showToast('Failed to update role', 'error');
       this.setState({ saving: false });
     }
@@ -102,55 +102,6 @@ class RoleDetailPage extends BaseComponent {
   template() {
     const { role, loading, saving, dirty } = this._state;
     return html`
-      <style>
-        :host { display: block; }
-        .back-link {
-          display: inline-flex;
-          align-items: center;
-          gap: 0.25rem;
-          color: var(--color-primary);
-          text-decoration: none;
-          font-size: 0.875rem;
-          margin-bottom: 1rem;
-          cursor: pointer;
-        }
-        .dirty-indicator {
-          display: inline-block;
-          width: 0.5rem;
-          height: 0.5rem;
-          border-radius: 50%;
-          background: var(--color-warning, #f59e0b);
-          margin-left: 0.5rem;
-          vertical-align: middle;
-        }
-        .form { max-width: 32rem; }
-        .field { margin-bottom: 1rem; }
-        .field-label {
-          display: block;
-          font-size: 0.875rem;
-          font-weight: 500;
-          margin-bottom: 0.25rem;
-        }
-        .field-input {
-          width: 100%;
-          padding: 0.5rem 0.75rem;
-          font-size: 0.875rem;
-          border: 1px solid #e2e8f0;
-          border-radius: var(--radius-sm);
-          font-family: inherit;
-          box-sizing: border-box;
-        }
-        .field-input:focus {
-          outline: none;
-          border-color: var(--color-primary);
-        }
-        .hint {
-          font-size: 0.75rem;
-          color: var(--color-text-muted);
-          margin-top: 0.25rem;
-        }
-        .actions { display: flex; gap: 0.5rem; margin-top: 1.5rem; }
-      </style>
       <c-page-layout title="Role Details">
         <span class="back-link" @click=${() => this._navigateAway('/roles')}>
           &larr; Back to Roles

@@ -123,41 +123,6 @@ class ApiKeysPage extends BaseComponent {
     ];
 
     return html`
-      <style>
-        :host { display: block; }
-        .toolbar {
-          display: flex;
-          gap: 1rem;
-          margin-bottom: 1rem;
-          align-items: center;
-          flex-wrap: wrap;
-        }
-        .filter-label {
-          font-size: 0.875rem;
-          color: var(--color-text-muted);
-        }
-        .realm-select {
-          padding: 0.375rem 0.75rem;
-          font-size: 0.875rem;
-          border: 1px solid #e2e8f0;
-          border-radius: var(--radius-sm, 0.25rem);
-          font-family: inherit;
-          background: var(--color-surface, #fff);
-          color: var(--color-text, #1e293b);
-          min-width: 12rem;
-        }
-        .realm-select:focus {
-          outline: none;
-          border-color: var(--color-primary, #3b82f6);
-        }
-        .empty-state {
-          text-align: center;
-          padding: 3rem 1rem;
-          color: var(--color-text-muted);
-        }
-        .empty-state-icon { font-size: 2.5rem; margin-bottom: 0.75rem; opacity: 0.5; }
-        .empty-state-text { font-size: 1rem; margin-bottom: 1rem; }
-      </style>
       <c-page-layout title="API Keys">
         <div slot="actions">
           <c-button variant="primary" @click=${() => navigate('/api-keys/create')}>+ Create Key</c-button>

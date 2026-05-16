@@ -78,7 +78,7 @@ class ClientDetailPage extends BaseComponent {
     try {
       const client = await getClient(id);
       this.setState({ client, savedClient: { ...client }, loading: false, dirty: false });
-    } catch (err) {
+    } catch (err) { if (err.name === "AbortError") return;
       showToast('Failed to load client', 'error');
       this.setState({ loading: false });
     }
@@ -114,7 +114,7 @@ class ClientDetailPage extends BaseComponent {
       });
       showToast('Client updated', 'success');
       this.setState({ saving: false, savedClient: { ...client }, dirty: false });
-    } catch (err) {
+    } catch (err) { if (err.name === "AbortError") return;
       showToast('Failed to update client', 'error');
       this.setState({ saving: false });
     }
@@ -180,105 +180,6 @@ class ClientDetailPage extends BaseComponent {
   template() {
     const { client, loading, saving, dirty } = this._state;
     return html`
-      <style>
-        :host { display: block; }
-        .back-link {
-          display: inline-flex;
-          align-items: center;
-          gap: 0.25rem;
-          color: var(--color-primary);
-          text-decoration: none;
-          font-size: 0.875rem;
-          margin-bottom: 1rem;
-          cursor: pointer;
-        }
-        .dirty-indicator {
-          display: inline-block;
-          width: 0.5rem;
-          height: 0.5rem;
-          border-radius: 50%;
-          background: var(--color-warning, #f59e0b);
-          margin-left: 0.5rem;
-          vertical-align: middle;
-        }
-        .form { max-width: 32rem; }
-        .field { margin-bottom: 1rem; }
-        .field-label {
-          display: block;
-          font-size: 0.875rem;
-          font-weight: 500;
-          margin-bottom: 0.25rem;
-        }
-        .field-input, .field-textarea {
-          width: 100%;
-          padding: 0.5rem 0.75rem;
-          font-size: 0.875rem;
-          border: 1px solid #e2e8f0;
-          border-radius: var(--radius-sm);
-          font-family: inherit;
-          box-sizing: border-box;
-        }
-        .field-input:focus, .field-textarea:focus {
-          outline: none;
-          border-color: var(--color-primary);
-        }
-        .field-textarea {
-          resize: vertical;
-          min-height: 4rem;
-        }
-        .field-input[readonly] {
-          background: #f8fafc;
-          color: var(--color-text-muted);
-          cursor: default;
-        }
-        .hint {
-          font-size: 0.75rem;
-          color: var(--color-text-muted);
-          margin-top: 0.25rem;
-        }
-        .checkbox-row {
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          margin-bottom: 1rem;
-        }
-        .actions { display: flex; gap: 0.5rem; margin-top: 1.5rem; }
-        .info-row {
-          font-size: 0.75rem;
-          color: var(--color-text-muted);
-          margin-bottom: 0.5rem;
-        }
-        .section {
-          margin-top: 2rem;
-          padding-top: 1.5rem;
-          border-top: 1px solid #e2e8f0;
-        }
-        .section-title {
-          font-size: 1rem;
-          font-weight: 600;
-          margin-bottom: 1rem;
-        }
-        .field-select {
-          width: 100%;
-          padding: 0.5rem 0.75rem;
-          font-size: 0.875rem;
-          border: 1px solid #e2e8f0;
-          border-radius: var(--radius-sm);
-          font-family: inherit;
-          box-sizing: border-box;
-        }
-        .field-select:focus {
-          outline: none;
-          border-color: var(--color-primary);
-        }
-        .grant-type-list {
-          max-height: 12rem;
-          overflow-y: auto;
-          border: 1px solid #e2e8f0;
-          border-radius: var(--radius-sm);
-          padding: 0.5rem;
-        }
-      </style>
       <c-page-layout title="Client Details">
         <span class="back-link" @click=${() => this._navigateAway('/clients')}>
           &larr; Back to Clients

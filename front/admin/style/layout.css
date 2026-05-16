@@ -5,6 +5,13 @@
     min-height: calc(100vh - 3.5rem);
 }
 
+.content-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
 router-outlet {
     display: block;
     flex: 1;

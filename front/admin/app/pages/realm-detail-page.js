@@ -57,7 +57,7 @@ class RealmDetailPage extends BaseComponent {
       if (!realm.config) realm.config = {};
       if (!realm.config.theme) realm.config.theme = {};
       this.setState({ realm, savedRealm: JSON.parse(JSON.stringify(realm)), loading: false, dirty: false });
-    } catch (err) {
+    } catch (err) { if (err.name === "AbortError") return;
       showToast('Failed to load realm', 'error');
       this.setState({ loading: false });
     }
@@ -76,7 +76,7 @@ class RealmDetailPage extends BaseComponent {
       });
       showToast('Realm updated', 'success');
       this.setState({ saving: false, savedRealm: JSON.parse(JSON.stringify(realm)), dirty: false });
-    } catch (err) {
+    } catch (err) { if (err.name === "AbortError") return;
       showToast('Failed to update realm', 'error');
       this.setState({ saving: false });
     }
@@ -109,67 +109,6 @@ class RealmDetailPage extends BaseComponent {
   template() {
     const { realm, loading, saving, dirty } = this._state;
     return html`
-      <style>
-        :host { display: block; }
-        .back-link {
-          display: inline-flex;
-          align-items: center;
-          gap: 0.25rem;
-          color: var(--color-primary);
-          text-decoration: none;
-          font-size: 0.875rem;
-          margin-bottom: 1rem;
-          cursor: pointer;
-        }
-        .dirty-indicator {
-          display: inline-block;
-          width: 0.5rem;
-          height: 0.5rem;
-          border-radius: 50%;
-          background: var(--color-warning, #f59e0b);
-          margin-left: 0.5rem;
-          vertical-align: middle;
-        }
-        .form { max-width: 32rem; }
-        .field { margin-bottom: 1rem; }
-        .field-label {
-          display: block;
-          font-size: 0.875rem;
-          font-weight: 500;
-          margin-bottom: 0.25rem;
-        }
-        .field-input {
-          width: 100%;
-          padding: 0.5rem 0.75rem;
-          font-size: 0.875rem;
-          border: 1px solid #e2e8f0;
-          border-radius: var(--radius-sm);
-          font-family: inherit;
-          box-sizing: border-box;
-        }
-        .field-input:focus {
-          outline: none;
-          border-color: var(--color-primary);
-        }
-        .hint {
-          font-size: 0.75rem;
-          color: var(--color-text-muted);
-          margin-top: 0.25rem;
-        }
-        .checkbox-row {
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          margin-bottom: 1rem;
-        }
-        .realm-id {
-          font-size: 0.75rem;
-          color: var(--color-text-muted);
-          margin-bottom: 1.5rem;
-          font-family: monospace;
-        }
-        .actions { display: flex; gap: 0.5rem; margin-top: 1.5rem; }
-      </style>
       <c-page-layout title="Realm Details">
         <span class="back-link" @click=${() => this._navigateAway('/realms')}>
           &larr; Back to Realms

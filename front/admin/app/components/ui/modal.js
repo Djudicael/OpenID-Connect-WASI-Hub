@@ -143,55 +143,6 @@ class Modal extends BaseComponent {
     requestAnimationFrame(() => this.updated());
 
     return html`
-      <style>
-        :host { display: block; }
-        .overlay {
-          position: fixed;
-          inset: 0;
-          background: rgba(0, 0, 0, 0.4);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          z-index: 100;
-          padding: 1rem;
-        }
-        .modal {
-          background: var(--color-surface);
-          border-radius: var(--radius-md);
-          box-shadow: var(--shadow-md);
-          max-width: 32rem;
-          width: 100%;
-          max-height: 90vh;
-          overflow-y: auto;
-        }
-        .modal-header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 1rem 1.5rem;
-          border-bottom: 1px solid #e2e8f0;
-        }
-        .modal-title {
-          font-size: 1.125rem;
-          font-weight: 600;
-          margin: 0;
-        }
-        .modal-close {
-          background: none;
-          border: none;
-          font-size: 1.25rem;
-          cursor: pointer;
-          color: var(--color-text-muted);
-        }
-        .modal-body { padding: 1.5rem; }
-        .modal-footer {
-          display: flex;
-          justify-content: flex-end;
-          gap: 0.5rem;
-          padding: 1rem 1.5rem;
-          border-top: 1px solid #e2e8f0;
-        }
-      </style>
       <div class="overlay" role="dialog" aria-modal="true" aria-label=${title} @click=${(e) => { if (e.target === e.currentTarget) this.close(); }}>
         <div class="modal">
           <div class="modal-header">

@@ -4,6 +4,10 @@ export class BaseComponent extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
+    const link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = '/style/bundle.css';
+    this.shadowRoot.appendChild(link);
     this._state = {};
     this._abortController = new AbortController();
   }
@@ -37,36 +41,7 @@ export class BaseComponent extends HTMLElement {
     } catch (err) {
       console.error(`Component render error in <${this.tagName.toLowerCase()}>:`, err);
       render(
-        html`
-          <style>
-            :host { display: block; }
-            .error-boundary {
-              padding: 1rem;
-              background: #fef2f2;
-              border: 1px solid #fecaca;
-              border-radius: 0.375rem;
-              color: #991b1b;
-              font-size: 0.875rem;
-            }
-            .error-boundary summary {
-              font-weight: 600;
-              cursor: pointer;
-              margin-bottom: 0.25rem;
-            }
-            .error-boundary pre {
-              margin: 0.5rem 0 0;
-              white-space: pre-wrap;
-              font-size: 0.75rem;
-              opacity: 0.8;
-            }
-          </style>
-          <div class="error-boundary">
-            <details>
-              <summary>Component Error</summary>
-              <pre>${err.message}\n${err.stack || ''}</pre>
-            </details>
-          </div>
-        `,
+        html`<div class="error-boundary"><details><summary>Component Error</summary><pre>${err.message}\n${err.stack || ''}</pre></details></div>`,
         this.shadowRoot
       );
     }

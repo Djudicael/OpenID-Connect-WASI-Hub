@@ -46,58 +46,6 @@ class DashboardPage extends BaseComponent {
   template() {
     const { stats, recentEvents, loading } = this._state;
     return html`
-      <style>
-        :host { display: block; }
-        .stats-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-          gap: 1rem;
-          margin-bottom: 1.5rem;
-        }
-        .stat-card {
-          background: var(--color-surface);
-          padding: 1.25rem;
-          border-radius: var(--radius-md);
-          box-shadow: var(--shadow-sm);
-        }
-        .stat-label {
-          font-size: 0.875rem;
-          color: var(--color-text-muted);
-          margin-bottom: 0.5rem;
-        }
-        .stat-value {
-          font-size: 1.75rem;
-          font-weight: 700;
-          color: var(--color-text);
-        }
-        .section-title {
-          font-size: 1.125rem;
-          font-weight: 600;
-          margin-bottom: 1rem;
-        }
-        .events-table {
-          width: 100%;
-          border-collapse: collapse;
-          font-size: 0.875rem;
-        }
-        .events-table th, .events-table td {
-          padding: 0.75rem 1rem;
-          text-align: left;
-          border-bottom: 1px solid #e2e8f0;
-        }
-        .events-table th {
-          font-weight: 600;
-          color: var(--color-text-muted);
-          background: #f8fafc;
-          font-size: 0.75rem;
-          text-transform: uppercase;
-        }
-        .empty-state {
-          text-align: center;
-          padding: 2rem;
-          color: var(--color-text-muted);
-        }
-      </style>
       <c-page-layout title="Dashboard">
         <div class="stats-grid">
           <div class="stat-card">

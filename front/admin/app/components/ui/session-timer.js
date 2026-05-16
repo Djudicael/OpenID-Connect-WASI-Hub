@@ -46,31 +46,6 @@ class SessionTimer extends BaseComponent {
 
     if (expired) {
       return html`
-        <style>
-          :host { display: block; }
-          .session-expired {
-            background: #fef2f2;
-            border: 1px solid #fecaca;
-            color: #991b1b;
-            padding: 0.75rem 1rem;
-            border-radius: var(--radius-sm);
-            font-size: 0.875rem;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 1rem;
-          }
-          .refresh-btn {
-            padding: 0.375rem 0.75rem;
-            background: var(--color-primary);
-            color: #fff;
-            border: none;
-            border-radius: var(--radius-sm);
-            cursor: pointer;
-            font-size: 0.8125rem;
-            white-space: nowrap;
-          }
-        </style>
         <div class="session-expired">
           <span>Your session has expired.</span>
           <button class="refresh-btn" @click=${() => window.location.reload()}>Refresh</button>
@@ -80,17 +55,6 @@ class SessionTimer extends BaseComponent {
 
     if (warning) {
       return html`
-        <style>
-          :host { display: block; }
-          .session-warning {
-            background: #fffbeb;
-            border: 1px solid #fde68a;
-            color: #92400e;
-            padding: 0.75rem 1rem;
-            border-radius: var(--radius-sm);
-            font-size: 0.875rem;
-          }
-        </style>
         <div class="session-warning">
           Your session will expire in ${expiresIn} minute${expiresIn !== 1 ? 's' : ''}.
           Save your work and refresh to extend your session.

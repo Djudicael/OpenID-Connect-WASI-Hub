@@ -44,30 +44,6 @@ class Table extends BaseComponent {
   template() {
     const { columns, rows, emptyText } = this._state;
     return html`
-      <style>
-        :host { display: block; }
-        .table-wrap { overflow-x: auto; }
-        table {
-          width: 100%;
-          border-collapse: collapse;
-          font-size: 0.875rem;
-        }
-        th, td {
-          padding: 0.75rem 1rem;
-          text-align: left;
-          border-bottom: 1px solid #e2e8f0;
-        }
-        th {
-          font-weight: 600;
-          color: var(--color-text-muted);
-          background: #f8fafc;
-          text-transform: uppercase;
-          font-size: 0.75rem;
-          letter-spacing: 0.025em;
-        }
-        tr:hover td { background: #f8fafc; }
-        .empty { padding: 2rem; text-align: center; color: var(--color-text-muted); }
-      </style>
       <div class="table-wrap">
         ${rows.length === 0
         ? html`<div class="empty">${emptyText}</div>`

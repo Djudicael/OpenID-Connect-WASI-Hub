@@ -40,54 +40,6 @@ class MaintenancePage extends BaseComponent {
     const { running, lastRun, results } = this._state;
 
     return html`
-      <style>
-        :host { display: block; }
-        .card {
-          background: var(--color-surface);
-          border-radius: var(--radius-md);
-          padding: 1.5rem;
-          box-shadow: var(--shadow-sm);
-          margin-bottom: 1.5rem;
-        }
-        .card-title {
-          font-size: 1rem;
-          font-weight: 600;
-          margin-bottom: 0.75rem;
-        }
-        .card-desc {
-          font-size: 0.875rem;
-          color: var(--color-text-muted);
-          margin-bottom: 1rem;
-        }
-        .results-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-          gap: 0.75rem;
-          margin-top: 1rem;
-        }
-        .result-item {
-          padding: 0.75rem;
-          background: var(--color-bg);
-          border-radius: var(--radius-sm);
-          border: 1px solid var(--color-border);
-        }
-        .result-table {
-          font-size: 0.75rem;
-          color: var(--color-text-muted);
-          text-transform: uppercase;
-          letter-spacing: 0.025em;
-        }
-        .result-count {
-          font-size: 1.25rem;
-          font-weight: 700;
-          color: var(--color-primary);
-        }
-        .last-run {
-          font-size: 0.875rem;
-          color: var(--color-text-muted);
-          margin-top: 0.5rem;
-        }
-      </style>
       <c-page-layout title="Maintenance">
         <div class="card">
           <div class="card-title">Token Cleanup</div>

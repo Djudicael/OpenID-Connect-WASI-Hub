@@ -9,6 +9,12 @@ import { handleApiError } from '../utils/error-handler.js';
 
 const ConfirmDialog = customElements.get('c-modal');
 
+const TRACKED_FIELDS = ['email', 'email_verified', 'username', 'given_name',
+  'family_name', 'middle_name', 'nickname', 'preferred_username', 'profile',
+  'picture', 'website', 'gender', 'birthdate', 'zoneinfo', 'phone_number',
+  'phone_number_verified', 'street_address', 'locality', 'region', 'postal_code',
+  'country', 'locale', 'enabled'];
+
 class UserDetailPage extends BaseComponent {
   constructor() {
     super();
@@ -54,31 +60,7 @@ class UserDetailPage extends BaseComponent {
   get _isDirty() {
     const { user, savedUser } = this._state;
     if (!user || !savedUser) return false;
-    return (
-      user.email !== savedUser.email ||
-      user.email_verified !== savedUser.email_verified ||
-      user.username !== savedUser.username ||
-      user.given_name !== savedUser.given_name ||
-      user.family_name !== savedUser.family_name ||
-      user.middle_name !== savedUser.middle_name ||
-      user.nickname !== savedUser.nickname ||
-      user.preferred_username !== savedUser.preferred_username ||
-      user.profile !== savedUser.profile ||
-      user.picture !== savedUser.picture ||
-      user.website !== savedUser.website ||
-      user.gender !== savedUser.gender ||
-      user.birthdate !== savedUser.birthdate ||
-      user.zoneinfo !== savedUser.zoneinfo ||
-      user.phone_number !== savedUser.phone_number ||
-      user.phone_number_verified !== savedUser.phone_number_verified ||
-      user.street_address !== savedUser.street_address ||
-      user.locality !== savedUser.locality ||
-      user.region !== savedUser.region ||
-      user.postal_code !== savedUser.postal_code ||
-      user.country !== savedUser.country ||
-      user.locale !== savedUser.locale ||
-      user.enabled !== savedUser.enabled
-    );
+    return TRACKED_FIELDS.some(f => user[f] !== savedUser[f]);
   }
 
   async _loadUser(id) {
@@ -137,31 +119,7 @@ class UserDetailPage extends BaseComponent {
   _updateField(field, value) {
     const user = { ...this._state.user, [field]: value };
     const savedUser = this._state.savedUser;
-    const dirty = (
-      user.email !== savedUser.email ||
-      user.email_verified !== savedUser.email_verified ||
-      user.username !== savedUser.username ||
-      user.given_name !== savedUser.given_name ||
-      user.family_name !== savedUser.family_name ||
-      user.middle_name !== savedUser.middle_name ||
-      user.nickname !== savedUser.nickname ||
-      user.preferred_username !== savedUser.preferred_username ||
-      user.profile !== savedUser.profile ||
-      user.picture !== savedUser.picture ||
-      user.website !== savedUser.website ||
-      user.gender !== savedUser.gender ||
-      user.birthdate !== savedUser.birthdate ||
-      user.zoneinfo !== savedUser.zoneinfo ||
-      user.phone_number !== savedUser.phone_number ||
-      user.phone_number_verified !== savedUser.phone_number_verified ||
-      user.street_address !== savedUser.street_address ||
-      user.locality !== savedUser.locality ||
-      user.region !== savedUser.region ||
-      user.postal_code !== savedUser.postal_code ||
-      user.country !== savedUser.country ||
-      user.locale !== savedUser.locale ||
-      user.enabled !== savedUser.enabled
-    );
+    const dirty = TRACKED_FIELDS.some(f => user[f] !== savedUser[f]);
     this.setState({ user, dirty });
   }
 
@@ -182,7 +140,7 @@ class UserDetailPage extends BaseComponent {
     try {
       const data = await listUserRoles(userId);
       this.setState({ userRoles: data.items || data || [], rolesLoading: false });
-    } catch (err) {
+    } catch (err) { if (err.name === "AbortError") return;
       this.setState({ userRoles: [], rolesLoading: false });
     }
   }
@@ -209,7 +167,7 @@ class UserDetailPage extends BaseComponent {
       const assignedIds = new Set((this._state.userRoles || []).map(r => r.id));
       const available = allRoles.filter(r => !assignedIds.has(r.id));
       this.setState({ availableRoles: available });
-    } catch (err) {
+    } catch (err) { if (err.name === "AbortError") return;
       this.setState({ availableRoles: [] });
     }
   }
@@ -250,7 +208,7 @@ class UserDetailPage extends BaseComponent {
     try {
       const data = await listUserGroups(userId);
       this.setState({ userGroups: data.items || data || [], groupsLoading: false });
-    } catch (err) {
+    } catch (err) { if (err.name === "AbortError") return;
       this.setState({ userGroups: [], groupsLoading: false });
     }
   }
@@ -277,7 +235,7 @@ class UserDetailPage extends BaseComponent {
       const assignedIds = new Set((this._state.userGroups || []).map(g => g.id));
       const available = allGroups.filter(g => !assignedIds.has(g.id));
       this.setState({ availableGroups: available });
-    } catch (err) {
+    } catch (err) { if (err.name === "AbortError") return;
       this.setState({ availableGroups: [] });
     }
   }
@@ -314,113 +272,6 @@ class UserDetailPage extends BaseComponent {
   template() {
     const { user, loading, saving, dirty } = this._state;
     return html`
-      <style>
-        :host { display: block; }
-        .back-link {
-          display: inline-flex;
-          align-items: center;
-          gap: 0.25rem;
-          color: var(--color-primary);
-          text-decoration: none;
-          font-size: 0.875rem;
-          margin-bottom: 1rem;
-          cursor: pointer;
-        }
-        .dirty-indicator {
-          display: inline-block;
-          width: 0.5rem;
-          height: 0.5rem;
-          border-radius: 50%;
-          background: var(--color-warning, #f59e0b);
-          margin-left: 0.5rem;
-          vertical-align: middle;
-        }
-        .form { max-width: 32rem; }
-        .field { margin-bottom: 1rem; }
-        .field-label {
-          display: block;
-          font-size: 0.875rem;
-          font-weight: 500;
-          margin-bottom: 0.25rem;
-        }
-        .field-input, .field-textarea {
-          width: 100%;
-          padding: 0.5rem 0.75rem;
-          font-size: 0.875rem;
-          border: 1px solid #e2e8f0;
-          border-radius: var(--radius-sm);
-          font-family: inherit;
-          box-sizing: border-box;
-        }
-        .field-input:focus, .field-textarea:focus {
-          outline: none;
-          border-color: var(--color-primary);
-        }
-        .field-textarea {
-          resize: vertical;
-          min-height: 4rem;
-        }
-        .checkbox-row {
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-          margin-bottom: 1rem;
-        }
-        .actions { display: flex; gap: 0.5rem; margin-top: 1.5rem; }
-        .section {
-          margin-top: 2rem;
-          padding-top: 1.5rem;
-          border-top: 1px solid #e2e8f0;
-        }
-        .section-title {
-          font-size: 1rem;
-          font-weight: 600;
-          margin-bottom: 1rem;
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-        }
-        .item-list {
-          list-style: none;
-          padding: 0;
-          margin: 0;
-        }
-        .item-list li {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 0.5rem 0.75rem;
-          border: 1px solid #e2e8f0;
-          border-radius: var(--radius-sm);
-          margin-bottom: 0.375rem;
-          font-size: 0.875rem;
-        }
-        .item-list li .item-name {
-          font-weight: 500;
-        }
-        .item-list li .item-desc {
-          color: var(--color-text-muted);
-          margin-left: 0.5rem;
-        }
-        .empty-state {
-          color: var(--color-text-muted);
-          font-size: 0.875rem;
-          padding: 0.5rem 0;
-        }
-        .field-select {
-          width: 100%;
-          padding: 0.5rem 0.75rem;
-          font-size: 0.875rem;
-          border: 1px solid #e2e8f0;
-          border-radius: var(--radius-sm);
-          font-family: inherit;
-          box-sizing: border-box;
-        }
-        .field-select:focus {
-          outline: none;
-          border-color: var(--color-primary);
-        }
-      </style>
       <c-page-layout title="User Details">
         <span class="back-link" @click=${() => this._navigateAway('/users')}>
           &larr; Back to Users
@@ -620,7 +471,7 @@ class UserDetailPage extends BaseComponent {
         <div slot="footer">
           <c-button variant="secondary" @click=${() => this._closeAddRoleModal()}>Cancel</c-button>
           <c-button variant="primary" ?disabled=${this._state.addRoleLoading} @click=${() => {
-        const select = this.shadowRoot.getElementById('role-select');
+        const select = this.shadowRoot.querySelector('#role-select');
         if (select && select.value) this._addRole(select.value);
       }}>
             ${this._state.addRoleLoading ? 'Adding...' : 'Add Role'}
@@ -643,7 +494,7 @@ class UserDetailPage extends BaseComponent {
         <div slot="footer">
           <c-button variant="secondary" @click=${() => this._closeAddGroupModal()}>Cancel</c-button>
           <c-button variant="primary" ?disabled=${this._state.addGroupLoading} @click=${() => {
-        const select = this.shadowRoot.getElementById('group-select');
+        const select = this.shadowRoot.querySelector('#group-select');
         if (select && select.value) this._addGroup(select.value);
       }}>
             ${this._state.addGroupLoading ? 'Adding...' : 'Add Group'}

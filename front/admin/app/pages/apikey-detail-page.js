@@ -29,7 +29,7 @@ class ApiKeyDetailPage extends BaseComponent {
     try {
       const key = await getApiKey(id);
       this.setState({ key, loading: false });
-    } catch (err) {
+    } catch (err) { if (err.name === "AbortError") return;
       if (err.status === 404) {
         showToast('API key not found', 'error');
       } else {
@@ -67,7 +67,7 @@ class ApiKeyDetailPage extends BaseComponent {
       this.setState({ rotating: false, rotatedRawKey: data.raw_key });
       // Reload key details to reflect updated state
       this._loadKey(key.id);
-    } catch (err) {
+    } catch (err) { if (err.name === "AbortError") return;
       showToast('Failed to rotate API key', 'error');
       this.setState({ rotating: false });
     }
@@ -85,7 +85,7 @@ class ApiKeyDetailPage extends BaseComponent {
       showToast('API key revoked', 'success');
       this.setState({ revoking: false });
       this._loadKey(key.id);
-    } catch (err) {
+    } catch (err) { if (err.name === "AbortError") return;
       showToast('Failed to revoke API key', 'error');
       this.setState({ revoking: false });
     }
@@ -113,105 +113,6 @@ class ApiKeyDetailPage extends BaseComponent {
     const { key, loading, rotating, revoking, rotatedRawKey } = this._state;
 
     return html`
-      <style>
-        :host { display: block; }
-        .back-link {
-          display: inline-flex;
-          align-items: center;
-          gap: 0.25rem;
-          color: var(--color-primary);
-          text-decoration: none;
-          font-size: 0.875rem;
-          margin-bottom: 1rem;
-          cursor: pointer;
-        }
-        .back-link:hover {
-          text-decoration: underline;
-        }
-        .detail-grid {
-          display: grid;
-          grid-template-columns: 1fr;
-          gap: 1rem;
-          max-width: 40rem;
-        }
-        .detail-row {
-          display: flex;
-          flex-direction: column;
-          gap: 0.25rem;
-          padding-bottom: 0.75rem;
-          border-bottom: 1px solid var(--color-border, #e2e8f0);
-        }
-        .detail-row:last-child {
-          border-bottom: none;
-        }
-        .detail-label {
-          font-size: 0.75rem;
-          font-weight: 600;
-          text-transform: uppercase;
-          letter-spacing: 0.05em;
-          color: var(--color-text-muted, #64748b);
-        }
-        .detail-value {
-          font-size: 0.9375rem;
-          color: var(--color-text, #1e293b);
-          word-break: break-all;
-        }
-        .status-badge {
-          display: inline-flex;
-          align-items: center;
-          gap: 0.375rem;
-          font-size: 0.8125rem;
-          font-weight: 500;
-        }
-        .status-dot {
-          width: 0.5rem;
-          height: 0.5rem;
-          border-radius: 50%;
-          display: inline-block;
-        }
-        .key-display {
-          background: #fffbeb;
-          border: 1px solid #fde68a;
-          border-radius: var(--radius-md, 0.5rem);
-          padding: 1.25rem;
-          margin-bottom: 1.5rem;
-        }
-        .key-warning {
-          color: var(--color-danger, #dc2626);
-          font-size: 0.875rem;
-          font-weight: 600;
-          margin-bottom: 0.75rem;
-          display: flex;
-          align-items: center;
-          gap: 0.375rem;
-        }
-        .key-value {
-          font-family: monospace;
-          font-size: 0.875rem;
-          background: var(--color-surface, #fff);
-          padding: 0.75rem;
-          border-radius: var(--radius-sm, 0.25rem);
-          border: 1px solid #e2e8f0;
-          word-break: break-all;
-          margin-bottom: 0.75rem;
-          user-select: all;
-        }
-        .actions {
-          display: flex;
-          gap: 0.5rem;
-          margin-top: 1.5rem;
-        }
-        .loading-state {
-          padding: 2rem;
-          text-align: center;
-          color: var(--color-text-muted);
-        }
-        .not-found {
-          padding: 2rem;
-          text-align: center;
-          color: var(--color-text-muted);
-        }
-      </style>
       <c-page-layout title="API Key Details">
         <span class="back-link" @click=${() => navigate('/api-keys')}>
           &larr; Back to API Keys

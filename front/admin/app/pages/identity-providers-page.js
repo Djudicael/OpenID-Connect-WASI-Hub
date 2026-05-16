@@ -155,22 +155,6 @@ class IdentityProvidersPage extends BaseComponent {
     ];
 
     return html`
-      <style>
-        :host { display: block; }
-        .toolbar { display: flex; gap: 1rem; margin-bottom: 1rem; align-items: center; flex-wrap: wrap; }
-        .realm-select { padding: 0.375rem 0.75rem; font-size: 0.875rem; border: 1px solid #e2e8f0; border-radius: var(--radius-sm); font-family: inherit; min-width: 12rem; }
-        .realm-select:focus { outline: none; border-color: var(--color-primary); }
-        .form { max-width: 32rem; }
-        .field { margin-bottom: 1rem; }
-        .field-label { display: block; font-size: 0.875rem; font-weight: 500; margin-bottom: 0.25rem; }
-        .field-input, .field-select { width: 100%; padding: 0.5rem 0.75rem; font-size: 0.875rem; border: 1px solid #e2e8f0; border-radius: var(--radius-sm); font-family: inherit; box-sizing: border-box; }
-        .field-input:focus, .field-select:focus { outline: none; border-color: var(--color-primary); }
-        .hint { font-size: 0.75rem; color: var(--color-text-muted); margin-top: 0.25rem; }
-        .field-checkbox { display: flex; align-items: center; gap: 0.5rem; }
-        .empty-state { text-align: center; padding: 3rem 1rem; color: var(--color-text-muted); }
-        .empty-state-icon { font-size: 2.5rem; margin-bottom: 0.75rem; opacity: 0.5; }
-        .empty-state-text { font-size: 1rem; margin-bottom: 1rem; }
-      </style>
       <c-page-layout title="Identity Providers">
         <div slot="actions">
           <c-button variant="primary" @click=${() => this._openCreateModal()}>+ Add Provider</c-button>

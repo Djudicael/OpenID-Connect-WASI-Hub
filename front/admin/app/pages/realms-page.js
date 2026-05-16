@@ -148,63 +148,6 @@ class RealmsPage extends BaseComponent {
     ];
 
     return html`
-      <style>
-        :host { display: block; }
-        .form { max-width: 32rem; }
-        .field { margin-bottom: 1rem; }
-        .field-label {
-          display: block;
-          font-size: 0.875rem;
-          font-weight: 500;
-          margin-bottom: 0.25rem;
-        }
-        .field-input {
-          width: 100%;
-          padding: 0.5rem 0.75rem;
-          font-size: 0.875rem;
-          border: 1px solid #e2e8f0;
-          border-radius: var(--radius-sm);
-          font-family: inherit;
-          box-sizing: border-box;
-        }
-        .field-input:focus {
-          outline: none;
-          border-color: var(--color-primary);
-        }
-        .hint {
-          font-size: 0.75rem;
-          color: var(--color-text-muted);
-          margin-top: 0.25rem;
-        }
-        .field-checkbox {
-          display: flex;
-          align-items: center;
-          gap: 0.5rem;
-        }
-        .field-checkbox input {
-          width: 1rem;
-          height: 1rem;
-        }
-        .bulk-bar {
-          display: flex;
-          align-items: center;
-          gap: 0.75rem;
-          padding: 0.5rem 1rem;
-          background: #fef2f2;
-          border: 1px solid #fecaca;
-          border-radius: var(--radius-sm);
-          margin-bottom: 1rem;
-          font-size: 0.875rem;
-        }
-        .bulk-bar span { color: var(--color-danger); font-weight: 500; }
-        .empty-state {
-          text-align: center;
-          padding: 3rem 1rem;
-          color: var(--color-text-muted);
-        }
-        .empty-state-icon { font-size: 2.5rem; margin-bottom: 0.75rem; opacity: 0.5; }
-        .empty-state-text { font-size: 1rem; margin-bottom: 1rem; }
-      </style>
       <c-page-layout title="Realms">
         <div slot="actions">
           <c-button variant="primary" @click=${() => this._openCreateModal()}>

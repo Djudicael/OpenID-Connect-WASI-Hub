@@ -103,69 +103,6 @@ class AuditPage extends BaseComponent {
     const hasFilters = eventTypeFilter || actorSearch;
 
     return html`
-      <style>
-        :host { display: block; }
-        .filters {
-          display: flex;
-          gap: 1rem;
-          margin-bottom: 1rem;
-          align-items: flex-end;
-          flex-wrap: wrap;
-        }
-        .filter-group {
-          display: flex;
-          flex-direction: column;
-          gap: 0.25rem;
-        }
-        .filter-label {
-          font-size: 0.75rem;
-          font-weight: 500;
-          color: var(--color-text-muted, #94a3b8);
-          text-transform: uppercase;
-          letter-spacing: 0.025em;
-        }
-        .filter-select,
-        .filter-input {
-          padding: 0.375rem 0.75rem;
-          font-size: 0.875rem;
-          border: 1px solid #e2e8f0;
-          border-radius: var(--radius-sm, 0.25rem);
-          font-family: inherit;
-          background: var(--color-surface, #fff);
-          color: var(--color-text, #1e293b);
-          box-sizing: border-box;
-        }
-        .filter-select {
-          min-width: 10rem;
-          appearance: none;
-          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748b' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
-          background-repeat: no-repeat;
-          background-position: right 0.75rem center;
-          padding-right: 2rem;
-        }
-        .filter-input {
-          min-width: 14rem;
-        }
-        .filter-select:focus,
-        .filter-input:focus {
-          outline: none;
-          border-color: var(--color-primary, #3b82f6);
-        }
-        .clear-btn {
-          padding: 0.375rem 0.75rem;
-          font-size: 0.875rem;
-          border: 1px solid #e2e8f0;
-          border-radius: var(--radius-sm, 0.25rem);
-          background: var(--color-surface, #fff);
-          color: var(--color-text-muted, #94a3b8);
-          cursor: pointer;
-          font-family: inherit;
-        }
-        .clear-btn:hover {
-          background: #f8fafc;
-          color: var(--color-text, #1e293b);
-        }
-      </style>
       <c-page-layout title="Audit Log">
         <div class="filters">
           <div class="filter-group">

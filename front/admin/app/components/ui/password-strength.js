@@ -58,28 +58,6 @@ class PasswordStrength extends BaseComponent {
     const width = `${(strength / 5) * 100}%`;
 
     return html`
-      <style>
-        :host { display: block; margin-top: 0.5rem; }
-        .strength-bar {
-          height: 4px;
-          background: #e2e8f0;
-          border-radius: 2px;
-          overflow: hidden;
-          margin-bottom: 0.25rem;
-        }
-        .strength-fill {
-          height: 100%;
-          width: ${width};
-          background: ${color};
-          border-radius: 2px;
-          transition: width 0.2s, background 0.2s;
-        }
-        .strength-label {
-          font-size: 0.75rem;
-          color: ${color};
-          font-weight: 500;
-        }
-      </style>
       <div class="strength-bar"><div class="strength-fill"></div></div>
       <span class="strength-label">${label}</span>
     `;

@@ -105,23 +105,6 @@ class PasswordPoliciesPage extends BaseComponent {
     const { realms, realmId, loading, saving, minLength, maxLength, requireUppercase, requireLowercase, requireDigit, requireSpecial, minUniqueChars, maxConsecutiveIdentical, disallowedPasswords } = this._state;
 
     return html`
-      <style>
-        :host { display: block; }
-        .toolbar { display: flex; gap: 1rem; margin-bottom: 1rem; align-items: center; }
-        .realm-select { padding: 0.375rem 0.75rem; font-size: 0.875rem; border: 1px solid #e2e8f0; border-radius: var(--radius-sm); font-family: inherit; min-width: 12rem; }
-        .realm-select:focus { outline: none; border-color: var(--color-primary); }
-        .form { max-width: 40rem; }
-        .field { margin-bottom: 1rem; }
-        .field-label { display: block; font-size: 0.875rem; font-weight: 500; margin-bottom: 0.25rem; }
-        .field-input, .field-textarea { width: 100%; padding: 0.5rem 0.75rem; font-size: 0.875rem; border: 1px solid #e2e8f0; border-radius: var(--radius-sm); font-family: inherit; box-sizing: border-box; }
-        .field-input:focus, .field-textarea:focus { outline: none; border-color: var(--color-primary); }
-        .field-textarea { resize: vertical; min-height: 6rem; font-family: monospace; }
-        .hint { font-size: 0.75rem; color: var(--color-text-muted); margin-top: 0.25rem; }
-        .field-checkbox { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
-        .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-        .actions { display: flex; gap: 0.5rem; margin-top: 1.5rem; }
-        .section-title { font-size: 1rem; font-weight: 600; margin: 1.5rem 0 1rem; padding-top: 1rem; border-top: 1px solid #e2e8f0; }
-      </style>
       <c-page-layout title="Password Policies">
         <div class="toolbar">
           <label style="font-size:0.875rem;color:var(--color-text-muted)">
