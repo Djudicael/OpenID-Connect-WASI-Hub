@@ -11,7 +11,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let database_url = std::env::var("OIDC_DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://localhost/oidc_hub".into());
+        .unwrap_or_else(|_| "postgresql://localhost/oidc_hub?sslmode=prefer".into());
 
     let config = wasi_pg_client::Config::from_uri(&database_url)?;
     let mut conn = wasi_pg_client::Connection::connect(&config).await?;

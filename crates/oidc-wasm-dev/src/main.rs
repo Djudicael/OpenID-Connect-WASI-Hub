@@ -505,7 +505,7 @@ async fn start_database(state: &Arc<Mutex<WasmDevState>>) -> Result<String> {
         .await
         .context("Failed to get host port from container")?;
 
-    let db_url = format!("postgresql://{DB_USER}:{DB_PASSWORD}@localhost:{host_port}/{DB_NAME}");
+    let db_url = format!("postgresql://{DB_USER}:{DB_PASSWORD}@localhost:{host_port}/{DB_NAME}?sslmode=disable");
 
     info!("Container started on host port {host_port}, waiting for PostgreSQL...");
 

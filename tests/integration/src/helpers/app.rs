@@ -353,7 +353,7 @@ async fn create_test_database(base_url: &str, db_name: &str) -> String {
     let password = parsed.password().unwrap_or("postgres");
 
     // Connect to the default `postgres` database to issue CREATE DATABASE.
-    let admin_url = format!("postgresql://{user}:{password}@{host}:{port}/postgres");
+    let admin_url = format!("postgresql://{user}:{password}@{host}:{port}/postgres?sslmode=disable");
     let config = wasi_pg_client::Config::from_uri(&admin_url).expect("invalid admin URL");
     let mut conn = wasi_pg_client::Connection::connect(&config)
         .await
@@ -372,7 +372,7 @@ async fn create_test_database(base_url: &str, db_name: &str) -> String {
     let _ = conn.close().await;
 
     // Return the connection URL for the new database.
-    format!("postgresql://{user}:{password}@{host}:{port}/{db_name}")
+    format!("postgresql://{user}:{password}@{host}:{port}/{db_name}?sslmode=disable")
 }
 // ===================================================================
 

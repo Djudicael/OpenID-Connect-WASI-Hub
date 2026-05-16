@@ -152,7 +152,7 @@ impl GroupRepo {
 
         let pattern = search.map(|s| format!("%{}%", escape_like(s)));
 
-        let mut params: Vec<&dyn wasi_pg_client::pg_types::ToSql> = Vec::new();
+        let mut params: Vec<&dyn wasi_pg_client::ToSql> = Vec::new();
         if realm_id.is_some() {
             params.push(realm_id.as_ref().unwrap());
         }

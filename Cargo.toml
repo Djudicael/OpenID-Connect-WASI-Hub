@@ -35,7 +35,6 @@ serde_json = "1"
 
 # Database (pg_client)
 wasi-pg-client = { git = "https://github.com/Djudicael/pg_client", package = "wasi-pg-client" }
-wasi-pg-pool = { git = "https://github.com/Djudicael/pg_client", package = "wasi-pg-pool" }
 
 # Crypto
 getrandom = "0.4"

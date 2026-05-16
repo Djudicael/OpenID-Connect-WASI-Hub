@@ -1,7 +1,7 @@
 //! Database connection abstraction.
 
 use tracing::debug;
-use wasi_pg_client::pg_types::ToSql;
+use wasi_pg_client::ToSql;
 use wasi_pg_client::{PgError, QueryResult, Row};
 
 /// A database connection wrapper.

@@ -255,7 +255,7 @@ impl SessionRepo {
         let realm_id_ref = realm_id.as_ref();
         let revoked_ref = revoked.as_ref();
 
-        let mut params: Vec<&dyn wasi_pg_client::pg_types::ToSql> = Vec::new();
+        let mut params: Vec<&dyn wasi_pg_client::ToSql> = Vec::new();
         if let Some(uid) = user_id_ref {
             params.push(uid);
         }
@@ -315,7 +315,7 @@ impl SessionRepo {
         let realm_id_ref = realm_id.as_ref();
         let revoked_ref = revoked.as_ref();
 
-        let mut params: Vec<&dyn wasi_pg_client::pg_types::ToSql> = Vec::new();
+        let mut params: Vec<&dyn wasi_pg_client::ToSql> = Vec::new();
         if let Some(uid) = user_id_ref {
             params.push(uid);
         }

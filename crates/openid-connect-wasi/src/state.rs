@@ -76,7 +76,7 @@ impl AppState {
     /// Load state from environment variables.
     pub fn from_env() -> Self {
         let database_url = std::env::var("OIDC_DATABASE_URL")
-            .unwrap_or_else(|_| "postgresql://localhost/oidc_hub".into());
+            .unwrap_or_else(|_| "postgresql://localhost/oidc_hub?sslmode=prefer".into());
         if !std::env::var("OIDC_DATABASE_URL").is_ok() {
             tracing::warn!("OIDC_DATABASE_URL not set — using default (not suitable for production)");
         }
@@ -115,8 +115,7 @@ impl AppState {
             token_service: self.token_service.clone(),
             hasher: self.hasher.clone(),
             email_sender: self.email_sender.clone(),
-            db_config: wasi_pg_client::Config::from_uri(&self.config.database_url)
-                .unwrap_or_else(|_| wasi_pg_client::Config::new()),
+            db_config: self.db_config.clone(),
             encryption_key: self.config.encryption_key.clone(),
             realm_token_services: std::sync::Arc::new(std::sync::Mutex::new(
                 std::collections::HashMap::new(),

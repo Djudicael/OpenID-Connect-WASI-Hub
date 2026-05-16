@@ -69,7 +69,7 @@ async fn init_harness() -> (
         .await
         .expect("Failed to get host port");
 
-    let url = format!("postgresql://{DB_USER}:{DB_PASSWORD}@localhost:{host_port}/{DB_NAME}");
+    let url = format!("postgresql://{DB_USER}:{DB_PASSWORD}@localhost:{host_port}/{DB_NAME}?sslmode=disable");
 
     // Wait for PostgreSQL to be ready
     wait_for_postgres(&url).await;

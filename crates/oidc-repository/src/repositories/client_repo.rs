@@ -284,7 +284,7 @@ impl ClientRepo {
         let realm_id_ref = realm_id.as_ref();
         let pattern = search.map(|s| format!("%{}%", escape_like(s)));
 
-        let mut params: Vec<&dyn wasi_pg_client::pg_types::ToSql> = Vec::new();
+        let mut params: Vec<&dyn wasi_pg_client::ToSql> = Vec::new();
         if let Some(rid) = realm_id_ref {
             params.push(rid);
         }

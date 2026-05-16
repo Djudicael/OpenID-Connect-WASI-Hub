@@ -68,7 +68,7 @@ impl AuditEventRepo {
         let from_ref = from.as_ref();
         let to_ref = to.as_ref();
 
-        let mut params: Vec<&dyn wasi_pg_client::pg_types::ToSql> = vec![&realm_id];
+        let mut params: Vec<&dyn wasi_pg_client::ToSql> = vec![&realm_id];
         if let Some(et) = event_type_ref {
             params.push(et);
         }
@@ -171,7 +171,7 @@ impl AuditEventRepo {
         let from_ref = from.as_ref();
         let to_ref = to.as_ref();
 
-        let mut params: Vec<&dyn wasi_pg_client::pg_types::ToSql> = Vec::new();
+        let mut params: Vec<&dyn wasi_pg_client::ToSql> = Vec::new();
         if let Some(et) = event_type_ref {
             params.push(et);
         }
@@ -246,7 +246,7 @@ impl AuditEventRepo {
         let from_ref = from.as_ref();
         let to_ref = to.as_ref();
 
-        let mut params: Vec<&dyn wasi_pg_client::pg_types::ToSql> = Vec::new();
+        let mut params: Vec<&dyn wasi_pg_client::ToSql> = Vec::new();
         if let Some(rid) = realm_id_ref {
             params.push(rid);
         }
