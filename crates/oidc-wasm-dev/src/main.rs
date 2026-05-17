@@ -7,7 +7,8 @@
 //!   cargo run -p oidc-wasm-dev -- start    # Start DB + build WASM + build front + proxy
 //!   cargo run -p oidc-wasm-dev -- stop     # Stop everything
 //!   cargo run -p oidc-wasm-dev -- status   # Show status
-//!   cargo run -p oidc-wasm-dev -- test     # Run smoke tests against WASM server
+//!   cargo run -p oidc-wasm-dev -- test     # Run smoke tests against a running WASM server
+//!   cargo run -p oidc-wasm-dev -- smoke    # One-shot start → smoke tests → shutdown
 //!
 //! Dev Credentials (seeded on first start):
 //!   Admin login:    admin@example.com / Admin123
@@ -91,8 +92,9 @@ async fn main() -> Result<()> {
         "stop" => cmd_stop(&state).await,
         "status" => cmd_status(&state).await,
         "test" => cmd_test(&state).await,
+        "smoke" => cmd_smoke(&state).await,
         _ => {
-            eprintln!("Usage: cargo run -p oidc-wasm-dev -- [start|stop|status|test]");
+            eprintln!("Usage: cargo run -p oidc-wasm-dev -- [start|stop|status|test|smoke]");
             std::process::exit(1);
         }
     }
@@ -101,49 +103,17 @@ async fn main() -> Result<()> {
 // ─── Commands ───────────────────────────────────────────────────────────────
 
 async fn cmd_start(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
-    check_tools().await?;
+    prepare_environment(state).await?;
 
-    info!("═══════════════════════════════════════════════════════════════");
-    info!("  OIDC WASM Dev Environment (JAMstack mode)");
-    info!("  Target: wasm32-wasip2  |  Runtime: wasmtime serve");
-    info!("  Frontend: static build served via proxy");
-    info!("═══════════════════════════════════════════════════════════════");
-
-    // 1. Start PostgreSQL
-    let db_url = start_database(state).await?;
-    {
-        let mut s = state.lock().await;
-        s.db_url = db_url.clone();
-    }
-
-    // 2. Run migrations
-    run_migrations(&db_url).await?;
-
-    // 3. Seed baseline data
-    seed_data(&db_url, 8080).await?;
-
-    // 4. Build frontend (static files for JAMstack testing)
-    build_frontend().await?;
-
-    // 5. Build WASM component
-    build_wasm().await?;
-
-    // 6. Start wasmtime serve
-    start_wasmtime(state).await?;
-
-    // 7. Start proxy (static frontend + API routes to wasmtime)
-    start_proxy(state).await?;
-
+    let db_url = state.lock().await.db_url.clone();
     let proxy_port = state.lock().await.proxy_port;
+    let wasm_port = state.lock().await.wasm_port;
 
     info!("═══════════════════════════════════════════════════════════════");
     info!("  WASM dev environment ready!");
     info!("");
     info!("  Proxy (use this):  http://localhost:{}", proxy_port);
-    info!(
-        "  Backend API:       http://localhost:{}",
-        state.lock().await.wasm_port
-    );
+    info!("  Backend API:       http://localhost:{}", wasm_port);
     info!(
         "  Discovery:         http://localhost:{}/.well-known/openid-configuration",
         proxy_port
@@ -199,23 +169,64 @@ async fn cmd_status(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
 }
 
 async fn cmd_test(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
-    // Quick smoke test against the running proxy (frontend + backend)
-    let port: u16 = std::env::var("OIDC_PROXY_PORT")
+    let base_url = proxy_base_url(state).await;
+    run_smoke_tests(&base_url).await
+}
+
+async fn cmd_smoke(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
+    info!("Running full WASI smoke flow (start → smoke tests → shutdown)...");
+    prepare_environment(state).await?;
+    let base_url = proxy_base_url(state).await;
+    let result = run_smoke_tests(&base_url).await;
+    shutdown_all(state).await;
+    result
+}
+
+async fn prepare_environment(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
+    check_tools().await?;
+
+    info!("═══════════════════════════════════════════════════════════════");
+    info!("  OIDC WASM Dev Environment (JAMstack mode)");
+    info!("  Target: wasm32-wasip2  |  Runtime: wasmtime serve");
+    info!("  Frontend: static build served via proxy");
+    info!("═══════════════════════════════════════════════════════════════");
+
+    let db_url = start_database(state).await?;
+    {
+        let mut s = state.lock().await;
+        s.db_url = db_url.clone();
+    }
+
+    run_migrations(&db_url).await?;
+    seed_data(&db_url, 8080).await?;
+    build_frontend().await?;
+    build_wasm().await?;
+    start_wasmtime(state).await?;
+    start_proxy(state).await?;
+
+    Ok(())
+}
+
+async fn proxy_base_url(state: &Arc<Mutex<WasmDevState>>) -> String {
+    let port: u16 = if let Some(port) = std::env::var("OIDC_PROXY_PORT")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or_else(|| {
-            let rt = tokio::runtime::Handle::try_current().expect("no runtime");
-            rt.block_on(async { state.lock().await.proxy_port })
-        });
-    let base_url = format!("http://localhost:{}", port);
+    {
+        port
+    } else {
+        state.lock().await.proxy_port
+    };
 
+    format!("http://localhost:{}", port)
+}
+
+async fn run_smoke_tests(base_url: &str) -> Result<()> {
     info!("Running smoke tests against {}...", base_url);
 
     let client = reqwest::Client::new();
     let mut passed = 0u32;
     let mut failed = 0u32;
 
-    // Test 1: Health endpoint
     match client.get(format!("{}/health", base_url)).send().await {
         Ok(resp) if resp.status().is_success() => {
             info!("  ✓ GET /health → {}", resp.status());
@@ -231,7 +242,6 @@ async fn cmd_test(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
         }
     }
 
-    // Test 2: Discovery document
     match client
         .get(format!("{}/.well-known/openid-configuration", base_url))
         .send()
@@ -262,7 +272,6 @@ async fn cmd_test(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
         }
     }
 
-    // Test 3: JWKS endpoint
     match client.get(format!("{}/oidc/jwks", base_url)).send().await {
         Ok(resp) if resp.status().is_success() => {
             let body: serde_json::Value = resp.json().await.unwrap_or_default();
@@ -296,7 +305,6 @@ async fn cmd_test(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
         }
     }
 
-    // Test 4: Login with admin credentials
     match client
         .post(format!("{}/oidc/login", base_url))
         .json(&serde_json::json!({
@@ -330,7 +338,6 @@ async fn cmd_test(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
         }
     }
 
-    // Test 5: Per-realm discovery
     match client
         .get(format!(
             "{}/realms/master/.well-known/openid-configuration",
@@ -368,7 +375,6 @@ async fn cmd_test(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
         }
     }
 
-    // Test 6: Realm login page HTML
     match client
         .get(format!("{}/realms/master/login", base_url))
         .send()
@@ -394,7 +400,6 @@ async fn cmd_test(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
         }
     }
 
-    // Test 7: Admin UI static files served by proxy
     match client.get(format!("{}/", base_url)).send().await {
         Ok(resp) if resp.status().is_success() => {
             let body = resp.text().await.unwrap_or_default();
@@ -416,7 +421,6 @@ async fn cmd_test(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
         }
     }
 
-    // Test 8: Admin UI JS bundle served
     match client.get(format!("{}/dist/app.js", base_url)).send().await {
         Ok(resp) if resp.status().is_success() => {
             info!("  ✓ GET /dist/app.js → static JS served");
@@ -445,8 +449,9 @@ async fn cmd_test(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
     info!("═══════════════════════════════════════════════════════════════");
 
     if failed > 0 {
-        std::process::exit(1);
+        anyhow::bail!("WASI smoke tests failed: {failed} check(s) failed");
     }
+
     Ok(())
 }
 

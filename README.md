@@ -45,8 +45,11 @@ cargo run -p oidc-dev -- start
 cargo run -p oidc-wasm-dev -- start
 
 # Open http://localhost:<port> (auto-assigned)
-# Run smoke tests against the WASM server
+# Run smoke tests against the already running WASM server
 cargo run -p oidc-wasm-dev -- test
+
+# Or run the full one-shot WASI smoke flow
+cargo run -p oidc-wasm-dev -- smoke
 ```
 
 ### 3. Production Build

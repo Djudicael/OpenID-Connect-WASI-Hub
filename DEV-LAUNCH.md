@@ -82,6 +82,9 @@ cargo run -p oidc-wasm-dev -- start
 # Run smoke tests against the running proxy (frontend + backend)
 cargo run -p oidc-wasm-dev -- test
 
+# Or do the full one-shot flow: start → smoke tests → shutdown
+cargo run -p oidc-wasm-dev -- smoke
+
 # Check status
 cargo run -p oidc-wasm-dev -- status
 
@@ -156,7 +159,8 @@ The proxy in `oidc-wasm-dev` acts like a CDN edge node: static files are served 
 | `start` | PostgreSQL → migrations → seed data → build WASM → `wasmtime serve` |
 | `stop` | Kill wasmtime and remove the PostgreSQL container |
 | `status` | Show DB URL, WASM port, and process status |
-| `test` | Run smoke tests against the running WASM server |
+| `test` | Run smoke tests against an already running WASM server |
+| `smoke` | One-shot WASI validation: start stack → run smoke tests → shutdown |
 
 ---
 
