@@ -23,6 +23,9 @@ pub fn router() -> Router<AppState> {
         .route("/api/keys", post(create_key))
         .route("/api/keys/{id}", get(get_key).delete(revoke_key))
         .route("/api/keys/{id}/rotate", post(rotate_key))
+        .layer(axum::middleware::from_fn(
+            crate::middleware::csrf::csrf_middleware,
+        ))
 }
 
 /// Check if the auth has admin access or the required scope.

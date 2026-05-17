@@ -130,6 +130,9 @@ pub fn router() -> Router<AppState> {
             "/api/identity-providers/{id}",
             delete(realms::delete_identity_provider),
         )
+        .layer(axum::middleware::from_fn(
+            crate::middleware::csrf::csrf_middleware,
+        ))
 }
 
 async fn admin_index_handler(

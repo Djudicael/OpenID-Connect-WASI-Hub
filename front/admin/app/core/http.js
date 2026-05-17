@@ -17,37 +17,33 @@ export class HttpError extends Error {
 
 const CSRF_COOKIE_NAME = 'oidc_csrf_token';
 const CSRF_HEADER_NAME = 'X-CSRF-Token';
+const CSRF_SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 function getCsrfTokenFromCookie() {
   const match = document.cookie.match(new RegExp(`(^| )${CSRF_COOKIE_NAME}=([^;]+)`));
   return match ? match[2] : null;
 }
 
-function ensureCsrfToken() {
-  // Prefer server-set cookie
-  let token = getCsrfTokenFromCookie();
-  if (!token) {
-    // Fallback: generate a token (server should set this in production)
-    const array = new Uint8Array(32);
-    crypto.getRandomValues(array);
-    token = Array.from(array, b => b.toString(16).padStart(2, '0')).join('');
-    // Set as non-HttpOnly so JS can read it for the header
-    // In production, the backend should set this cookie with Secure and SameSite=Strict
-    document.cookie = `${CSRF_COOKIE_NAME}=${token}; path=/; SameSite=Strict; max-age=86400`;
-  }
-  return token;
-}
-
 export async function http(url, options = {}) {
   const fullUrl = apiUrl(url);
-  const csrfToken = ensureCsrfToken();
+  const method = String(options.method || 'GET').toUpperCase();
+  const csrfToken = getCsrfTokenFromCookie();
+  const headers = {
+    'Content-Type': 'application/json',
+    ...options.headers,
+  };
+
+  if (!CSRF_SAFE_METHODS.has(method)) {
+    if (!csrfToken) {
+      throw new Error('Missing server-issued CSRF token cookie');
+    }
+    headers[CSRF_HEADER_NAME] = csrfToken;
+  }
+
   const opts = {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      [CSRF_HEADER_NAME]: csrfToken,
-      ...options.headers,
-    },
+    method,
+    headers,
     credentials: 'same-origin',
   };
 

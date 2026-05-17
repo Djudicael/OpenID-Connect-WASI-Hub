@@ -8,6 +8,19 @@ mod rbac_tests;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 
+fn extract_cookie_value(headers: &reqwest::header::HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get_all(reqwest::header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .find_map(|cookie| {
+            cookie
+                .strip_prefix(&format!("{name}="))
+                .and_then(|rest| rest.split(';').next())
+                .map(|value| value.to_string())
+        })
+}
+
 use crate::helpers::app::TestApp;
 use crate::helpers::fixtures;
 
@@ -64,6 +77,63 @@ async fn test_stats_endpoint() {
     assert!(body["clients"].as_i64().is_some());
     assert!(body["realms"].as_i64().is_some());
     assert!(body["active_sessions"].as_i64().is_some());
+}
+
+#[tokio::test]
+async fn test_admin_routes_set_server_issued_csrf_cookie_and_reject_mismatched_header() {
+    let app = TestApp::new().await;
+    let token = admin_login(&app).await;
+
+    let get_resp = admin_client(&app, &token)
+        .get(&format!("{}/api/realms?limit=1", app.url()))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("realms request failed");
+
+    assert_eq!(get_resp.status(), StatusCode::OK);
+    let csrf_cookie = extract_cookie_value(get_resp.headers(), "oidc_csrf_token")
+        .expect("server should issue a CSRF cookie on admin GET requests");
+
+    let bad_post = admin_client(&app, &token)
+        .post(&format!("{}/api/realms", app.url()))
+        .bearer_auth(&token)
+        .header(
+            reqwest::header::COOKIE,
+            format!("oidc_csrf_token={csrf_cookie}"),
+        )
+        .header("X-CSRF-Token", "wrong-token")
+        .json(&json!({
+            "name": "csrf-guarded-realm",
+            "display_name": "CSRF Guarded Realm",
+            "enabled": true,
+        }))
+        .send()
+        .await
+        .expect("realm create request failed");
+
+    assert_eq!(bad_post.status(), StatusCode::FORBIDDEN);
+    let body: Value = bad_post.json().await.expect("response should be JSON");
+    assert_eq!(body["error"], "csrf_validation_failed");
+
+    let ok_post = admin_client(&app, &token)
+        .post(&format!("{}/api/realms", app.url()))
+        .bearer_auth(&token)
+        .header(
+            reqwest::header::COOKIE,
+            format!("oidc_csrf_token={csrf_cookie}"),
+        )
+        .header("X-CSRF-Token", csrf_cookie)
+        .json(&json!({
+            "name": "csrf-valid-realm",
+            "display_name": "CSRF Valid Realm",
+            "enabled": true,
+        }))
+        .send()
+        .await
+        .expect("realm create request failed");
+
+    assert_eq!(ok_post.status(), StatusCode::OK);
 }
 
 #[tokio::test]
