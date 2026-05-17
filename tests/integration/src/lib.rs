@@ -41,6 +41,9 @@ pub mod realm_oidc_tests;
 pub mod scope_tests;
 
 #[cfg(test)]
+pub mod social_login_tests;
+
+#[cfg(test)]
 pub mod security_tests;
 
 #[cfg(test)]

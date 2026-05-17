@@ -187,6 +187,47 @@ async fn test_discovery_document_complete() {
 }
 
 #[tokio::test]
+async fn test_discovery_does_not_advertise_check_session_iframe() {
+    let app = TestApp::new().await;
+    let resp = app
+        .client()
+        .get(&format!("{}/.well-known/openid-configuration", app.url()))
+        .send()
+        .await
+        .expect("discovery request failed");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp
+        .json()
+        .await
+        .expect("discovery response should be JSON");
+    assert!(
+        body.get("check_session_iframe").is_none(),
+        "discovery must not advertise check_session_iframe until it is supported"
+    );
+}
+
+#[tokio::test]
+async fn test_check_session_endpoint_not_implemented() {
+    let app = TestApp::new().await;
+    let resp = app
+        .client()
+        .get(&format!(
+            "{}/oidc/session/check?client_id={}&redirect_uri={}",
+            app.url(),
+            urlencoding::encode(fixtures::TEST_CLIENT_ID),
+            urlencoding::encode("http://localhost:3000/callback"),
+        ))
+        .send()
+        .await
+        .expect("check session request failed");
+
+    assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
+    let body = resp.text().await.expect("response body should be readable");
+    assert!(body.contains("not currently supported"));
+}
+
+#[tokio::test]
 async fn test_jwks_has_rsa_key() {
     let app = TestApp::new().await;
     let resp = app

@@ -23,6 +23,7 @@ pub mod role;
 pub mod scope;
 pub mod session;
 pub mod signing_key;
+pub mod social_login_state;
 pub mod user;
 
 pub use account_recovery_token::AccountRecoveryToken;
@@ -48,4 +49,5 @@ pub use role::Role;
 pub use scope::Scope;
 pub use session::Session;
 pub use signing_key::{Algorithm, SigningKey};
+pub use social_login_state::SocialLoginState;
 pub use user::User;

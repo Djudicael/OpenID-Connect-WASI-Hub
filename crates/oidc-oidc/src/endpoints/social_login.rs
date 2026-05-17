@@ -7,11 +7,10 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::{Html, IntoResponse, Response};
-use base64::Engine;
 use serde::Deserialize;
 use serde_json::json;
 
-use oidc_core::models::{FederatedIdentity, IdentityProvider, User};
+use oidc_core::models::{FederatedIdentity, IdentityProvider, SocialLoginState, User};
 use oidc_core::traits::token_service::TokenService;
 use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, html_escape, sha2_256_hex};
 use oidc_repository::repositories::client_repo::ClientRepo;
@@ -19,6 +18,7 @@ use oidc_repository::repositories::federated_identity_repo::FederatedIdentityRep
 use oidc_repository::repositories::identity_provider_repo::IdentityProviderRepo;
 use oidc_repository::repositories::realm_repo::RealmRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
+use oidc_repository::repositories::social_login_state_repo::SocialLoginStateRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 
 use crate::session_cookie;
@@ -42,7 +42,7 @@ pub struct SocialLoginParams {
 pub struct SocialLoginCallbackParams {
     /// Authorization code from the upstream IdP.
     pub code: String,
-    /// State parameter (contains our internal state).
+    /// Opaque one-time state parameter echoed back by the upstream IdP.
     pub state: String,
 }
 
@@ -141,33 +141,32 @@ pub async fn social_login_initiate_handler(
         }
     };
 
-    if let Some(client_id) = params.client_id.as_deref() {
-        let client = match ClientRepo
-            .find_by_client_id_in_realm(&mut conn, client_id, realm.id)
-            .await
-        {
-            Ok(Some(c)) if c.enabled => c,
-            _ => {
-                return (axum::http::StatusCode::BAD_REQUEST, "Invalid client_id").into_response();
-            }
-        };
-
-        let redirect_uri = match params.redirect_uri.as_deref() {
-            Some(uri) if !uri.is_empty() => uri,
-            _ => {
-                return (axum::http::StatusCode::BAD_REQUEST, "Missing redirect_uri")
-                    .into_response();
-            }
-        };
-
-        if !client.redirect_uris.contains(&redirect_uri.to_string()) {
-            return (axum::http::StatusCode::BAD_REQUEST, "Invalid redirect_uri").into_response();
+    let client_id = match params.client_id.as_deref() {
+        Some(client_id) if !client_id.is_empty() => client_id,
+        _ => {
+            return (axum::http::StatusCode::BAD_REQUEST, "Missing client_id").into_response();
         }
+    };
+
+    let redirect_uri = match params.redirect_uri.as_deref() {
+        Some(uri) if !uri.is_empty() => uri,
+        _ => {
+            return (axum::http::StatusCode::BAD_REQUEST, "Missing redirect_uri").into_response();
+        }
+    };
+
+    let client = match ClientRepo
+        .find_by_client_id_in_realm(&mut conn, client_id, realm.id)
+        .await
+    {
+        Ok(Some(c)) if c.enabled => c,
+        _ => return (axum::http::StatusCode::BAD_REQUEST, "Invalid client_id").into_response(),
+    };
+
+    if !client.redirect_uris.contains(&redirect_uri.to_string()) {
+        return (axum::http::StatusCode::BAD_REQUEST, "Invalid redirect_uri").into_response();
     }
 
-    // Generate a state token that encodes our internal state.
-    // We encode the internal state as:
-    // base64url_no_pad(json({state_hash, client_id, redirect_uri, realm_id, provider_id, nonce}))
     let internal_state = match generate_opaque_token() {
         Ok(state) => state,
         Err(e) => {
@@ -181,27 +180,31 @@ pub async fn social_login_initiate_handler(
     };
     let state_hash = sha2_256_hex(&internal_state);
 
-    let state_data = json!({
-        "sh": state_hash,
-        "cid": params.client_id,
-        "ri": params.redirect_uri,
-        "rid": realm.id.to_string(),
-        "pid": provider.id.to_string(),
-        "n": params.nonce,
-        "s": params.state,
-    });
-
-    let encoded_state = match serde_json::to_vec(&state_data) {
-        Ok(bytes) => base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes),
-        Err(e) => {
-            tracing::error!("Failed to encode social login state: {e}");
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Internal error",
-            )
-                .into_response();
-        }
+    let persisted_state = SocialLoginState {
+        id: generate_uuid_v7(),
+        state_token_hash: state_hash,
+        realm_id: realm.id,
+        identity_provider_id: provider.id,
+        client_id: client.id,
+        redirect_uri: redirect_uri.to_string(),
+        original_state: params.state.clone(),
+        nonce: params.nonce.clone(),
+        expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+        used: false,
+        created_at: chrono::Utc::now(),
     };
+
+    if let Err(e) = SocialLoginStateRepo
+        .create(&mut conn, &persisted_state)
+        .await
+    {
+        tracing::error!("Failed to persist social login state: {e}");
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal error",
+        )
+            .into_response();
+    }
 
     // Build the upstream authorization URL
     let redirect_uri_for_upstream = format!(
@@ -216,7 +219,7 @@ pub async fn social_login_initiate_handler(
         urlencoding::encode(&provider.client_id),
         urlencoding::encode(&redirect_uri_for_upstream),
         urlencoding::encode(&scopes),
-        urlencoding::encode(&encoded_state),
+        urlencoding::encode(&internal_state),
     );
 
     let mut response = axum::response::Redirect::temporary(&upstream_auth_url).into_response();
@@ -237,85 +240,6 @@ pub async fn social_login_callback_handler(
     headers: HeaderMap,
     Query(params): Query<SocialLoginCallbackParams>,
 ) -> Response {
-    // Decode the state parameter
-    let state_data: serde_json::Value =
-        match base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(&params.state) {
-            Ok(bytes) => match serde_json::from_slice(&bytes[..]) {
-                Ok(v) => v,
-                Err(_) => {
-                    return (axum::http::StatusCode::BAD_REQUEST, "Invalid state").into_response();
-                }
-            },
-            Err(_) => {
-                return (
-                    axum::http::StatusCode::BAD_REQUEST,
-                    "Invalid state encoding",
-                )
-                    .into_response();
-            }
-        };
-
-    let expected_state = match extract_social_state_from_headers(&headers) {
-        Some(state) => state,
-        None => {
-            return (axum::http::StatusCode::BAD_REQUEST, "Missing state cookie").into_response();
-        }
-    };
-    let expected_hash = sha2_256_hex(&expected_state);
-    let provided_hash = match state_data.get("sh").and_then(|v| v.as_str()) {
-        Some(hash) if hash == expected_hash => hash,
-        _ => return (axum::http::StatusCode::BAD_REQUEST, "Invalid state").into_response(),
-    };
-    let _ = provided_hash;
-
-    let realm_id: uuid::Uuid = match state_data
-        .get("rid")
-        .and_then(|v| v.as_str())
-        .and_then(|s| s.parse().ok())
-    {
-        Some(id) => id,
-        None => {
-            return (
-                axum::http::StatusCode::BAD_REQUEST,
-                "Missing realm in state",
-            )
-                .into_response();
-        }
-    };
-
-    let provider_id: uuid::Uuid = match state_data
-        .get("pid")
-        .and_then(|v| v.as_str())
-        .and_then(|s| s.parse().ok())
-    {
-        Some(id) => id,
-        None => {
-            return (
-                axum::http::StatusCode::BAD_REQUEST,
-                "Missing provider in state",
-            )
-                .into_response();
-        }
-    };
-
-    let redirect_uri = state_data
-        .get("ri")
-        .and_then(|v| v.as_str())
-        .unwrap_or("/")
-        .to_string();
-    let client_id = state_data
-        .get("cid")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let original_state = state_data
-        .get("s")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-    let nonce = state_data
-        .get("n")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
-
     let mut conn = match state.connect().await {
         Ok(c) => c,
         Err(e) => {
@@ -329,7 +253,7 @@ pub async fn social_login_callback_handler(
     };
 
     let realm = match RealmRepo.find_by_name(&mut conn, &realm_name).await {
-        Ok(Some(r)) if r.enabled && r.id == realm_id => r,
+        Ok(Some(r)) if r.enabled => r,
         _ => return (axum::http::StatusCode::BAD_REQUEST, "Invalid realm").into_response(),
     };
 
@@ -337,7 +261,7 @@ pub async fn social_login_callback_handler(
         .find_by_alias(&mut conn, realm.id, &provider_alias)
         .await
     {
-        Ok(Some(p)) if p.enabled && p.id == provider_id => p,
+        Ok(Some(p)) if p.enabled => p,
         _ => {
             return (
                 axum::http::StatusCode::BAD_REQUEST,
@@ -347,25 +271,56 @@ pub async fn social_login_callback_handler(
         }
     };
 
-    let local_client = if let Some(client_id) = client_id.as_deref() {
-        let client = match ClientRepo
-            .find_by_client_id_in_realm(&mut conn, client_id, realm.id)
-            .await
-        {
-            Ok(Some(c)) if c.enabled => c,
-            _ => {
-                return (axum::http::StatusCode::BAD_REQUEST, "Invalid client_id").into_response();
-            }
-        };
-
-        if !client.redirect_uris.contains(&redirect_uri) {
-            return (axum::http::StatusCode::BAD_REQUEST, "Invalid redirect_uri").into_response();
+    let expected_state = match extract_social_state_from_headers(&headers) {
+        Some(state) => state,
+        None => {
+            return (axum::http::StatusCode::BAD_REQUEST, "Missing state cookie").into_response();
         }
-
-        Some(client)
-    } else {
-        None
     };
+
+    if expected_state != params.state {
+        return (axum::http::StatusCode::BAD_REQUEST, "Invalid state").into_response();
+    }
+
+    let social_state = match SocialLoginStateRepo
+        .consume_valid(
+            &mut conn,
+            &sha2_256_hex(&params.state),
+            realm.id,
+            provider.id,
+        )
+        .await
+    {
+        Ok(Some(s)) => s,
+        Ok(None) => return (axum::http::StatusCode::BAD_REQUEST, "Invalid state").into_response(),
+        Err(e) => {
+            tracing::error!("Failed to consume social login state: {e}");
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal error",
+            )
+                .into_response();
+        }
+    };
+
+    let local_client = match ClientRepo
+        .find_by_id(&mut conn, social_state.client_id)
+        .await
+    {
+        Ok(Some(c)) if c.enabled => c,
+        _ => return (axum::http::StatusCode::BAD_REQUEST, "Invalid client_id").into_response(),
+    };
+
+    if !local_client
+        .redirect_uris
+        .contains(&social_state.redirect_uri)
+    {
+        return (axum::http::StatusCode::BAD_REQUEST, "Invalid redirect_uri").into_response();
+    }
+
+    let redirect_uri = social_state.redirect_uri.clone();
+    let original_state = social_state.original_state.clone();
+    let nonce = social_state.nonce.clone();
 
     // Exchange the upstream authorization code for tokens
     let token_response = match exchange_code_for_tokens(
@@ -433,7 +388,7 @@ pub async fn social_login_callback_handler(
         &upstream_subject,
         upstream_email.as_deref(),
         upstream_name.as_deref(),
-        realm_id,
+        realm.id,
     )
     .await
     {
@@ -450,11 +405,7 @@ pub async fn social_login_callback_handler(
 
     // Issue local OIDC tokens
     let subject = user.id.to_string();
-    let audience = local_client
-        .as_ref()
-        .map(|c| c.client_id.clone())
-        .or(client_id.clone())
-        .unwrap_or_else(|| "admin-ui".to_string());
+    let audience = local_client.client_id.clone();
     let scopes = vec![
         "openid".to_string(),
         "profile".to_string(),
@@ -463,7 +414,7 @@ pub async fn social_login_callback_handler(
 
     let sid = oidc_core::utils::generate_sid().unwrap_or_default();
 
-    let token_svc = match state.token_service_for_realm(realm_id).await {
+    let token_svc = match state.token_service_for_realm(realm.id).await {
         Ok(svc) => svc,
         Err(e) => {
             tracing::error!("Token service error: {e}");
@@ -539,8 +490,8 @@ pub async fn social_login_callback_handler(
         id: generate_uuid_v7(),
         sid,
         user_id: Some(user.id),
-        realm_id,
-        client_id: local_client.as_ref().map(|c| c.id).unwrap_or(provider.id),
+        realm_id: realm.id,
+        client_id: local_client.id,
         grant_type: "social_login".to_string(),
         access_token_hash: sha2_256_hex(&access_token),
         refresh_token_hash: Some(sha2_256_hex(&refresh_token)),

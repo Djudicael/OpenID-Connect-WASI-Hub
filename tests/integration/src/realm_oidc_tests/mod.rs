@@ -138,6 +138,11 @@ async fn test_realm_discovery_document() {
         "token_endpoint should be realm-scoped, got: {token}"
     );
 
+    assert!(
+        body.get("check_session_iframe").is_none(),
+        "realm discovery must not advertise check_session_iframe until it is supported"
+    );
+
     // Standard arrays still present
     assert!(body["scopes_supported"].as_array().is_some());
     assert!(body["response_types_supported"].as_array().is_some());
