@@ -14,7 +14,9 @@ use std::collections::HashMap;
 
 use oidc_core::OidcError;
 use oidc_core::models::DeviceCode;
-use oidc_core::utils::{generate_opaque_token, generate_user_code, generate_uuid_v7, html_escape, sha2_256_hex};
+use oidc_core::utils::{
+    generate_opaque_token, generate_user_code, generate_uuid_v7, html_escape, sha2_256_hex,
+};
 use oidc_repository::repositories::client_repo::ClientRepo;
 use oidc_repository::repositories::device_code_repo::DeviceCodeRepo;
 use oidc_repository::repositories::realm_repo::RealmRepo;
@@ -441,5 +443,3 @@ pub async fn device_authorization_confirm_handler(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-

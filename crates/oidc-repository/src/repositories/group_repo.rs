@@ -34,7 +34,8 @@ impl GroupRepo {
         conn: &mut Connection,
         id: Uuid,
     ) -> Result<Option<Group>, OidcError> {
-        let sql = &format!("SELECT {GROUP_COLUMNS} FROM groups WHERE id = $1 AND deleted_at IS NULL");
+        let sql =
+            &format!("SELECT {GROUP_COLUMNS} FROM groups WHERE id = $1 AND deleted_at IS NULL");
         let row = conn
             .query_one_params(sql, &[&id])
             .await
@@ -184,7 +185,10 @@ impl GroupRepo {
             None => "SELECT COUNT(*) FROM groups WHERE deleted_at IS NULL",
         };
         let result = match realm_id.as_ref() {
-            Some(rid) => conn.query_params(sql, &[rid]).await.map_err(mapper::pg_err)?,
+            Some(rid) => conn
+                .query_params(sql, &[rid])
+                .await
+                .map_err(mapper::pg_err)?,
             None => conn.query_params(sql, &[]).await.map_err(mapper::pg_err)?,
         };
         let row = result

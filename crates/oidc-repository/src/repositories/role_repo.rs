@@ -174,13 +174,20 @@ impl RoleRepo {
     }
 
     /// Count roles in a realm. If realm_id is None, counts all realms.
-    pub async fn count(&self, conn: &mut Connection, realm_id: Option<Uuid>) -> Result<i64, OidcError> {
+    pub async fn count(
+        &self,
+        conn: &mut Connection,
+        realm_id: Option<Uuid>,
+    ) -> Result<i64, OidcError> {
         let sql = match realm_id {
             Some(_) => "SELECT COUNT(*) FROM roles WHERE deleted_at IS NULL AND realm_id = $1",
             None => "SELECT COUNT(*) FROM roles WHERE deleted_at IS NULL",
         };
         let result = match realm_id.as_ref() {
-            Some(rid) => conn.query_params(sql, &[rid]).await.map_err(mapper::pg_err)?,
+            Some(rid) => conn
+                .query_params(sql, &[rid])
+                .await
+                .map_err(mapper::pg_err)?,
             None => conn.query_params(sql, &[]).await.map_err(mapper::pg_err)?,
         };
         let row = result

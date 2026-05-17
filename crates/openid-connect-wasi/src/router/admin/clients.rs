@@ -10,7 +10,9 @@ use oidc_core::utils::{generate_opaque_token, generate_uuid_v7};
 use oidc_repository::repositories::client_repo::ClientRepo;
 
 use crate::middleware::admin_auth::AdminAuth;
-use crate::router::admin::{admin_or_forbidden, connect, bad_request, conflict, internal_error, not_found};
+use crate::router::admin::{
+    admin_or_forbidden, bad_request, conflict, connect, internal_error, not_found,
+};
 use crate::state::AppState;
 
 #[derive(Deserialize)]
@@ -23,27 +25,48 @@ pub struct ListQuery {
     offset: i64,
 }
 
-fn default_limit() -> i64 { 20 }
-fn default_offset() -> i64 { 0 }
+fn default_limit() -> i64 {
+    20
+}
+fn default_offset() -> i64 {
+    0
+}
 
 pub async fn list(
     State(state): State<AppState>,
     Query(query): Query<ListQuery>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
-    let clients = match ClientRepo.list(&mut conn, query.realm_id, query.search.as_deref(), query.limit, query.offset).await {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let clients = match ClientRepo
+        .list(
+            &mut conn,
+            query.realm_id,
+            query.search.as_deref(),
+            query.limit,
+            query.offset,
+        )
+        .await
+    {
         Ok(c) => c,
         Err(e) => {
             tracing::error!("list clients error: {e}");
             return internal_error();
         }
     };
-    let total = ClientRepo.count(&mut conn, query.realm_id).await.unwrap_or_else(|e| {
-        tracing::warn!("failed to count clients: {e}");
-        0
-    });
+    let total = ClientRepo
+        .count(&mut conn, query.realm_id)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("failed to count clients: {e}");
+            0
+        });
     let rows: Vec<Value> = clients.into_iter().map(|c| json!({
         "id": c.id.to_string(),
         "realm_id": c.realm_id.to_string(),
@@ -79,8 +102,13 @@ pub async fn get(
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     match ClientRepo.find_by_id(&mut conn, id).await {
         Ok(Some(c)) => Json(json!({
             "id": c.id.to_string(),
@@ -150,13 +178,21 @@ pub struct CreateRequest {
 }
 
 pub async fn create(State(state): State<AppState>, auth: AdminAuth, body: String) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
     let req: CreateRequest = match serde_json::from_str(&body) {
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
-    match ClientRepo.find_by_client_id(&mut conn, &req.client_id).await {
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    match ClientRepo
+        .find_by_client_id(&mut conn, &req.client_id)
+        .await
+    {
         Ok(Some(_)) => return conflict(),
         Ok(None) => {}
         Err(e) => {
@@ -170,7 +206,9 @@ pub async fn create(State(state): State<AppState>, auth: AdminAuth, body: String
     };
     let (client_secret_hash, plain_secret) = match client_type {
         ClientType::Confidential => {
-            let plain = req.client_secret.unwrap_or_else(|| generate_opaque_token().unwrap_or_default());
+            let plain = req
+                .client_secret
+                .unwrap_or_else(|| generate_opaque_token().unwrap_or_default());
             let hash = match state.hasher.hash(&plain) {
                 Ok(h) => h,
                 Err(e) => {
@@ -184,8 +222,12 @@ pub async fn create(State(state): State<AppState>, auth: AdminAuth, body: String
     };
     let id = generate_uuid_v7();
     let redirect_uris = req.redirect_uris.unwrap_or_default();
-    let allowed_scopes = req.allowed_scopes.unwrap_or_else(|| vec!["openid".to_string()]);
-    let allowed_grant_types = req.allowed_grant_types.unwrap_or_else(|| vec!["authorization_code".to_string()]);
+    let allowed_scopes = req
+        .allowed_scopes
+        .unwrap_or_else(|| vec!["openid".to_string()]);
+    let allowed_grant_types = req
+        .allowed_grant_types
+        .unwrap_or_else(|| vec!["authorization_code".to_string()]);
     let pkce_required = req.pkce_required.unwrap_or(true);
     let enabled = req.enabled.unwrap_or(true);
     let client = oidc_core::models::Client {
@@ -201,22 +243,30 @@ pub async fn create(State(state): State<AppState>, auth: AdminAuth, body: String
         pkce_required,
         enabled,
         deleted_at: None,
-        token_endpoint_auth_method: req.token_endpoint_auth_method.unwrap_or_else(|| match client_type {
-            ClientType::Confidential => "client_secret_basic".into(),
-            ClientType::Public => "none".into(),
+        token_endpoint_auth_method: req.token_endpoint_auth_method.unwrap_or_else(|| {
+            match client_type {
+                ClientType::Confidential => "client_secret_basic".into(),
+                ClientType::Public => "none".into(),
+            }
         }),
         jwks_uri: req.jwks_uri,
         jwks: req.jwks,
         request_uris: req.request_uris.unwrap_or_default(),
         client_secret_encrypted: None,
         frontchannel_logout_uri: req.frontchannel_logout_uri,
-        frontchannel_logout_session_required: req.frontchannel_logout_session_required.unwrap_or(false),
+        frontchannel_logout_session_required: req
+            .frontchannel_logout_session_required
+            .unwrap_or(false),
         backchannel_logout_uri: req.backchannel_logout_uri,
-        backchannel_logout_session_required: req.backchannel_logout_session_required.unwrap_or(false),
+        backchannel_logout_session_required: req
+            .backchannel_logout_session_required
+            .unwrap_or(false),
         post_logout_redirect_uris: req.post_logout_redirect_uris.unwrap_or_default(),
         subject_type: req.subject_type.unwrap_or_else(|| "public".into()),
         sector_identifier_uri: req.sector_identifier_uri,
-        response_modes: req.response_modes.unwrap_or_else(|| vec!["query".to_string(), "fragment".to_string()]),
+        response_modes: req
+            .response_modes
+            .unwrap_or_else(|| vec!["query".to_string(), "fragment".to_string()]),
         id_token_encrypted_response_alg: req.id_token_encrypted_response_alg,
         id_token_encrypted_response_enc: req.id_token_encrypted_response_enc,
         id_token_encryption_key_encrypted: None,
@@ -300,12 +350,17 @@ pub async fn update(
     auth: AdminAuth,
     body: String,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
     let req: UpdateRequest = match serde_json::from_str(&body) {
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     let mut client = match ClientRepo.find_by_id(&mut conn, id).await {
         Ok(Some(c)) => c,
         Ok(None) => return not_found(),
@@ -314,30 +369,78 @@ pub async fn update(
             return internal_error();
         }
     };
-    if let Some(v) = req.name { client.name = v; }
-    if let Some(v) = req.redirect_uris { client.redirect_uris = v; }
-    if let Some(v) = req.allowed_scopes { client.allowed_scopes = v; }
-    if let Some(v) = req.allowed_grant_types { client.allowed_grant_types = v; }
-    if let Some(v) = req.pkce_required { client.pkce_required = v; }
-    if let Some(v) = req.enabled { client.enabled = v; }
-    if let Some(v) = req.subject_type { client.subject_type = v; }
-    if let Some(v) = req.sector_identifier_uri { client.sector_identifier_uri = Some(v); }
-    if let Some(v) = req.token_endpoint_auth_method { client.token_endpoint_auth_method = v; }
-    if let Some(v) = req.jwks_uri { client.jwks_uri = Some(v); }
-    if let Some(v) = req.jwks { client.jwks = Some(v); }
-    if let Some(v) = req.request_uris { client.request_uris = v; }
-    if let Some(v) = req.frontchannel_logout_uri { client.frontchannel_logout_uri = Some(v); }
-    if let Some(v) = req.frontchannel_logout_session_required { client.frontchannel_logout_session_required = v; }
-    if let Some(v) = req.backchannel_logout_uri { client.backchannel_logout_uri = Some(v); }
-    if let Some(v) = req.backchannel_logout_session_required { client.backchannel_logout_session_required = v; }
-    if let Some(v) = req.post_logout_redirect_uris { client.post_logout_redirect_uris = v; }
-    if let Some(v) = req.response_modes { client.response_modes = v; }
-    if let Some(v) = req.id_token_encrypted_response_alg { client.id_token_encrypted_response_alg = Some(v); }
-    if let Some(v) = req.id_token_encrypted_response_enc { client.id_token_encrypted_response_enc = Some(v); }
-    if let Some(v) = req.id_token_encryption_key_pem { client.id_token_encryption_key_pem = Some(v); }
-    if let Some(v) = req.request_object_encryption_alg { client.request_object_encryption_alg = Some(v); }
-    if let Some(v) = req.request_object_encryption_enc { client.request_object_encryption_enc = Some(v); }
-    if let Some(v) = req.request_object_encryption_key_pem { client.request_object_encryption_key_pem = Some(v); }
+    if let Some(v) = req.name {
+        client.name = v;
+    }
+    if let Some(v) = req.redirect_uris {
+        client.redirect_uris = v;
+    }
+    if let Some(v) = req.allowed_scopes {
+        client.allowed_scopes = v;
+    }
+    if let Some(v) = req.allowed_grant_types {
+        client.allowed_grant_types = v;
+    }
+    if let Some(v) = req.pkce_required {
+        client.pkce_required = v;
+    }
+    if let Some(v) = req.enabled {
+        client.enabled = v;
+    }
+    if let Some(v) = req.subject_type {
+        client.subject_type = v;
+    }
+    if let Some(v) = req.sector_identifier_uri {
+        client.sector_identifier_uri = Some(v);
+    }
+    if let Some(v) = req.token_endpoint_auth_method {
+        client.token_endpoint_auth_method = v;
+    }
+    if let Some(v) = req.jwks_uri {
+        client.jwks_uri = Some(v);
+    }
+    if let Some(v) = req.jwks {
+        client.jwks = Some(v);
+    }
+    if let Some(v) = req.request_uris {
+        client.request_uris = v;
+    }
+    if let Some(v) = req.frontchannel_logout_uri {
+        client.frontchannel_logout_uri = Some(v);
+    }
+    if let Some(v) = req.frontchannel_logout_session_required {
+        client.frontchannel_logout_session_required = v;
+    }
+    if let Some(v) = req.backchannel_logout_uri {
+        client.backchannel_logout_uri = Some(v);
+    }
+    if let Some(v) = req.backchannel_logout_session_required {
+        client.backchannel_logout_session_required = v;
+    }
+    if let Some(v) = req.post_logout_redirect_uris {
+        client.post_logout_redirect_uris = v;
+    }
+    if let Some(v) = req.response_modes {
+        client.response_modes = v;
+    }
+    if let Some(v) = req.id_token_encrypted_response_alg {
+        client.id_token_encrypted_response_alg = Some(v);
+    }
+    if let Some(v) = req.id_token_encrypted_response_enc {
+        client.id_token_encrypted_response_enc = Some(v);
+    }
+    if let Some(v) = req.id_token_encryption_key_pem {
+        client.id_token_encryption_key_pem = Some(v);
+    }
+    if let Some(v) = req.request_object_encryption_alg {
+        client.request_object_encryption_alg = Some(v);
+    }
+    if let Some(v) = req.request_object_encryption_enc {
+        client.request_object_encryption_enc = Some(v);
+    }
+    if let Some(v) = req.request_object_encryption_key_pem {
+        client.request_object_encryption_key_pem = Some(v);
+    }
     match ClientRepo.update(&mut conn, &client).await {
         Ok(()) => Json(json!({"updated": true})).into_response(),
         Err(e) => {
@@ -352,8 +455,13 @@ pub async fn delete(
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     match ClientRepo.delete(&mut conn, id).await {
         Ok(()) => Json(json!({"deleted": true})).into_response(),
         Err(e) => {

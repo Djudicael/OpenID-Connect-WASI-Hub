@@ -15,7 +15,9 @@ use oidc_repository::repositories::realm_repo::RealmRepo;
 use oidc_repository::repositories::realm_signing_keys_repo::RealmSigningKeysRepo;
 
 use crate::middleware::admin_auth::AdminAuth;
-use crate::router::admin::{admin_or_forbidden, connect, bad_request, conflict, internal_error, not_found};
+use crate::router::admin::{
+    admin_or_forbidden, bad_request, conflict, connect, internal_error, not_found,
+};
 use crate::state::AppState;
 
 // ─── Realms CRUD ──────────────────────────────────────────────────────────────────
@@ -28,16 +30,25 @@ pub struct RealmListQuery {
     offset: i64,
 }
 
-fn default_limit() -> i64 { 20 }
-fn default_offset() -> i64 { 0 }
+fn default_limit() -> i64 {
+    20
+}
+fn default_offset() -> i64 {
+    0
+}
 
 pub async fn list(
     State(state): State<AppState>,
     Query(query): Query<RealmListQuery>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     let realms = match RealmRepo.list(&mut conn, query.limit, query.offset).await {
         Ok(r) => r,
         Err(e) => {
@@ -49,13 +60,18 @@ pub async fn list(
         tracing::warn!("failed to count realms: {e}");
         0
     });
-    let rows: Vec<Value> = realms.into_iter().map(|r| json!({
-        "id": r.id.to_string(),
-        "name": r.name,
-        "display_name": r.display_name,
-        "enabled": r.enabled,
-        "config": r.config,
-    })).collect();
+    let rows: Vec<Value> = realms
+        .into_iter()
+        .map(|r| {
+            json!({
+                "id": r.id.to_string(),
+                "name": r.name,
+                "display_name": r.display_name,
+                "enabled": r.enabled,
+                "config": r.config,
+            })
+        })
+        .collect();
     Json(json!({"items": rows, "total": total})).into_response()
 }
 
@@ -64,8 +80,13 @@ pub async fn get(
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     match RealmRepo.find_by_id(&mut conn, id).await {
         Ok(Some(r)) => Json(json!({
             "id": r.id.to_string(),
@@ -73,7 +94,8 @@ pub async fn get(
             "display_name": r.display_name,
             "enabled": r.enabled,
             "config": r.config,
-        })).into_response(),
+        }))
+        .into_response(),
         Ok(None) => not_found(),
         Err(e) => {
             tracing::error!("get realm error: {e}");
@@ -91,12 +113,17 @@ pub struct CreateRequest {
 }
 
 pub async fn create(State(state): State<AppState>, auth: AdminAuth, body: String) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
     let req: CreateRequest = match serde_json::from_str(&body) {
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     match RealmRepo.find_by_name(&mut conn, &req.name).await {
         Ok(Some(_)) => return conflict(),
         Ok(None) => {}
@@ -106,7 +133,9 @@ pub async fn create(State(state): State<AppState>, auth: AdminAuth, body: String
         }
     }
     let realm_id = generate_uuid_v7();
-    let config = req.config.unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+    let config = req
+        .config
+        .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
     let realm = oidc_core::models::Realm {
         id: realm_id,
         name: req.name,
@@ -133,7 +162,11 @@ pub async fn create(State(state): State<AppState>, auth: AdminAuth, body: String
         tracing::error!("store realm keys error: {e}");
         return internal_error();
     }
-    let actor_type = if auth.is_api_key { ActorType::ApiKey } else { ActorType::User };
+    let actor_type = if auth.is_api_key {
+        ActorType::ApiKey
+    } else {
+        ActorType::User
+    };
     let actor_id = Uuid::parse_str(&auth.subject).ok();
     let audit = oidc_core::models::audit_event::AuditEvent {
         id: generate_uuid_v7(),
@@ -157,7 +190,8 @@ pub async fn create(State(state): State<AppState>, auth: AdminAuth, body: String
         "display_name": realm.display_name,
         "enabled": realm.enabled,
         "config": realm.config,
-    })).into_response()
+    }))
+    .into_response()
 }
 
 #[derive(Deserialize)]
@@ -174,12 +208,17 @@ pub async fn update(
     auth: AdminAuth,
     body: String,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
     let req: UpdateRequest = match serde_json::from_str(&body) {
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     let mut realm = match RealmRepo.find_by_id(&mut conn, id).await {
         Ok(Some(r)) => r,
         Ok(None) => return not_found(),
@@ -188,10 +227,18 @@ pub async fn update(
             return internal_error();
         }
     };
-    if let Some(v) = req.name { realm.name = v; }
-    if let Some(v) = req.display_name { realm.display_name = v; }
-    if let Some(v) = req.enabled { realm.enabled = v; }
-    if let Some(v) = req.config { realm.config = v; }
+    if let Some(v) = req.name {
+        realm.name = v;
+    }
+    if let Some(v) = req.display_name {
+        realm.display_name = v;
+    }
+    if let Some(v) = req.enabled {
+        realm.enabled = v;
+    }
+    if let Some(v) = req.config {
+        realm.config = v;
+    }
     match RealmRepo.update(&mut conn, &realm).await {
         Ok(()) => Json(json!({"updated": true})).into_response(),
         Err(e) => {
@@ -206,8 +253,13 @@ pub async fn delete(
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     if let Err(e) = RealmSigningKeysRepo.delete_by_realm_id(&mut conn, id).await {
         tracing::warn!("delete realm signing keys error: {e}");
     }
@@ -227,8 +279,13 @@ pub async fn get_password_policy(
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     let realm = match RealmRepo.find_by_id(&mut conn, id).await {
         Ok(Some(r)) => r,
         Ok(None) => return not_found(),
@@ -249,7 +306,8 @@ pub async fn get_password_policy(
         "password_history_count": policy.password_history_count,
         "max_identical_consecutive": policy.max_identical_consecutive,
         "disallowed_passwords": policy.disallowed_passwords,
-    })).into_response()
+    }))
+    .into_response()
 }
 
 #[derive(Deserialize)]
@@ -272,12 +330,17 @@ pub async fn update_password_policy(
     auth: AdminAuth,
     body: String,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
     let req: UpdatePasswordPolicyRequest = match serde_json::from_str(&body) {
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     let mut realm = match RealmRepo.find_by_id(&mut conn, id).await {
         Ok(Some(r)) => r,
         Ok(None) => return not_found(),
@@ -295,13 +358,22 @@ pub async fn update_password_policy(
         require_digit: req.require_digit.unwrap_or(current.require_digit),
         require_special: req.require_special.unwrap_or(current.require_special),
         min_unique_chars: req.min_unique_chars.unwrap_or(current.min_unique_chars),
-        password_history_count: req.password_history_count.unwrap_or(current.password_history_count),
-        max_identical_consecutive: req.max_identical_consecutive.unwrap_or(current.max_identical_consecutive),
-        disallowed_passwords: req.disallowed_passwords.unwrap_or(current.disallowed_passwords),
+        password_history_count: req
+            .password_history_count
+            .unwrap_or(current.password_history_count),
+        max_identical_consecutive: req
+            .max_identical_consecutive
+            .unwrap_or(current.max_identical_consecutive),
+        disallowed_passwords: req
+            .disallowed_passwords
+            .unwrap_or(current.disallowed_passwords),
     };
     let config = realm.config.as_object_mut();
     if let Some(config_map) = config {
-        config_map.insert("password_policy".to_string(), serde_json::to_value(&updated_policy).unwrap_or_default());
+        config_map.insert(
+            "password_policy".to_string(),
+            serde_json::to_value(&updated_policy).unwrap_or_default(),
+        );
     }
     match RealmRepo.update(&mut conn, &realm).await {
         Ok(()) => {
@@ -310,7 +382,11 @@ pub async fn update_password_policy(
                 realm_id: Some(realm.id),
                 event_type: "realm.password_policy_updated".to_string(),
                 actor_id: Uuid::parse_str(&auth.subject).ok(),
-                actor_type: if auth.is_api_key { ActorType::ApiKey } else { ActorType::User },
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
                 target_type: Some("realm".to_string()),
                 target_id: Some(realm.id),
                 details: json!({}),
@@ -332,7 +408,8 @@ pub async fn update_password_policy(
                 "password_history_count": updated_policy.password_history_count,
                 "max_identical_consecutive": updated_policy.max_identical_consecutive,
                 "disallowed_passwords": updated_policy.disallowed_passwords,
-            })).into_response()
+            }))
+            .into_response()
         }
         Err(e) => {
             tracing::error!("update password policy error: {e}");
@@ -353,17 +430,31 @@ pub async fn list_identity_providers(
     Query(query): Query<IdpListQuery>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     let items = match query.realm_id {
-        Some(realm_id) => match IdentityProviderRepo.find_by_realm(&mut conn, realm_id).await {
+        Some(realm_id) => match IdentityProviderRepo
+            .find_by_realm(&mut conn, realm_id)
+            .await
+        {
             Ok(i) => i,
             Err(e) => {
                 tracing::error!("list identity providers error: {e}");
                 return internal_error();
             }
         },
-        None => return (StatusCode::BAD_REQUEST, Json(json!({"error": "realm_id required"}))).into_response(),
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "realm_id required"})),
+            )
+                .into_response();
+        }
     };
     let rows: Vec<Value> = items.into_iter().map(|i| json!({
         "id": i.id.to_string(),
@@ -409,13 +500,21 @@ pub async fn create_identity_provider(
     auth: AdminAuth,
     body: String,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
     let req: CreateIdentityProviderRequest = match serde_json::from_str(&body) {
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
-    match IdentityProviderRepo.find_by_alias(&mut conn, req.realm_id, &req.alias).await {
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    match IdentityProviderRepo
+        .find_by_alias(&mut conn, req.realm_id, &req.alias)
+        .await
+    {
         Ok(Some(_)) => return conflict(),
         Ok(None) => {}
         Err(e) => {
@@ -431,16 +530,23 @@ pub async fn create_identity_provider(
     let (issuer, authorization_url, token_url, userinfo_url, jwks_url) = match provider_type {
         IdentityProviderType::Google => (
             req.issuer,
-            req.authorization_url.unwrap_or_else(|| "https://accounts.google.com/o/oauth2/v2/auth".into()),
-            req.token_url.unwrap_or_else(|| "https://oauth2.googleapis.com/token".into()),
-            req.userinfo_url.unwrap_or_else(|| "https://openidconnect.googleapis.com/v1/userinfo".into()),
-            req.jwks_url.unwrap_or_else(|| "https://www.googleapis.com/oauth2/v3/certs".into()),
+            req.authorization_url
+                .unwrap_or_else(|| "https://accounts.google.com/o/oauth2/v2/auth".into()),
+            req.token_url
+                .unwrap_or_else(|| "https://oauth2.googleapis.com/token".into()),
+            req.userinfo_url
+                .unwrap_or_else(|| "https://openidconnect.googleapis.com/v1/userinfo".into()),
+            req.jwks_url
+                .unwrap_or_else(|| "https://www.googleapis.com/oauth2/v3/certs".into()),
         ),
         IdentityProviderType::GitHub => (
             req.issuer,
-            req.authorization_url.unwrap_or_else(|| "https://github.com/login/oauth/authorize".into()),
-            req.token_url.unwrap_or_else(|| "https://github.com/login/oauth/access_token".into()),
-            req.userinfo_url.unwrap_or_else(|| "https://api.github.com/user".into()),
+            req.authorization_url
+                .unwrap_or_else(|| "https://github.com/login/oauth/authorize".into()),
+            req.token_url
+                .unwrap_or_else(|| "https://github.com/login/oauth/access_token".into()),
+            req.userinfo_url
+                .unwrap_or_else(|| "https://api.github.com/user".into()),
             req.jwks_url.unwrap_or_default(),
         ),
         IdentityProviderType::Oidc => (
@@ -466,13 +572,19 @@ pub async fn create_identity_provider(
         jwks_url,
         client_id: req.client_id,
         client_secret: req.client_secret.unwrap_or_default(),
-        scopes: req.scopes.unwrap_or_else(|| vec!["openid".into(), "profile".into(), "email".into()]),
+        scopes: req
+            .scopes
+            .unwrap_or_else(|| vec!["openid".into(), "profile".into(), "email".into()]),
         auto_create_users: req.auto_create_users.unwrap_or(true),
         link_users_by_email: req.link_users_by_email.unwrap_or(false),
         deleted_at: None,
     };
     if let Err(e) = idp.validate() {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": format!("{e}")}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("{e}")})),
+        )
+            .into_response();
     }
     match IdentityProviderRepo.create(&mut conn, &idp).await {
         Ok(()) => {
@@ -481,7 +593,11 @@ pub async fn create_identity_provider(
                 realm_id: Some(idp.realm_id),
                 event_type: "identity_provider.created".to_string(),
                 actor_id: Uuid::parse_str(&auth.subject).ok(),
-                actor_type: if auth.is_api_key { ActorType::ApiKey } else { ActorType::User },
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
                 target_type: Some("identity_provider".to_string()),
                 target_id: Some(idp.id),
                 details: json!({"alias": idp.alias}),
@@ -522,8 +638,13 @@ pub async fn get_identity_provider(
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     match IdentityProviderRepo.find_by_id(&mut conn, id).await {
         Ok(Some(i)) => Json(json!({
             "id": i.id.to_string(),
@@ -574,12 +695,17 @@ pub async fn update_identity_provider(
     auth: AdminAuth,
     body: String,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
     let req: UpdateIdentityProviderRequest = match serde_json::from_str(&body) {
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     let mut idp = match IdentityProviderRepo.find_by_id(&mut conn, id).await {
         Ok(Some(i)) => i,
         Ok(None) => return not_found(),
@@ -588,8 +714,12 @@ pub async fn update_identity_provider(
             return internal_error();
         }
     };
-    if let Some(v) = req.alias { idp.alias = v; }
-    if let Some(v) = req.display_name { idp.display_name = v; }
+    if let Some(v) = req.alias {
+        idp.alias = v;
+    }
+    if let Some(v) = req.display_name {
+        idp.display_name = v;
+    }
     if let Some(v) = req.provider_type {
         idp.provider_type = match v.as_str() {
             "google" => IdentityProviderType::Google,
@@ -597,19 +727,45 @@ pub async fn update_identity_provider(
             _ => IdentityProviderType::Oidc,
         };
     }
-    if let Some(v) = req.enabled { idp.enabled = v; }
-    if let Some(v) = req.issuer { idp.issuer = v; }
-    if let Some(v) = req.authorization_url { idp.authorization_url = v; }
-    if let Some(v) = req.token_url { idp.token_url = v; }
-    if let Some(v) = req.userinfo_url { idp.userinfo_url = v; }
-    if let Some(v) = req.jwks_url { idp.jwks_url = v; }
-    if let Some(v) = req.client_id { idp.client_id = v; }
-    if let Some(v) = req.client_secret { idp.client_secret = v; }
-    if let Some(v) = req.scopes { idp.scopes = v; }
-    if let Some(v) = req.auto_create_users { idp.auto_create_users = v; }
-    if let Some(v) = req.link_users_by_email { idp.link_users_by_email = v; }
+    if let Some(v) = req.enabled {
+        idp.enabled = v;
+    }
+    if let Some(v) = req.issuer {
+        idp.issuer = v;
+    }
+    if let Some(v) = req.authorization_url {
+        idp.authorization_url = v;
+    }
+    if let Some(v) = req.token_url {
+        idp.token_url = v;
+    }
+    if let Some(v) = req.userinfo_url {
+        idp.userinfo_url = v;
+    }
+    if let Some(v) = req.jwks_url {
+        idp.jwks_url = v;
+    }
+    if let Some(v) = req.client_id {
+        idp.client_id = v;
+    }
+    if let Some(v) = req.client_secret {
+        idp.client_secret = v;
+    }
+    if let Some(v) = req.scopes {
+        idp.scopes = v;
+    }
+    if let Some(v) = req.auto_create_users {
+        idp.auto_create_users = v;
+    }
+    if let Some(v) = req.link_users_by_email {
+        idp.link_users_by_email = v;
+    }
     if let Err(e) = idp.validate() {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": format!("{e}")}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("{e}")})),
+        )
+            .into_response();
     }
     match IdentityProviderRepo.update(&mut conn, &idp).await {
         Ok(()) => {
@@ -618,7 +774,11 @@ pub async fn update_identity_provider(
                 realm_id: Some(idp.realm_id),
                 event_type: "identity_provider.updated".to_string(),
                 actor_id: Uuid::parse_str(&auth.subject).ok(),
-                actor_type: if auth.is_api_key { ActorType::ApiKey } else { ActorType::User },
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
                 target_type: Some("identity_provider".to_string()),
                 target_id: Some(idp.id),
                 details: json!({"alias": idp.alias}),
@@ -643,8 +803,13 @@ pub async fn delete_identity_provider(
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     let idp = match IdentityProviderRepo.find_by_id(&mut conn, id).await {
         Ok(Some(i)) => i,
         Ok(None) => return not_found(),
@@ -660,7 +825,11 @@ pub async fn delete_identity_provider(
                 realm_id: Some(idp.realm_id),
                 event_type: "identity_provider.deleted".to_string(),
                 actor_id: Uuid::parse_str(&auth.subject).ok(),
-                actor_type: if auth.is_api_key { ActorType::ApiKey } else { ActorType::User },
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
                 target_type: Some("identity_provider".to_string()),
                 target_id: Some(idp.id),
                 details: json!({"alias": idp.alias}),

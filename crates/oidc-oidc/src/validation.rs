@@ -30,7 +30,9 @@ pub fn validate_scope(scope: &str, allowed: &[String]) -> Result<Vec<String>, Oi
 
     for s in &requested {
         if !allowed.contains(s) {
-            return Err(OidcError::InvalidScope(format!("scope '{s}' is not allowed")));
+            return Err(OidcError::InvalidScope(format!(
+                "scope '{s}' is not allowed"
+            )));
         }
     }
 
@@ -40,7 +42,13 @@ pub fn validate_scope(scope: &str, allowed: &[String]) -> Result<Vec<String>, Oi
 /// Validate a response type.
 pub fn validate_response_type(response_type: &str) -> Result<(), OidcError> {
     match response_type {
-        "code" | "id_token" | "code id_token" | "token" | "code token" | "id_token token" | "code id_token token" => Ok(()),
+        "code"
+        | "id_token"
+        | "code id_token"
+        | "token"
+        | "code token"
+        | "id_token token"
+        | "code id_token token" => Ok(()),
         _ => Err(OidcError::InvalidRequest),
     }
 }
@@ -59,7 +67,10 @@ pub fn validate_code_challenge(challenge: &str) -> Result<(), OidcError> {
         return Err(OidcError::InvalidRequest);
     }
     // Must be base64url-safe characters
-    if !challenge.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' ) {
+    if !challenge
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+    {
         return Err(OidcError::InvalidRequest);
     }
     Ok(())

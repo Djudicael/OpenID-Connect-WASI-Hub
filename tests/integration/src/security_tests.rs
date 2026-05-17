@@ -520,7 +520,7 @@ async fn test_refresh_token_replay_detected() {
         .post(&format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
-            "grant_type=refresh_token&refresh_token={}&client_id={}&client_secret=dummy",
+            "grant_type=refresh_token&refresh_token={}&client_id={}",
             urlencoding::encode(&old_refresh_token),
             urlencoding::encode(fixtures::TEST_CLIENT_ID),
         ))
@@ -552,7 +552,7 @@ async fn test_refresh_token_replay_detected() {
         .post(&format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
-            "grant_type=refresh_token&refresh_token={}&client_id={}&client_secret=dummy",
+            "grant_type=refresh_token&refresh_token={}&client_id={}",
             urlencoding::encode(&old_refresh_token),
             urlencoding::encode(fixtures::TEST_CLIENT_ID),
         ))
@@ -577,7 +577,7 @@ async fn test_refresh_token_replay_detected() {
         .post(&format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
-            "grant_type=refresh_token&refresh_token={}&client_id={}&client_secret=dummy",
+            "grant_type=refresh_token&refresh_token={}&client_id={}",
             urlencoding::encode(new_refresh_token),
             urlencoding::encode(fixtures::TEST_CLIENT_ID),
         ))
@@ -945,7 +945,7 @@ async fn test_session_fixation_prevention() {
         .post(&format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
-            "grant_type=refresh_token&refresh_token={}&client_id={}&client_secret=dummy",
+            "grant_type=refresh_token&refresh_token={}&client_id={}",
             urlencoding::encode(&refresh_token_1),
             urlencoding::encode(fixtures::TEST_CLIENT_ID),
         ))

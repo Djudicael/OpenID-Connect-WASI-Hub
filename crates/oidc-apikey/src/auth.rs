@@ -214,9 +214,12 @@ pub async fn verify_request_auth<S: oidc_core::traits::TokenService + Sync>(
     if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION) {
         if let Ok(auth_str) = auth_header.to_str() {
             if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                match token_service.verify_access_token(token).await {
-                    Ok(subject) => {
-                        return Ok(ApiRouteAuth::JwtBearer { subject });
+                match token_service.verify_access_token_with_claims(token).await {
+                    Ok(claims) => {
+                        return Ok(ApiRouteAuth::JwtBearer {
+                            subject: claims.sub,
+                            scope: claims.scope,
+                        });
                     }
                     Err(e) => {
                         tracing::debug!("JWT verification failed for API route: {}", e);
@@ -237,7 +240,12 @@ pub enum ApiRouteAuth {
     /// Authenticated via API key.
     ApiKey(ApiKeyAuth),
     /// Authenticated via JWT Bearer token.
-    JwtBearer { subject: String },
+    JwtBearer {
+        /// Subject from the verified access token.
+        subject: String,
+        /// Space-separated OAuth scopes from the verified access token.
+        scope: String,
+    },
 }
 
 /// Check if an API key has the required scope.

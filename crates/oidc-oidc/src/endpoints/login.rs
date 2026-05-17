@@ -86,7 +86,9 @@ pub async fn login_handler(
     let cookie_header = session_cookie::session_cookie_header(&result.session_id, &encryption_key);
 
     let cookie_value = cookie_header.parse().map_err(|e| {
-        from_oidc_error(&OidcError::Internal(format!("failed to parse session cookie header: {e}")))
+        from_oidc_error(&OidcError::Internal(format!(
+            "failed to parse session cookie header: {e}"
+        )))
     })?;
     let mut response = body.into_response();
     response.headers_mut().insert(SET_COOKIE, cookie_value);

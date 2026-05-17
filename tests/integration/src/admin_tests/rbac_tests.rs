@@ -369,7 +369,10 @@ async fn test_update_group() {
         .await
         .unwrap();
     let get_body: Value = get_resp.json().await.unwrap();
-    assert_eq!(get_body["description"].as_str(), Some("New group description"));
+    assert_eq!(
+        get_body["description"].as_str(),
+        Some("New group description")
+    );
 }
 
 #[tokio::test]
@@ -523,7 +526,12 @@ async fn test_unassign_role_from_user() {
 
     let resp = app
         .client()
-        .delete(&format!("{}/api/users/{}/roles/{}", app.url(), user_id, role_id))
+        .delete(&format!(
+            "{}/api/users/{}/roles/{}",
+            app.url(),
+            user_id,
+            role_id
+        ))
         .bearer_auth(&token)
         .send()
         .await
@@ -645,7 +653,12 @@ async fn test_unassign_group_from_user() {
 
     let resp = app
         .client()
-        .delete(&format!("{}/api/users/{}/groups/{}", app.url(), user_id, group_id))
+        .delete(&format!(
+            "{}/api/users/{}/groups/{}",
+            app.url(),
+            user_id,
+            group_id
+        ))
         .bearer_auth(&token)
         .send()
         .await
@@ -809,7 +822,12 @@ async fn test_unassign_role_from_group() {
 
     let resp = app
         .client()
-        .delete(&format!("{}/api/groups/{}/roles/{}", app.url(), group_id, role_id))
+        .delete(&format!(
+            "{}/api/groups/{}/roles/{}",
+            app.url(),
+            group_id,
+            role_id
+        ))
         .bearer_auth(&token)
         .send()
         .await

@@ -17,12 +17,12 @@ fn test_signing_keys() -> &'static (String, String) {
     use std::sync::OnceLock;
     static KEYS: OnceLock<(String, String)> = OnceLock::new();
     KEYS.get_or_init(|| {
-        use rand::rngs::OsRng;
         use rand::RngCore;
+        use rand::rngs::OsRng;
 
         // RSA 2048-bit → PKCS#1 PEM
-        let rsa_key = rsa::RsaPrivateKey::new(&mut OsRng, 2048)
-            .expect("failed to generate RSA key");
+        let rsa_key =
+            rsa::RsaPrivateKey::new(&mut OsRng, 2048).expect("failed to generate RSA key");
         use rsa::pkcs1::EncodeRsaPrivateKey;
         let rsa_pem: String = rsa_key
             .to_pkcs1_pem(rsa::pkcs1::LineEnding::LF)
@@ -292,6 +292,9 @@ impl TestApp {
             client_id,
             redirect_uris.iter().map(|s| s.to_string()).collect(),
         );
+        // Most integration tests authenticate confidential clients using
+        // client_secret_post, so keep the seeded helper aligned with that.
+        client.token_endpoint_auth_method = "client_secret_post".to_string();
 
         let hasher = oidc_core::traits::hasher::Argon2idHasher::new();
         let hash = <dyn oidc_core::traits::Hasher>::hash(&hasher, client_secret)
@@ -353,7 +356,8 @@ async fn create_test_database(base_url: &str, db_name: &str) -> String {
     let password = parsed.password().unwrap_or("postgres");
 
     // Connect to the default `postgres` database to issue CREATE DATABASE.
-    let admin_url = format!("postgresql://{user}:{password}@{host}:{port}/postgres?sslmode=disable");
+    let admin_url =
+        format!("postgresql://{user}:{password}@{host}:{port}/postgres?sslmode=disable");
     let config = wasi_pg_client::Config::from_uri(&admin_url).expect("invalid admin URL");
     let mut conn = wasi_pg_client::Connection::connect(&config)
         .await
@@ -406,11 +410,17 @@ async fn seed_baseline_data(conn: &mut oidc_repository::Connection) -> (Uuid, St
 
     // Admin UI client — PasswordFlow::execute defaults to "admin-ui"
     // so the client_id must match exactly.
-    let client = fixtures::test_client(
+    // This is a public PKCE client in dev/runtime setups, so keep the test
+    // harness aligned with production expectations.
+    let mut client = fixtures::test_public_client(
         realm_id,
         "admin-ui",
         vec!["http://localhost:3000/callback".to_string()],
     );
+    client.allowed_grant_types = vec![
+        "authorization_code".to_string(),
+        "refresh_token".to_string(),
+    ];
     ClientRepo
         .create(conn, &client)
         .await

@@ -54,7 +54,11 @@ async fn test_get_password_policy() {
 
     let resp = app
         .client()
-        .get(&format!("{}/api/realms/{}/password-policy", app.url(), realm_id))
+        .get(&format!(
+            "{}/api/realms/{}/password-policy",
+            app.url(),
+            realm_id
+        ))
         .bearer_auth(&token)
         .send()
         .await
@@ -73,7 +77,11 @@ async fn test_update_password_policy() {
 
     let resp = app
         .client()
-        .put(&format!("{}/api/realms/{}/password-policy", app.url(), realm_id))
+        .put(&format!(
+            "{}/api/realms/{}/password-policy",
+            app.url(),
+            realm_id
+        ))
         .bearer_auth(&token)
         .json(&json!({
             "min_length": 12,
@@ -93,7 +101,11 @@ async fn test_update_password_policy() {
     // Verify the update
     let get_resp = app
         .client()
-        .get(&format!("{}/api/realms/{}/password-policy", app.url(), realm_id))
+        .get(&format!(
+            "{}/api/realms/{}/password-policy",
+            app.url(),
+            realm_id
+        ))
         .bearer_auth(&token)
         .send()
         .await
@@ -176,7 +188,11 @@ async fn test_list_identity_providers() {
 
     let resp = app
         .client()
-        .get(&format!("{}/api/identity-providers?realm_id={}", app.url(), realm_id))
+        .get(&format!(
+            "{}/api/identity-providers?realm_id={}",
+            app.url(),
+            realm_id
+        ))
         .bearer_auth(&token)
         .send()
         .await
@@ -411,7 +427,11 @@ async fn test_initiate_account_recovery() {
 
     let resp = app
         .client()
-        .post(&format!("{}/api/users/{}/account-recovery", app.url(), user_id))
+        .post(&format!(
+            "{}/api/users/{}/account-recovery",
+            app.url(),
+            user_id
+        ))
         .bearer_auth(&token)
         .send()
         .await

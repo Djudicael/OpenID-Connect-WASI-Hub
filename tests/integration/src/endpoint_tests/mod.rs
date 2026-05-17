@@ -42,7 +42,8 @@ async fn admin_login(app: &TestApp) -> String {
 }
 
 fn parse_redirect_fragment(location: &str, key: &str) -> Option<String> {
-    let url = url::Url::parse(location).unwrap_or_else(|_| panic!("invalid redirect URL: {location}"));
+    let url =
+        url::Url::parse(location).unwrap_or_else(|_| panic!("invalid redirect URL: {location}"));
     if let Some(fragment) = url.fragment() {
         for pair in fragment.split('&') {
             if let Some((k, v)) = pair.split_once('=') {
@@ -67,7 +68,18 @@ async fn test_par_success() {
     let app = TestApp::new().await;
     let client_id = "par-test-client";
     let redirect_uri = "https://app.example.com/callback";
-    app.seed_client_with_secret(client_id, "par-secret", &[redirect_uri]).await;
+    app.seed_client_with_secret(client_id, "par-secret", &[redirect_uri])
+        .await;
+    {
+        let mut conn = app.db_conn().await;
+        conn.execute_params(
+            "UPDATE clients SET token_endpoint_auth_method = $1 WHERE client_id = $2",
+            &[&"client_secret_basic", &client_id],
+        )
+        .await
+        .expect("failed to update client auth method");
+        let _ = conn.close().await;
+    }
 
     let resp = app
         .client()
@@ -85,8 +97,110 @@ async fn test_par_success() {
 
     assert_eq!(resp.status(), StatusCode::CREATED);
     let body: Value = resp.json().await.expect("par response should be JSON");
-    assert!(body["request_uri"].as_str().is_some_and(|s| s.starts_with("urn:ietf:params:oauth:request_uri:")));
+    assert!(
+        body["request_uri"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("urn:ietf:params:oauth:request_uri:"))
+    );
     assert!(body["expires_in"].as_u64().is_some());
+}
+
+#[tokio::test]
+async fn test_par_redirect_uri_mismatch_rejected_at_authorize() {
+    let app = TestApp::new().await;
+    let client_id = "par-mismatch-client";
+    let redirect_uri = "https://app.example.com/callback";
+    app.seed_client_with_secret(client_id, "par-secret", &[redirect_uri])
+        .await;
+    {
+        let mut conn = app.db_conn().await;
+        conn.execute_params(
+            "UPDATE clients SET token_endpoint_auth_method = $1 WHERE client_id = $2",
+            &[&"client_secret_basic", &client_id],
+        )
+        .await
+        .expect("failed to update client auth method");
+        let _ = conn.close().await;
+    }
+
+    let par_resp = app
+        .client()
+        .post(&format!("{}/oidc/par", app.url()))
+        .basic_auth(client_id, Some("par-secret"))
+        .form(&[
+            ("client_id", client_id),
+            ("redirect_uri", redirect_uri),
+            ("response_type", "code"),
+            ("scope", "openid"),
+        ])
+        .send()
+        .await
+        .expect("par request failed");
+
+    assert_eq!(par_resp.status(), StatusCode::CREATED);
+    let par_body: Value = par_resp.json().await.expect("par response should be JSON");
+    let request_uri = par_body["request_uri"]
+        .as_str()
+        .expect("request_uri must be present");
+
+    let authorize_resp = app
+        .client()
+        .get(&format!(
+            "{}/oidc/authorize?client_id={}&redirect_uri={}&request_uri={}",
+            app.url(),
+            urlencoding::encode(client_id),
+            urlencoding::encode("https://evil.example.com/callback"),
+            urlencoding::encode(request_uri),
+        ))
+        .send()
+        .await
+        .expect("authorize request failed");
+
+    assert_eq!(authorize_resp.status(), StatusCode::TEMPORARY_REDIRECT);
+    let location = authorize_resp
+        .headers()
+        .get("location")
+        .expect("redirect must have Location header")
+        .to_str()
+        .expect("Location must be valid UTF-8");
+    assert!(
+        location.contains("/oidc/error") || location.contains("error=invalid_request"),
+        "authorize mismatch should redirect to an error page, got: {location}"
+    );
+}
+
+#[tokio::test]
+async fn test_authorize_rejects_request_and_request_uri_together() {
+    let app = TestApp::new().await;
+    let client_id = "request-and-request-uri-client";
+    let redirect_uri = "https://app.example.com/callback";
+    app.seed_client_with_secret(client_id, "request-secret", &[redirect_uri])
+        .await;
+
+    let resp = app
+        .client()
+        .get(&format!(
+            "{}/oidc/authorize?client_id={}&redirect_uri={}&request=dummy&request_uri={}",
+            app.url(),
+            urlencoding::encode(client_id),
+            urlencoding::encode(redirect_uri),
+            urlencoding::encode("urn:ietf:params:oauth:request_uri:example"),
+        ))
+        .send()
+        .await
+        .expect("authorize request failed");
+
+    assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
+    let location = resp
+        .headers()
+        .get("location")
+        .expect("redirect must have Location header")
+        .to_str()
+        .expect("Location must be valid UTF-8");
+    assert!(
+        location.contains("/oidc/error") || location.contains("error=invalid_request"),
+        "request + request_uri should be rejected, got: {location}"
+    );
 }
 
 #[tokio::test]
@@ -123,16 +237,16 @@ async fn test_device_authorize_success() {
     let resp = app
         .client()
         .post(&format!("{}/oidc/device/authorize", app.url()))
-        .form(&[
-            ("client_id", client_id),
-            ("scope", "openid"),
-        ])
+        .form(&[("client_id", client_id), ("scope", "openid")])
         .send()
         .await
         .expect("device authorize failed");
 
     assert_eq!(resp.status(), StatusCode::OK);
-    let body: Value = resp.json().await.expect("device authorize response should be JSON");
+    let body: Value = resp
+        .json()
+        .await
+        .expect("device authorize response should be JSON");
     assert!(body["device_code"].as_str().is_some_and(|s| !s.is_empty()));
     assert!(body["user_code"].as_str().is_some_and(|s| !s.is_empty()));
     assert!(body["verification_uri"].as_str().is_some());
@@ -154,7 +268,12 @@ async fn test_device_verify_page() {
 
     // Should return HTML page
     assert_eq!(resp.status(), StatusCode::OK);
-    let content_type = resp.headers().get("content-type").unwrap().to_str().unwrap();
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .unwrap()
+        .to_str()
+        .unwrap();
     assert!(content_type.contains("text/html"));
 }
 
@@ -194,8 +313,14 @@ async fn test_webfinger_success() {
         .expect("webfinger request failed");
 
     assert_eq!(resp.status(), StatusCode::OK);
-    let body: Value = resp.json().await.expect("webfinger response should be JSON");
-    assert_eq!(body["subject"].as_str().unwrap(), format!("acct:{}@localhost", fixtures::TEST_USER_EMAIL));
+    let body: Value = resp
+        .json()
+        .await
+        .expect("webfinger response should be JSON");
+    assert_eq!(
+        body["subject"].as_str().unwrap(),
+        format!("acct:{}@localhost", fixtures::TEST_USER_EMAIL)
+    );
     assert!(body["links"].as_array().is_some());
 }
 
@@ -225,7 +350,10 @@ async fn test_check_session_unchanged() {
     // that handles postMessage communication with the RP.
     let resp = app
         .client()
-        .get(&format!("{}/oidc/session/check?session_state=unchanged", app.url()))
+        .get(&format!(
+            "{}/oidc/session/check?session_state=unchanged",
+            app.url()
+        ))
         .send()
         .await
         .expect("check session failed");
@@ -242,7 +370,10 @@ async fn test_check_session_changed() {
 
     let resp = app
         .client()
-        .get(&format!("{}/oidc/session/check?session_state=changed", app.url()))
+        .get(&format!(
+            "{}/oidc/session/check?session_state=changed",
+            app.url()
+        ))
         .send()
         .await
         .expect("check session failed");
@@ -462,14 +593,19 @@ async fn test_per_realm_certs() {
 
     let resp = app
         .client()
-        .get(&format!("{}/realms/master/protocol/openid-connect/certs", app.url()))
+        .get(&format!(
+            "{}/realms/master/protocol/openid-connect/certs",
+            app.url()
+        ))
         .send()
         .await
         .expect("certs request failed");
 
     assert_eq!(resp.status(), StatusCode::OK);
     let body: Value = resp.json().await.expect("certs response should be JSON");
-    let keys = body["keys"].as_array().expect("JWKS should have keys array");
+    let keys = body["keys"]
+        .as_array()
+        .expect("JWKS should have keys array");
     assert!(!keys.is_empty());
 }
 
@@ -479,7 +615,10 @@ async fn test_per_realm_certs_not_found() {
 
     let resp = app
         .client()
-        .get(&format!("{}/realms/nonexistent/protocol/openid-connect/certs", app.url()))
+        .get(&format!(
+            "{}/realms/nonexistent/protocol/openid-connect/certs",
+            app.url()
+        ))
         .send()
         .await
         .expect("certs request failed");

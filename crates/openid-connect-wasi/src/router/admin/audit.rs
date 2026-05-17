@@ -26,7 +26,9 @@ use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 
 use crate::middleware::admin_auth::AdminAuth;
-use crate::router::admin::{admin_or_forbidden, connect, bad_request, conflict, internal_error, not_found};
+use crate::router::admin::{
+    admin_or_forbidden, bad_request, conflict, connect, internal_error, not_found,
+};
 use crate::state::AppState;
 
 // ─── Stats ─────────────────────────────────────────────────────────────────────
@@ -41,30 +43,45 @@ pub async fn stats_handler(
     Query(query): Query<StatsQuery>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
-    let user_count = UserRepo.count(&mut conn, query.realm_id).await.unwrap_or_else(|e| {
-        tracing::warn!("failed to count users: {e}");
-        0
-    });
-    let client_count = ClientRepo.count(&mut conn, query.realm_id).await.unwrap_or_else(|e| {
-        tracing::warn!("failed to count clients: {e}");
-        0
-    });
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let user_count = UserRepo
+        .count(&mut conn, query.realm_id)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("failed to count users: {e}");
+            0
+        });
+    let client_count = ClientRepo
+        .count(&mut conn, query.realm_id)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("failed to count clients: {e}");
+            0
+        });
     let realm_count = RealmRepo.count(&mut conn).await.unwrap_or_else(|e| {
         tracing::warn!("failed to count realms: {e}");
         0
     });
-    let session_count = SessionRepo.count(&mut conn, None, query.realm_id, Some(false)).await.unwrap_or_else(|e| {
-        tracing::warn!("failed to count sessions: {e}");
-        0
-    });
+    let session_count = SessionRepo
+        .count(&mut conn, None, query.realm_id, Some(false))
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("failed to count sessions: {e}");
+            0
+        });
     Json(json!({
         "users": user_count,
         "clients": client_count,
         "realms": realm_count,
         "active_sessions": session_count,
-    })).into_response()
+    }))
+    .into_response()
 }
 
 // ─── Sessions ──────────────────────────────────────────────────────────────────
@@ -80,37 +97,64 @@ pub struct SessionListQuery {
     offset: i64,
 }
 
-fn default_limit() -> i64 { 20 }
-fn default_offset() -> i64 { 0 }
+fn default_limit() -> i64 {
+    20
+}
+fn default_offset() -> i64 {
+    0
+}
 
 pub async fn list_sessions(
     State(state): State<AppState>,
     Query(query): Query<SessionListQuery>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
-    let sessions = match SessionRepo.list(&mut conn, query.user_id, query.realm_id, query.revoked, query.limit, query.offset).await {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let sessions = match SessionRepo
+        .list(
+            &mut conn,
+            query.user_id,
+            query.realm_id,
+            query.revoked,
+            query.limit,
+            query.offset,
+        )
+        .await
+    {
         Ok(s) => s,
         Err(e) => {
             tracing::error!("list sessions error: {e}");
             return internal_error();
         }
     };
-    let total = SessionRepo.count(&mut conn, query.user_id, query.realm_id, query.revoked).await.unwrap_or_else(|e| {
-        tracing::warn!("failed to count sessions: {e}");
-        0
-    });
-    let rows: Vec<Value> = sessions.into_iter().map(|s| json!({
-        "id": s.id.to_string(),
-        "user_id": s.user_id.map(|id| id.to_string()),
-        "realm_id": s.realm_id.to_string(),
-        "client_id": s.client_id.to_string(),
-        "grant_type": s.grant_type,
-        "scope": s.scope,
-        "revoked": s.revoked,
-        "family_revoked": s.family_revoked,
-    })).collect();
+    let total = SessionRepo
+        .count(&mut conn, query.user_id, query.realm_id, query.revoked)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("failed to count sessions: {e}");
+            0
+        });
+    let rows: Vec<Value> = sessions
+        .into_iter()
+        .map(|s| {
+            json!({
+                "id": s.id.to_string(),
+                "user_id": s.user_id.map(|id| id.to_string()),
+                "realm_id": s.realm_id.to_string(),
+                "client_id": s.client_id.to_string(),
+                "grant_type": s.grant_type,
+                "scope": s.scope,
+                "revoked": s.revoked,
+                "family_revoked": s.family_revoked,
+            })
+        })
+        .collect();
     Json(json!({"items": rows, "total": total})).into_response()
 }
 
@@ -119,8 +163,13 @@ pub async fn revoke_session(
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     match SessionRepo.revoke(&mut conn, id).await {
         Ok(()) => Json(json!({"revoked": true})).into_response(),
         Err(e) => {
@@ -147,19 +196,38 @@ pub async fn list(
     Query(query): Query<AuditListQuery>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     let event_type_filter = query.event_type.as_deref();
     let actor_id_filter: Option<Uuid> = query.actor_id.as_deref().and_then(|s| s.parse().ok());
     let actor_id_ref = actor_id_filter.as_ref();
-    let total = match AuditEventRepo.count(&mut conn, None, event_type_filter, actor_id_ref, None, None).await {
+    let total = match AuditEventRepo
+        .count(&mut conn, None, event_type_filter, actor_id_ref, None, None)
+        .await
+    {
         Ok(t) => t,
         Err(err) => {
             tracing::error!("count audit events error: {err}");
             return internal_error();
         }
     };
-    let events = match AuditEventRepo.list_recent(&mut conn, query.limit, query.offset, event_type_filter, actor_id_ref, None, None).await {
+    let events = match AuditEventRepo
+        .list_recent(
+            &mut conn,
+            query.limit,
+            query.offset,
+            event_type_filter,
+            actor_id_ref,
+            None,
+            None,
+        )
+        .await
+    {
         Ok(e) => e,
         Err(err) => {
             tracing::error!("list audit events error: {err}");
@@ -192,8 +260,13 @@ pub async fn list_scopes(
     Query(query): Query<ScopeListQuery>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     let items = match ScopeRepo.list_by_realm(&mut conn, query.realm_id).await {
         Ok(s) => s,
         Err(e) => {
@@ -209,7 +282,8 @@ pub async fn list_scopes(
             "description": s.description,
             "enabled": s.enabled,
         })).collect::<Vec<_>>()
-    })).into_response()
+    }))
+    .into_response()
 }
 
 #[derive(Deserialize)]
@@ -220,14 +294,26 @@ pub struct CreateScopeRequest {
     enabled: Option<bool>,
 }
 
-pub async fn create_scope(State(state): State<AppState>, auth: AdminAuth, body: String) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
+pub async fn create_scope(
+    State(state): State<AppState>,
+    auth: AdminAuth,
+    body: String,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
     let req: CreateScopeRequest = match serde_json::from_str(&body) {
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
-    if let Ok(Some(_)) = ScopeRepo.find_by_name(&mut conn, req.realm_id, &req.name).await {
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    if let Ok(Some(_)) = ScopeRepo
+        .find_by_name(&mut conn, req.realm_id, &req.name)
+        .await
+    {
         return conflict();
     }
     let scope = Scope {
@@ -244,7 +330,8 @@ pub async fn create_scope(State(state): State<AppState>, auth: AdminAuth, body: 
             "name": scope.name,
             "description": scope.description,
             "enabled": scope.enabled,
-        })).into_response(),
+        }))
+        .into_response(),
         Err(e) => {
             tracing::error!("create scope error: {e}");
             internal_error()
@@ -257,8 +344,13 @@ pub async fn get_scope(
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     match ScopeRepo.find_by_id(&mut conn, id).await {
         Ok(Some(s)) => Json(json!({
             "id": s.id.to_string(),
@@ -266,7 +358,8 @@ pub async fn get_scope(
             "name": s.name,
             "description": s.description,
             "enabled": s.enabled,
-        })).into_response(),
+        }))
+        .into_response(),
         Ok(None) => not_found(),
         Err(e) => {
             tracing::error!("get scope error: {e}");
@@ -288,12 +381,17 @@ pub async fn update_scope(
     auth: AdminAuth,
     body: String,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
     let req: UpdateScopeRequest = match serde_json::from_str(&body) {
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     let mut scope = match ScopeRepo.find_by_id(&mut conn, id).await {
         Ok(Some(s)) => s,
         Ok(None) => return not_found(),
@@ -302,9 +400,15 @@ pub async fn update_scope(
             return internal_error();
         }
     };
-    if let Some(v) = req.name { scope.name = v; }
-    if req.description.is_some() { scope.description = req.description; }
-    if let Some(v) = req.enabled { scope.enabled = v; }
+    if let Some(v) = req.name {
+        scope.name = v;
+    }
+    if req.description.is_some() {
+        scope.description = req.description;
+    }
+    if let Some(v) = req.enabled {
+        scope.enabled = v;
+    }
     match ScopeRepo.update(&mut conn, &scope).await {
         Ok(()) => Json(json!({"updated": true})).into_response(),
         Err(e) => {
@@ -319,8 +423,13 @@ pub async fn delete_scope(
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     match ScopeRepo.delete(&mut conn, id).await {
         Ok(()) => Json(json!({"deleted": true})).into_response(),
         Err(e) => {
@@ -347,28 +456,50 @@ pub async fn list_roles(
     Query(query): Query<RoleListQuery>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
-    let items = match RoleRepo.list(&mut conn, query.realm_id, query.search.as_deref(), query.limit, query.offset).await {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let items = match RoleRepo
+        .list(
+            &mut conn,
+            query.realm_id,
+            query.search.as_deref(),
+            query.limit,
+            query.offset,
+        )
+        .await
+    {
         Ok(r) => r,
         Err(e) => {
             tracing::error!("list roles error: {e}");
             return internal_error();
         }
     };
-    let total = RoleRepo.count(&mut conn, query.realm_id).await.unwrap_or_else(|e| {
-        tracing::warn!("failed to count roles: {e}");
-        0
-    });
-    let rows: Vec<Value> = items.into_iter().map(|r| json!({
-        "id": r.id.to_string(),
-        "realm_id": r.realm_id.to_string(),
-        "name": r.name,
-        "description": r.description,
-        "permissions": r.permissions,
-        "created_at": r.created_at.to_rfc3339(),
-        "updated_at": r.updated_at.to_rfc3339(),
-    })).collect();
+    let total = RoleRepo
+        .count(&mut conn, query.realm_id)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("failed to count roles: {e}");
+            0
+        });
+    let rows: Vec<Value> = items
+        .into_iter()
+        .map(|r| {
+            json!({
+                "id": r.id.to_string(),
+                "realm_id": r.realm_id.to_string(),
+                "name": r.name,
+                "description": r.description,
+                "permissions": r.permissions,
+                "created_at": r.created_at.to_rfc3339(),
+                "updated_at": r.updated_at.to_rfc3339(),
+            })
+        })
+        .collect();
     Json(json!({"items": rows, "total": total})).into_response()
 }
 
@@ -381,12 +512,17 @@ pub struct CreateRoleRequest {
 }
 
 pub async fn create_role(State(state): State<AppState>, auth: AdminAuth, body: String) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
     let req: CreateRoleRequest = match serde_json::from_str(&body) {
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     let now = chrono::Utc::now();
     let role = oidc_core::models::Role {
         id: generate_uuid_v7(),
@@ -398,9 +534,16 @@ pub async fn create_role(State(state): State<AppState>, auth: AdminAuth, body: S
         updated_at: now,
     };
     if let Err(e) = role.validate() {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": format!("{e}")}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("{e}")})),
+        )
+            .into_response();
     }
-    if let Ok(Some(_)) = RoleRepo.find_by_name(&mut conn, req.realm_id, &req.name).await {
+    if let Ok(Some(_)) = RoleRepo
+        .find_by_name(&mut conn, req.realm_id, &req.name)
+        .await
+    {
         return conflict();
     }
     match RoleRepo.create(&mut conn, &role).await {
@@ -410,7 +553,11 @@ pub async fn create_role(State(state): State<AppState>, auth: AdminAuth, body: S
                 realm_id: Some(role.realm_id),
                 event_type: "role.created".to_string(),
                 actor_id: Uuid::parse_str(&auth.subject).ok(),
-                actor_type: if auth.is_api_key { ActorType::ApiKey } else { ActorType::User },
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
                 target_type: Some("role".to_string()),
                 target_id: Some(role.id),
                 details: json!({"name": role.name}),
@@ -427,7 +574,8 @@ pub async fn create_role(State(state): State<AppState>, auth: AdminAuth, body: S
                 "name": role.name,
                 "description": role.description,
                 "permissions": role.permissions,
-            })).into_response()
+            }))
+            .into_response()
         }
         Err(e) => {
             tracing::error!("create role error: {e}");
@@ -441,8 +589,13 @@ pub async fn get_role(
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     match RoleRepo.find_by_id(&mut conn, id).await {
         Ok(Some(r)) => Json(json!({
             "id": r.id.to_string(),
@@ -452,7 +605,8 @@ pub async fn get_role(
             "permissions": r.permissions,
             "created_at": r.created_at.to_rfc3339(),
             "updated_at": r.updated_at.to_rfc3339(),
-        })).into_response(),
+        }))
+        .into_response(),
         Ok(None) => not_found(),
         Err(e) => {
             tracing::error!("get role error: {e}");
@@ -474,12 +628,17 @@ pub async fn update_role(
     auth: AdminAuth,
     body: String,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
     let req: UpdateRoleRequest = match serde_json::from_str(&body) {
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     let mut role = match RoleRepo.find_by_id(&mut conn, id).await {
         Ok(Some(r)) => r,
         Ok(None) => return not_found(),
@@ -488,11 +647,21 @@ pub async fn update_role(
             return internal_error();
         }
     };
-    if let Some(v) = req.name { role.name = v; }
-    if req.description.is_some() { role.description = req.description; }
-    if let Some(v) = req.permissions { role.permissions = v; }
+    if let Some(v) = req.name {
+        role.name = v;
+    }
+    if req.description.is_some() {
+        role.description = req.description;
+    }
+    if let Some(v) = req.permissions {
+        role.permissions = v;
+    }
     if let Err(e) = role.validate() {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": format!("{e}")}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("{e}")})),
+        )
+            .into_response();
     }
     match RoleRepo.update(&mut conn, &role).await {
         Ok(()) => {
@@ -501,7 +670,11 @@ pub async fn update_role(
                 realm_id: Some(role.realm_id),
                 event_type: "role.updated".to_string(),
                 actor_id: Uuid::parse_str(&auth.subject).ok(),
-                actor_type: if auth.is_api_key { ActorType::ApiKey } else { ActorType::User },
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
                 target_type: Some("role".to_string()),
                 target_id: Some(role.id),
                 details: json!({"name": role.name}),
@@ -526,8 +699,13 @@ pub async fn delete_role(
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     let role = match RoleRepo.find_by_id(&mut conn, id).await {
         Ok(Some(r)) => r,
         Ok(None) => return not_found(),
@@ -543,7 +721,11 @@ pub async fn delete_role(
                 realm_id: Some(role.realm_id),
                 event_type: "role.deleted".to_string(),
                 actor_id: Uuid::parse_str(&auth.subject).ok(),
-                actor_type: if auth.is_api_key { ActorType::ApiKey } else { ActorType::User },
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
                 target_type: Some("role".to_string()),
                 target_id: Some(role.id),
                 details: json!({"name": role.name}),
@@ -580,28 +762,50 @@ pub async fn list_groups(
     Query(query): Query<GroupListQuery>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
-    let items = match GroupRepo.list(&mut conn, query.realm_id, query.search.as_deref(), query.limit, query.offset).await {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let items = match GroupRepo
+        .list(
+            &mut conn,
+            query.realm_id,
+            query.search.as_deref(),
+            query.limit,
+            query.offset,
+        )
+        .await
+    {
         Ok(g) => g,
         Err(e) => {
             tracing::error!("list groups error: {e}");
             return internal_error();
         }
     };
-    let total = GroupRepo.count(&mut conn, query.realm_id).await.unwrap_or_else(|e| {
-        tracing::warn!("failed to count groups: {e}");
-        0
-    });
-    let rows: Vec<Value> = items.into_iter().map(|g| json!({
-        "id": g.id.to_string(),
-        "realm_id": g.realm_id.to_string(),
-        "name": g.name,
-        "description": g.description,
-        "parent_id": g.parent_id.map(|p| p.to_string()),
-        "created_at": g.created_at.to_rfc3339(),
-        "updated_at": g.updated_at.to_rfc3339(),
-    })).collect();
+    let total = GroupRepo
+        .count(&mut conn, query.realm_id)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("failed to count groups: {e}");
+            0
+        });
+    let rows: Vec<Value> = items
+        .into_iter()
+        .map(|g| {
+            json!({
+                "id": g.id.to_string(),
+                "realm_id": g.realm_id.to_string(),
+                "name": g.name,
+                "description": g.description,
+                "parent_id": g.parent_id.map(|p| p.to_string()),
+                "created_at": g.created_at.to_rfc3339(),
+                "updated_at": g.updated_at.to_rfc3339(),
+            })
+        })
+        .collect();
     Json(json!({"items": rows, "total": total})).into_response()
 }
 
@@ -613,13 +817,22 @@ pub struct CreateGroupRequest {
     parent_id: Option<Uuid>,
 }
 
-pub async fn create_group(State(state): State<AppState>, auth: AdminAuth, body: String) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
+pub async fn create_group(
+    State(state): State<AppState>,
+    auth: AdminAuth,
+    body: String,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
     let req: CreateGroupRequest = match serde_json::from_str(&body) {
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     let now = chrono::Utc::now();
     let group = oidc_core::models::Group {
         id: generate_uuid_v7(),
@@ -631,9 +844,16 @@ pub async fn create_group(State(state): State<AppState>, auth: AdminAuth, body: 
         updated_at: now,
     };
     if let Err(e) = group.validate() {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": format!("{e}")}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("{e}")})),
+        )
+            .into_response();
     }
-    if let Ok(Some(_)) = GroupRepo.find_by_name(&mut conn, req.realm_id, &req.name).await {
+    if let Ok(Some(_)) = GroupRepo
+        .find_by_name(&mut conn, req.realm_id, &req.name)
+        .await
+    {
         return conflict();
     }
     match GroupRepo.create(&mut conn, &group).await {
@@ -643,7 +863,11 @@ pub async fn create_group(State(state): State<AppState>, auth: AdminAuth, body: 
                 realm_id: Some(group.realm_id),
                 event_type: "group.created".to_string(),
                 actor_id: Uuid::parse_str(&auth.subject).ok(),
-                actor_type: if auth.is_api_key { ActorType::ApiKey } else { ActorType::User },
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
                 target_type: Some("group".to_string()),
                 target_id: Some(group.id),
                 details: json!({"name": group.name}),
@@ -660,7 +884,8 @@ pub async fn create_group(State(state): State<AppState>, auth: AdminAuth, body: 
                 "name": group.name,
                 "description": group.description,
                 "parent_id": group.parent_id.map(|p| p.to_string()),
-            })).into_response()
+            }))
+            .into_response()
         }
         Err(e) => {
             tracing::error!("create group error: {e}");
@@ -674,8 +899,13 @@ pub async fn get_group(
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     match GroupRepo.find_by_id(&mut conn, id).await {
         Ok(Some(g)) => Json(json!({
             "id": g.id.to_string(),
@@ -685,7 +915,8 @@ pub async fn get_group(
             "parent_id": g.parent_id.map(|p| p.to_string()),
             "created_at": g.created_at.to_rfc3339(),
             "updated_at": g.updated_at.to_rfc3339(),
-        })).into_response(),
+        }))
+        .into_response(),
         Ok(None) => not_found(),
         Err(e) => {
             tracing::error!("get group error: {e}");
@@ -707,12 +938,17 @@ pub async fn update_group(
     auth: AdminAuth,
     body: String,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
     let req: UpdateGroupRequest = match serde_json::from_str(&body) {
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     let mut group = match GroupRepo.find_by_id(&mut conn, id).await {
         Ok(Some(g)) => g,
         Ok(None) => return not_found(),
@@ -721,11 +957,21 @@ pub async fn update_group(
             return internal_error();
         }
     };
-    if let Some(v) = req.name { group.name = v; }
-    if req.description.is_some() { group.description = req.description; }
-    if let Some(v) = req.parent_id { group.parent_id = v; }
+    if let Some(v) = req.name {
+        group.name = v;
+    }
+    if req.description.is_some() {
+        group.description = req.description;
+    }
+    if let Some(v) = req.parent_id {
+        group.parent_id = v;
+    }
     if let Err(e) = group.validate() {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": format!("{e}")}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": format!("{e}")})),
+        )
+            .into_response();
     }
     match GroupRepo.update(&mut conn, &group).await {
         Ok(()) => {
@@ -734,7 +980,11 @@ pub async fn update_group(
                 realm_id: Some(group.realm_id),
                 event_type: "group.updated".to_string(),
                 actor_id: Uuid::parse_str(&auth.subject).ok(),
-                actor_type: if auth.is_api_key { ActorType::ApiKey } else { ActorType::User },
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
                 target_type: Some("group".to_string()),
                 target_id: Some(group.id),
                 details: json!({"name": group.name}),
@@ -759,8 +1009,13 @@ pub async fn delete_group(
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     let group = match GroupRepo.find_by_id(&mut conn, id).await {
         Ok(Some(g)) => g,
         Ok(None) => return not_found(),
@@ -776,7 +1031,11 @@ pub async fn delete_group(
                 realm_id: Some(group.realm_id),
                 event_type: "group.deleted".to_string(),
                 actor_id: Uuid::parse_str(&auth.subject).ok(),
-                actor_type: if auth.is_api_key { ActorType::ApiKey } else { ActorType::User },
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
                 target_type: Some("group".to_string()),
                 target_id: Some(group.id),
                 details: json!({"name": group.name}),
@@ -803,8 +1062,13 @@ pub async fn list_group_roles(
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     let roles = match GroupRoleRepo.find_roles_by_group(&mut conn, id).await {
         Ok(r) => r,
         Err(e) => {
@@ -812,13 +1076,18 @@ pub async fn list_group_roles(
             return internal_error();
         }
     };
-    let rows: Vec<Value> = roles.into_iter().map(|r| json!({
-        "id": r.id.to_string(),
-        "realm_id": r.realm_id.to_string(),
-        "name": r.name,
-        "description": r.description,
-        "permissions": r.permissions,
-    })).collect();
+    let rows: Vec<Value> = roles
+        .into_iter()
+        .map(|r| {
+            json!({
+                "id": r.id.to_string(),
+                "realm_id": r.realm_id.to_string(),
+                "name": r.name,
+                "description": r.description,
+                "permissions": r.permissions,
+            })
+        })
+        .collect();
     Json(json!({"items": rows})).into_response()
 }
 
@@ -833,12 +1102,17 @@ pub async fn assign_role_to_group(
     auth: AdminAuth,
     body: String,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
     let req: AssignRoleToGroupRequest = match serde_json::from_str(&body) {
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     match GroupRoleRepo.assign(&mut conn, id, req.role_id).await {
         Ok(()) => {
             let audit = oidc_core::models::AuditEvent {
@@ -846,7 +1120,11 @@ pub async fn assign_role_to_group(
                 realm_id: None,
                 event_type: "group.role_assigned".to_string(),
                 actor_id: Uuid::parse_str(&auth.subject).ok(),
-                actor_type: if auth.is_api_key { ActorType::ApiKey } else { ActorType::User },
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
                 target_type: Some("group".to_string()),
                 target_id: Some(id),
                 details: json!({"role_id": req.role_id.to_string()}),
@@ -871,8 +1149,13 @@ pub async fn unassign_role_from_group(
     axum::extract::Path((id, role_id)): axum::extract::Path<(Uuid, Uuid)>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     match GroupRoleRepo.unassign(&mut conn, id, role_id).await {
         Ok(()) => {
             let audit = oidc_core::models::AuditEvent {
@@ -880,7 +1163,11 @@ pub async fn unassign_role_from_group(
                 realm_id: None,
                 event_type: "group.role_unassigned".to_string(),
                 actor_id: Uuid::parse_str(&auth.subject).ok(),
-                actor_type: if auth.is_api_key { ActorType::ApiKey } else { ActorType::User },
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
                 target_type: Some("group".to_string()),
                 target_id: Some(id),
                 details: json!({"role_id": role_id.to_string()}),
@@ -903,42 +1190,72 @@ pub async fn unassign_role_from_group(
 // ─── Token Cleanup ─────────────────────────────────────────────────────────────
 
 pub async fn cleanup_expired(State(state): State<AppState>, auth: AdminAuth) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
-    let sessions_deleted = SessionRepo.cleanup_expired(&mut conn).await.unwrap_or_else(|e| {
-        tracing::warn!("failed to cleanup expired sessions: {e}");
-        0
-    });
-    let password_reset_deleted = PasswordResetTokenRepo.cleanup_expired(&mut conn).await.unwrap_or_else(|e| {
-        tracing::warn!("failed to cleanup expired password reset tokens: {e}");
-        0
-    });
-    let email_verification_deleted = EmailVerificationTokenRepo.cleanup_expired(&mut conn).await.unwrap_or_else(|e| {
-        tracing::warn!("failed to cleanup expired email verification tokens: {e}");
-        0
-    });
-    let account_recovery_deleted = AccountRecoveryTokenRepo.cleanup_expired(&mut conn).await.unwrap_or_else(|e| {
-        tracing::warn!("failed to cleanup expired account recovery tokens: {e}");
-        0
-    });
-    let device_codes_deleted = DeviceCodeRepo.cleanup_expired(&mut conn).await.unwrap_or_else(|e| {
-        tracing::warn!("failed to cleanup expired device codes: {e}");
-        0
-    });
-    let auth_codes_deleted = AuthCodeRepo.cleanup_expired(&mut conn).await.unwrap_or_else(|e| {
-        tracing::warn!("failed to cleanup expired auth codes: {e}");
-        0
-    });
-    let par_deleted = ParRepo.cleanup_expired(&mut conn).await.unwrap_or_else(|e| {
-        tracing::warn!("failed to cleanup expired PARs: {e}");
-        0
-    });
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let sessions_deleted = SessionRepo
+        .cleanup_expired(&mut conn)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("failed to cleanup expired sessions: {e}");
+            0
+        });
+    let password_reset_deleted = PasswordResetTokenRepo
+        .cleanup_expired(&mut conn)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("failed to cleanup expired password reset tokens: {e}");
+            0
+        });
+    let email_verification_deleted = EmailVerificationTokenRepo
+        .cleanup_expired(&mut conn)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("failed to cleanup expired email verification tokens: {e}");
+            0
+        });
+    let account_recovery_deleted = AccountRecoveryTokenRepo
+        .cleanup_expired(&mut conn)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("failed to cleanup expired account recovery tokens: {e}");
+            0
+        });
+    let device_codes_deleted = DeviceCodeRepo
+        .cleanup_expired(&mut conn)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("failed to cleanup expired device codes: {e}");
+            0
+        });
+    let auth_codes_deleted = AuthCodeRepo
+        .cleanup_expired(&mut conn)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("failed to cleanup expired auth codes: {e}");
+            0
+        });
+    let par_deleted = ParRepo
+        .cleanup_expired(&mut conn)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("failed to cleanup expired PARs: {e}");
+            0
+        });
     let audit = oidc_core::models::AuditEvent {
         id: generate_uuid_v7(),
         realm_id: None,
         event_type: "maintenance.cleanup".to_string(),
         actor_id: Uuid::parse_str(&auth.subject).ok(),
-        actor_type: if auth.is_api_key { ActorType::ApiKey } else { ActorType::User },
+        actor_type: if auth.is_api_key {
+            ActorType::ApiKey
+        } else {
+            ActorType::User
+        },
         target_type: None,
         target_id: None,
         details: json!({
@@ -965,5 +1282,6 @@ pub async fn cleanup_expired(State(state): State<AppState>, auth: AdminAuth) -> 
         "device_codes_deleted": device_codes_deleted,
         "auth_codes_deleted": auth_codes_deleted,
         "par_deleted": par_deleted,
-    })).into_response()
+    }))
+    .into_response()
 }

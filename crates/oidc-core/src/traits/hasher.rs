@@ -1,7 +1,7 @@
 use crate::errors::OidcError;
 use argon2::{
-    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
+    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
 };
 use rand::rngs::OsRng;
 
@@ -45,8 +45,8 @@ impl Hasher for Argon2idHasher {
     }
 
     fn verify(&self, plaintext: &str, hash: &str) -> Result<bool, OidcError> {
-        let parsed_hash =
-            PasswordHash::new(hash).map_err(|e| OidcError::Internal(format!("invalid hash: {e}")))?;
+        let parsed_hash = PasswordHash::new(hash)
+            .map_err(|e| OidcError::Internal(format!("invalid hash: {e}")))?;
         Ok(self
             .inner
             .verify_password(plaintext.as_bytes(), &parsed_hash)

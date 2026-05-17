@@ -110,6 +110,27 @@ impl IntoResponse for AuthorizeResult {
     }
 }
 
+fn merge_protected_authorize_params(
+    params: &mut HashMap<String, String>,
+    protected_params: impl IntoIterator<Item = (String, String)>,
+    error_code: &str,
+) -> Result<(), (String, String, String)> {
+    for (key, value) in protected_params {
+        if matches!(key.as_str(), "client_id" | "redirect_uri")
+            && params.get(&key).is_some_and(|existing| existing != &value)
+        {
+            return Err((
+                "/oidc/error".to_string(),
+                error_code.to_string(),
+                format!("{key} in protected request data must match the outer request"),
+            ));
+        }
+        params.insert(key, value);
+    }
+
+    Ok(())
+}
+
 /// Authorization endpoint handler.
 /// Validates the request, generates an authorization code, and redirects back to the client.
 ///
@@ -215,6 +236,13 @@ async fn authorize_inner(
 
     // --- Pushed Authorization Request (PAR) resolution ---
     let mut params = params;
+    if params.contains_key("request") && params.contains_key("request_uri") {
+        return Err((
+            "/oidc/error".to_string(),
+            "invalid_request".to_string(),
+            "request and request_uri MUST NOT be used together".to_string(),
+        ));
+    }
     if let Some(request_uri) = params.get("request_uri").cloned() {
         if let Some(token) = request_uri.strip_prefix("urn:ietf:params:oauth:request_uri:") {
             let mut conn = match state.connect().await {
@@ -235,12 +263,16 @@ async fn authorize_inner(
             {
                 Ok(Some(par)) if !par.used && par.expires_at > chrono::Utc::now() => {
                     if let Some(stored) = par.request_params.as_object() {
-                        for (k, v) in stored {
-                            if let Some(s) = v.as_str() {
-                                params.entry(k.clone()).or_insert_with(|| s.to_string());
-                            }
-                        }
+                        let protected_params = stored
+                            .iter()
+                            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())));
+                        merge_protected_authorize_params(
+                            &mut params,
+                            protected_params,
+                            "invalid_request",
+                        )?;
                     }
+                    params.remove("request_uri");
                     let _ = oidc_repository::repositories::par_repo::ParRepo
                         .mark_used(&mut conn, par.id)
                         .await;
@@ -417,6 +449,16 @@ async fn authorize_inner(
                 )
             })?;
 
+        if let Some(client_id) = request_client_id.as_deref() {
+            if !unverified_claims.iss.is_empty() && client_id != unverified_claims.iss {
+                return Err((
+                    "/oidc/error".to_string(),
+                    "invalid_request_object".to_string(),
+                    "client_id in request object must match the outer request".to_string(),
+                ));
+            }
+        }
+
         // Determine client_id: from params first, then from JWT iss
         let effective_client_id = request_client_id
             .as_deref()
@@ -485,10 +527,8 @@ async fn authorize_inner(
         })?;
 
         // Merge: request object claims override query params per OIDC Core §6.2
-        // But certain parameters (client_id, redirect_uri) must match between query and JWT
-        for (k, v) in request_claims {
-            params.entry(k).or_insert(v);
-        }
+        // But certain parameters (client_id, redirect_uri) must match between query and JWT.
+        merge_protected_authorize_params(&mut params, request_claims, "invalid_request_object")?;
     }
 
     // --- Parameter extraction ---
@@ -1470,8 +1510,7 @@ async fn authorize_inner(
 
 fn generate_auth_code() -> Result<String, OidcError> {
     let mut buf = [0u8; 32];
-    getrandom::fill(&mut buf)
-        .map_err(|e| OidcError::Internal(format!("getrandom failed: {e}")))?;
+    getrandom::fill(&mut buf).map_err(|e| OidcError::Internal(format!("getrandom failed: {e}")))?;
     Ok(base64_encode_url_safe_no_pad(&buf))
 }
 
@@ -1583,8 +1622,6 @@ fn render_form_post_multi_html(redirect_uri: &str, fields: &[(String, String)]) 
 </html>"#
     )
 }
-
-
 
 // ---------------------------------------------------------------------------
 // Error URL builder

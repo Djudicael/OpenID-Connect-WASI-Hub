@@ -1141,8 +1141,8 @@ pub fn b64_decode(data: &str) -> Result<Vec<u8>, base64::DecodeError> {
 mod tests {
     use super::*;
     use base64::Engine;
-    use rand::rngs::OsRng;
     use rand::RngCore;
+    use rand::rngs::OsRng;
 
     /// Generate RSA + Ed25519 test keys once and set env vars.
     fn test_token_service() -> JwtTokenService {

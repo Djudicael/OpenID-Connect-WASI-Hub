@@ -47,17 +47,19 @@ impl oidc_apikey::ApiKeyVerifierState for AppState {
 impl AppState {
     /// Build state directly from a config struct (no env vars).
     pub fn from_config(config: AppConfig) -> Self {
-        let token_service =
-            Arc::new(
-                oidc_oidc::tokens::JwtTokenService::with_keys(
-                    &config.issuer,
-                    config.signing_key.clone(),
-                    config.ed25519_key.clone(),
+        let token_service = Arc::new(
+            oidc_oidc::tokens::JwtTokenService::with_keys(
+                &config.issuer,
+                config.signing_key.clone(),
+                config.ed25519_key.clone(),
+            )
+            .unwrap_or_else(|e| {
+                panic!(
+                    "failed to initialize JWT token service with issuer '{}': {e}",
+                    config.issuer
                 )
-                .unwrap_or_else(|e| {
-                    panic!("failed to initialize JWT token service with issuer '{}': {e}", config.issuer)
-                }),
-            );
+            }),
+        );
         let hasher = Arc::new(oidc_core::traits::hasher::Argon2idHasher::new());
         let email_sender = Arc::new(oidc_core::traits::noop_email::NoOpEmailSender);
 
@@ -78,13 +80,17 @@ impl AppState {
         let database_url = std::env::var("OIDC_DATABASE_URL")
             .unwrap_or_else(|_| "postgresql://localhost/oidc_hub?sslmode=prefer".into());
         if !std::env::var("OIDC_DATABASE_URL").is_ok() {
-            tracing::warn!("OIDC_DATABASE_URL not set — using default (not suitable for production)");
+            tracing::warn!(
+                "OIDC_DATABASE_URL not set — using default (not suitable for production)"
+            );
         }
 
-        let issuer = std::env::var("OIDC_ISSUER")
-            .unwrap_or_else(|_| "http://localhost:8080".into());
+        let issuer =
+            std::env::var("OIDC_ISSUER").unwrap_or_else(|_| "http://localhost:8080".into());
         if !std::env::var("OIDC_ISSUER").is_ok() {
-            tracing::warn!("OIDC_ISSUER not set — using default localhost (not suitable for production)");
+            tracing::warn!(
+                "OIDC_ISSUER not set — using default localhost (not suitable for production)"
+            );
         }
 
         let config = AppConfig {

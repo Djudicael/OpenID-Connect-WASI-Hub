@@ -27,15 +27,21 @@ pub fn router() -> Router<AppState> {
 
 /// Check if the auth has admin access or the required scope.
 ///
-/// JWT Bearer tokens from the admin login are treated as having admin access.
 /// API keys must have either the `admin` scope or the specific required scope.
+/// JWT Bearer tokens must explicitly carry either the `admin` scope or the
+/// specific required scope.
 fn has_admin_or_scope(auth: &ApiRouteAuth, scope: &str) -> bool {
     match auth {
         ApiRouteAuth::ApiKey(api_key_auth) => {
             oidc_apikey::auth::has_scope(&api_key_auth.api_key, "admin")
                 || oidc_apikey::auth::has_scope(&api_key_auth.api_key, scope)
         }
-        ApiRouteAuth::JwtBearer { .. } => true, // JWT tokens from admin login have admin access
+        ApiRouteAuth::JwtBearer {
+            scope: jwt_scope, ..
+        } => {
+            let scopes: Vec<&str> = jwt_scope.split_whitespace().collect();
+            scopes.contains(&"admin") || scopes.contains(&scope)
+        }
     }
 }
 
@@ -43,7 +49,22 @@ fn has_admin_or_scope(auth: &ApiRouteAuth, scope: &str) -> bool {
 fn auth_actor(auth: &ApiRouteAuth) -> (Option<Uuid>, ActorType) {
     match auth {
         ApiRouteAuth::ApiKey(api_key_auth) => (Some(api_key_auth.api_key.id), ActorType::ApiKey),
-        ApiRouteAuth::JwtBearer { subject } => (subject.parse::<Uuid>().ok(), ActorType::User),
+        ApiRouteAuth::JwtBearer { subject, .. } => (subject.parse::<Uuid>().ok(), ActorType::User),
+    }
+}
+
+/// If the caller authenticated with an API key, ensure it only operates inside
+/// its own realm. JWT-based admin authentication remains globally scoped.
+fn ensure_api_key_realm_access(auth: &ApiRouteAuth, realm_id: Uuid) -> Option<Response> {
+    match auth {
+        ApiRouteAuth::ApiKey(api_key_auth) if api_key_auth.api_key.realm_id != realm_id => Some(
+            (
+                axum::http::StatusCode::FORBIDDEN,
+                axum::Json(serde_json::json!({"error": "forbidden"})),
+            )
+                .into_response(),
+        ),
+        _ => None,
     }
 }
 
@@ -68,6 +89,9 @@ async fn list_keys(
             axum::Json(serde_json::json!({"error": "forbidden"})),
         )
             .into_response();
+    }
+    if let Some(response) = ensure_api_key_realm_access(&auth, query.realm_id) {
+        return response;
     }
 
     let mut conn = match wasi_pg_client::Connection::connect(&state.db_config).await {
@@ -157,6 +181,9 @@ async fn create_key(
         )
             .into_response();
     }
+    if let Some(response) = ensure_api_key_realm_access(&auth, req.realm_id) {
+        return response;
+    }
 
     let mut conn = match wasi_pg_client::Connection::connect(&state.db_config).await {
         Ok(c) => Connection::from_pg_client(c),
@@ -176,7 +203,7 @@ async fn create_key(
     // would violate the constraint.
     let created_by = match &auth {
         ApiRouteAuth::ApiKey(_) => None,
-        ApiRouteAuth::JwtBearer { subject } => subject.parse::<Uuid>().ok(),
+        ApiRouteAuth::JwtBearer { subject, .. } => subject.parse::<Uuid>().ok(),
     };
     let (api_key, raw_key) = match ApiKeyService::generate_key(
         &mut conn,
@@ -267,32 +294,44 @@ async fn get_key(
     };
 
     let result = ApiKeyRepo.find_by_id(&mut conn, id).await;
-    // Gracefully close the connection.
-    let _ = conn.close().await;
 
     match result {
-        Ok(Some(key)) => axum::Json(serde_json::json!({
-            "id": key.id.to_string(),
-            "realm_id": key.realm_id.to_string(),
-            "name": key.name,
-            "prefix": key.prefix,
-            "scopes": key.scopes,
-            "revoked": key.revoked,
-            "request_count": key.request_count,
-            "expires_at": key.expires_at.map(|d| d.to_rfc3339()),
-            "last_used_at": key.last_used_at.map(|d| d.to_rfc3339()),
-            "created_at": key.created_at.to_rfc3339(),
-            "created_by": key.created_by.map(|u| u.to_string()),
-            "rotated_at": key.rotated_at.map(|d| d.to_rfc3339()),
-        }))
-        .into_response(),
-        Ok(None) => (
-            axum::http::StatusCode::NOT_FOUND,
-            axum::Json(serde_json::json!({"error": "not_found"})),
-        )
-            .into_response(),
+        Ok(Some(key)) => {
+            if let Some(response) = ensure_api_key_realm_access(&auth, key.realm_id) {
+                let _ = conn.close().await;
+                return response;
+            }
+
+            // Gracefully close the connection.
+            let _ = conn.close().await;
+
+            axum::Json(serde_json::json!({
+                "id": key.id.to_string(),
+                "realm_id": key.realm_id.to_string(),
+                "name": key.name,
+                "prefix": key.prefix,
+                "scopes": key.scopes,
+                "revoked": key.revoked,
+                "request_count": key.request_count,
+                "expires_at": key.expires_at.map(|d| d.to_rfc3339()),
+                "last_used_at": key.last_used_at.map(|d| d.to_rfc3339()),
+                "created_at": key.created_at.to_rfc3339(),
+                "created_by": key.created_by.map(|u| u.to_string()),
+                "rotated_at": key.rotated_at.map(|d| d.to_rfc3339()),
+            }))
+            .into_response()
+        }
+        Ok(None) => {
+            let _ = conn.close().await;
+            (
+                axum::http::StatusCode::NOT_FOUND,
+                axum::Json(serde_json::json!({"error": "not_found"})),
+            )
+                .into_response()
+        }
         Err(e) => {
             tracing::error!("query error: {e}");
+            let _ = conn.close().await;
             (
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
                 axum::Json(serde_json::json!({"error": "internal"})),
@@ -336,6 +375,32 @@ async fn revoke_key(
                 .into_response();
         }
     };
+
+    let existing_key = match ApiKeyRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(key)) => key,
+        Ok(None) => {
+            let _ = conn.close().await;
+            return (
+                axum::http::StatusCode::NOT_FOUND,
+                axum::Json(serde_json::json!({"error": "not_found"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!("query error: {e}");
+            let _ = conn.close().await;
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    };
+
+    if let Some(response) = ensure_api_key_realm_access(&auth, existing_key.realm_id) {
+        let _ = conn.close().await;
+        return response;
+    }
 
     if let Err(e) = ApiKeyService::revoke_key(&mut conn, id).await {
         tracing::error!("revoke key error: {e}");
@@ -403,6 +468,32 @@ async fn rotate_key(
                 .into_response();
         }
     };
+
+    let existing_key = match ApiKeyRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(key)) => key,
+        Ok(None) => {
+            let _ = conn.close().await;
+            return (
+                axum::http::StatusCode::NOT_FOUND,
+                axum::Json(serde_json::json!({"error": "not_found"})),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!("query error: {e}");
+            let _ = conn.close().await;
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(serde_json::json!({"error": "internal"})),
+            )
+                .into_response();
+        }
+    };
+
+    if let Some(response) = ensure_api_key_realm_access(&auth, existing_key.realm_id) {
+        let _ = conn.close().await;
+        return response;
+    }
 
     let (new_key, raw_key) = match ApiKeyService::rotate_key(&mut conn, id, None).await {
         Ok(k) => k,

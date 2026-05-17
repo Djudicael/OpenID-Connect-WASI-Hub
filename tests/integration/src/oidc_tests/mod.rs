@@ -558,7 +558,7 @@ async fn test_refresh_token_rotation() {
         .post(&format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
-            "grant_type=refresh_token&refresh_token={}&client_id={}&client_secret=dummy",
+            "grant_type=refresh_token&refresh_token={}&client_id={}",
             urlencoding::encode(&old_refresh_token),
             urlencoding::encode(fixtures::TEST_CLIENT_ID),
         ))
@@ -590,7 +590,7 @@ async fn test_refresh_token_rotation() {
         .post(&format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
-            "grant_type=refresh_token&refresh_token={}&client_id={}&client_secret=dummy",
+            "grant_type=refresh_token&refresh_token={}&client_id={}",
             urlencoding::encode(&old_refresh_token),
             urlencoding::encode(fixtures::TEST_CLIENT_ID),
         ))
@@ -604,6 +604,99 @@ async fn test_refresh_token_rotation() {
         status == StatusCode::BAD_REQUEST || status == StatusCode::UNAUTHORIZED,
         "replayed refresh token should be rejected, got status {status}"
     );
+}
+
+#[tokio::test]
+async fn test_refresh_token_cannot_be_redeemed_by_different_client() {
+    let app = TestApp::new().await;
+
+    let client_a_id = "refresh-client-a";
+    let client_a_secret = "RefreshClientASecret123!";
+    let client_b_id = "refresh-client-b";
+    let client_b_secret = "RefreshClientBSecret123!";
+    let redirect_uri = "https://app.example.com/callback";
+
+    app.seed_client_with_secret(client_a_id, client_a_secret, &[redirect_uri])
+        .await;
+    app.seed_client_with_secret(client_b_id, client_b_secret, &[redirect_uri])
+        .await;
+
+    let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let code_challenge = pkce_s256_challenge(code_verifier);
+
+    let authorize_url = format!(
+        "{}/oidc/authorize?client_id={}&redirect_uri={}&response_type=code&scope=openid+profile&state=refresh-cross-client&code_challenge={}&code_challenge_method=S256&login_hint={}",
+        app.url(),
+        urlencoding::encode(client_a_id),
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(&code_challenge),
+        urlencoding::encode(fixtures::TEST_USER_EMAIL),
+    );
+
+    let authorize_resp = app
+        .client()
+        .get(&authorize_url)
+        .send()
+        .await
+        .expect("authorize request failed");
+
+    assert_eq!(authorize_resp.status(), StatusCode::TEMPORARY_REDIRECT);
+    let location = authorize_resp
+        .headers()
+        .get("location")
+        .expect("redirect must have Location header")
+        .to_str()
+        .expect("Location header must be valid UTF-8");
+    let (code, _) = parse_redirect_params(location);
+    assert!(!code.is_empty(), "authorization code must be present");
+
+    let token_resp = app
+        .client()
+        .post(&format!("{}/oidc/token", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&client_secret={}&code_verifier={}",
+            urlencoding::encode(&code),
+            urlencoding::encode(redirect_uri),
+            urlencoding::encode(client_a_id),
+            urlencoding::encode(client_a_secret),
+            urlencoding::encode(code_verifier),
+        ))
+        .send()
+        .await
+        .expect("token request failed");
+
+    assert_eq!(token_resp.status(), StatusCode::OK);
+    let token_body: Value = token_resp.json().await.expect("response should be JSON");
+    let refresh_token = token_body["refresh_token"]
+        .as_str()
+        .expect("refresh_token must be present")
+        .to_string();
+
+    let wrong_client_refresh = app
+        .client()
+        .post(&format!("{}/oidc/token", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "grant_type=refresh_token&refresh_token={}&client_id={}&client_secret={}",
+            urlencoding::encode(&refresh_token),
+            urlencoding::encode(client_b_id),
+            urlencoding::encode(client_b_secret),
+        ))
+        .send()
+        .await
+        .expect("cross-client refresh request failed");
+
+    let status = wrong_client_refresh.status();
+    let body: Value = wrong_client_refresh
+        .json()
+        .await
+        .expect("response should be JSON");
+    assert!(
+        status == StatusCode::UNAUTHORIZED || status == StatusCode::BAD_REQUEST,
+        "refresh token redeemed by a different client should fail, got {status}"
+    );
+    assert_eq!(body["error"].as_str(), Some("invalid_client"));
 }
 
 // ===================================================================
@@ -1046,14 +1139,11 @@ async fn test_client_credentials_grant() {
         .expect("token request failed");
 
     // 3. Assert 200 + correct response shape
-    assert!(
-        token_resp.status() == StatusCode::OK || token_resp.status() == StatusCode::BAD_REQUEST,
-        "client credentials grant completed with status {}",
-        token_resp.status()
+    assert_eq!(
+        token_resp.status(),
+        StatusCode::OK,
+        "client credentials grant should succeed"
     );
-    if !token_resp.status().is_success() {
-        return;
-    }
     let token_body: Value = token_resp
         .json()
         .await
@@ -1406,6 +1496,158 @@ async fn test_token_wrong_client_secret() {
         Some("invalid_client"),
         "error should be invalid_client, got: {body:?}"
     );
+}
+
+#[tokio::test]
+async fn test_token_missing_client_secret_for_confidential_client() {
+    let app = TestApp::new().await;
+
+    let client_id = "missing-secret-client";
+    let client_secret = "MissingSecret123!";
+    let redirect_uri = "https://app.example.com/callback";
+    app.seed_client_with_secret(client_id, client_secret, &[redirect_uri])
+        .await;
+
+    let token_resp = app
+        .client()
+        .post(&format!("{}/oidc/token", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "grant_type=authorization_code&code=some_code&redirect_uri={}&client_id={}&code_verifier=some_verifier",
+            urlencoding::encode(redirect_uri),
+            urlencoding::encode(client_id),
+        ))
+        .send()
+        .await
+        .expect("token request failed");
+
+    let status = token_resp.status();
+    let body: Value = token_resp.json().await.expect("response should be JSON");
+    assert!(
+        status == StatusCode::UNAUTHORIZED || status == StatusCode::BAD_REQUEST,
+        "missing client_secret should return 401 or 400, got {status}"
+    );
+    assert_eq!(body["error"].as_str(), Some("invalid_client"));
+}
+
+#[tokio::test]
+async fn test_token_client_secret_basic_rejects_client_secret_post() {
+    let app = TestApp::new().await;
+
+    let client_id = "basic-only-client";
+    let client_secret = "BasicOnlySecret123!";
+    let redirect_uri = "https://app.example.com/callback";
+    app.seed_client_with_secret(client_id, client_secret, &[redirect_uri])
+        .await;
+
+    {
+        let mut conn = app.db_conn().await;
+        conn.execute_params(
+            "UPDATE clients SET token_endpoint_auth_method = $1 WHERE client_id = $2",
+            &[&"client_secret_basic", &client_id],
+        )
+        .await
+        .expect("failed to update client auth method");
+        let _ = conn.close().await;
+    }
+
+    let token_resp = app
+        .client()
+        .post(&format!("{}/oidc/token", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "grant_type=authorization_code&code=some_code&redirect_uri={}&client_id={}&client_secret={}&code_verifier=some_verifier",
+            urlencoding::encode(redirect_uri),
+            urlencoding::encode(client_id),
+            urlencoding::encode(client_secret),
+        ))
+        .send()
+        .await
+        .expect("token request failed");
+
+    let status = token_resp.status();
+    let body: Value = token_resp.json().await.expect("response should be JSON");
+    assert!(
+        status == StatusCode::UNAUTHORIZED || status == StatusCode::BAD_REQUEST,
+        "client_secret_post should be rejected for a client_secret_basic client, got {status}"
+    );
+    assert_eq!(body["error"].as_str(), Some("invalid_client"));
+}
+
+#[tokio::test]
+async fn test_token_client_secret_post_rejects_client_secret_basic() {
+    let app = TestApp::new().await;
+
+    let client_id = "post-only-client";
+    let client_secret = "PostOnlySecret123!";
+    let redirect_uri = "https://app.example.com/callback";
+    app.seed_client_with_secret(client_id, client_secret, &[redirect_uri])
+        .await;
+
+    let token_resp = app
+        .client()
+        .post(&format!("{}/oidc/token", app.url()))
+        .basic_auth(client_id, Some(client_secret))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "grant_type=authorization_code&code=some_code&redirect_uri={}&client_id={}&code_verifier=some_verifier",
+            urlencoding::encode(redirect_uri),
+            urlencoding::encode(client_id),
+        ))
+        .send()
+        .await
+        .expect("token request failed");
+
+    let status = token_resp.status();
+    let body: Value = token_resp.json().await.expect("response should be JSON");
+    assert!(
+        status == StatusCode::UNAUTHORIZED || status == StatusCode::BAD_REQUEST,
+        "client_secret_basic should be rejected for a client_secret_post client, got {status}"
+    );
+    assert_eq!(body["error"].as_str(), Some("invalid_client"));
+}
+
+#[tokio::test]
+async fn test_token_rejects_mismatched_client_id_between_basic_auth_and_body() {
+    let app = TestApp::new().await;
+
+    let client_id = "basic-mismatch-client";
+    let client_secret = "BasicMismatch123!";
+    let redirect_uri = "https://app.example.com/callback";
+    app.seed_client_with_secret(client_id, client_secret, &[redirect_uri])
+        .await;
+    {
+        let mut conn = app.db_conn().await;
+        conn.execute_params(
+            "UPDATE clients SET token_endpoint_auth_method = $1 WHERE client_id = $2",
+            &[&"client_secret_basic", &client_id],
+        )
+        .await
+        .expect("failed to update client auth method");
+        let _ = conn.close().await;
+    }
+
+    let token_resp = app
+        .client()
+        .post(&format!("{}/oidc/token", app.url()))
+        .basic_auth(client_id, Some(client_secret))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "grant_type=authorization_code&code=some_code&redirect_uri={}&client_id={}&code_verifier=some_verifier",
+            urlencoding::encode(redirect_uri),
+            urlencoding::encode("different-client-id"),
+        ))
+        .send()
+        .await
+        .expect("token request failed");
+
+    let status = token_resp.status();
+    let body: Value = token_resp.json().await.expect("response should be JSON");
+    assert!(
+        status == StatusCode::UNAUTHORIZED || status == StatusCode::BAD_REQUEST,
+        "mismatched client identifiers should be rejected, got {status}"
+    );
+    assert_eq!(body["error"].as_str(), Some("invalid_client"));
 }
 
 // ===================================================================

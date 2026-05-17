@@ -6,8 +6,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use oidc_core::models::audit_event::ActorType;
 use oidc_core::models::account_recovery_token::AccountRecoveryToken;
+use oidc_core::models::audit_event::ActorType;
 use oidc_core::utils::{generate_uuid_v7, is_strong_password, is_valid_email, is_valid_username};
 use oidc_repository::repositories::account_recovery_token_repo::AccountRecoveryTokenRepo;
 use oidc_repository::repositories::audit_event_repo::AuditEventRepo;
@@ -17,7 +17,9 @@ use oidc_repository::repositories::user_repo::UserRepo;
 use oidc_repository::repositories::user_role_repo::UserRoleRepo;
 
 use crate::middleware::admin_auth::AdminAuth;
-use crate::router::admin::{admin_or_forbidden, connect, bad_request, conflict, internal_error, not_found};
+use crate::router::admin::{
+    admin_or_forbidden, bad_request, conflict, connect, internal_error, not_found,
+};
 use crate::state::AppState;
 
 #[derive(Deserialize)]
@@ -30,56 +32,82 @@ pub struct ListQuery {
     offset: i64,
 }
 
-fn default_limit() -> i64 { 20 }
-fn default_offset() -> i64 { 0 }
+fn default_limit() -> i64 {
+    20
+}
+fn default_offset() -> i64 {
+    0
+}
 
 pub async fn list(
     State(state): State<AppState>,
     Query(query): Query<ListQuery>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
-    let users = match UserRepo.list(&mut conn, query.realm_id, query.search.as_deref(), query.limit, query.offset).await {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let users = match UserRepo
+        .list(
+            &mut conn,
+            query.realm_id,
+            query.search.as_deref(),
+            query.limit,
+            query.offset,
+        )
+        .await
+    {
         Ok(u) => u,
         Err(e) => {
             tracing::error!("list users error: {e}");
             return internal_error();
         }
     };
-    let total = UserRepo.count(&mut conn, query.realm_id).await.unwrap_or_else(|e| {
-        tracing::warn!("failed to count users: {e}");
-        0
-    });
-    let rows: Vec<Value> = users.into_iter().map(|u| json!({
-        "id": u.id.to_string(),
-        "realm_id": u.realm_id.to_string(),
-        "email": u.email,
-        "email_verified": u.email_verified,
-        "username": u.username,
-        "given_name": u.given_name,
-        "family_name": u.family_name,
-        "middle_name": u.middle_name,
-        "nickname": u.nickname,
-        "preferred_username": u.preferred_username,
-        "profile": u.profile,
-        "picture": u.picture,
-        "website": u.website,
-        "gender": u.gender,
-        "birthdate": u.birthdate,
-        "zoneinfo": u.zoneinfo,
-        "phone_number": u.phone_number,
-        "phone_number_verified": u.phone_number_verified,
-        "street_address": u.street_address,
-        "locality": u.locality,
-        "region": u.region,
-        "postal_code": u.postal_code,
-        "country": u.country,
-        "locale": u.locale,
-        "attributes": u.attributes,
-        "enabled": u.enabled,
-        "updated_at": u.updated_at.to_rfc3339(),
-    })).collect();
+    let total = UserRepo
+        .count(&mut conn, query.realm_id)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("failed to count users: {e}");
+            0
+        });
+    let rows: Vec<Value> = users
+        .into_iter()
+        .map(|u| {
+            json!({
+                "id": u.id.to_string(),
+                "realm_id": u.realm_id.to_string(),
+                "email": u.email,
+                "email_verified": u.email_verified,
+                "username": u.username,
+                "given_name": u.given_name,
+                "family_name": u.family_name,
+                "middle_name": u.middle_name,
+                "nickname": u.nickname,
+                "preferred_username": u.preferred_username,
+                "profile": u.profile,
+                "picture": u.picture,
+                "website": u.website,
+                "gender": u.gender,
+                "birthdate": u.birthdate,
+                "zoneinfo": u.zoneinfo,
+                "phone_number": u.phone_number,
+                "phone_number_verified": u.phone_number_verified,
+                "street_address": u.street_address,
+                "locality": u.locality,
+                "region": u.region,
+                "postal_code": u.postal_code,
+                "country": u.country,
+                "locale": u.locale,
+                "attributes": u.attributes,
+                "enabled": u.enabled,
+                "updated_at": u.updated_at.to_rfc3339(),
+            })
+        })
+        .collect();
     Json(json!({"items": rows, "total": total})).into_response()
 }
 
@@ -88,8 +116,13 @@ pub async fn get(
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     match UserRepo.find_by_id(&mut conn, id).await {
         Ok(Some(u)) => Json(json!({
             "id": u.id.to_string(),
@@ -119,7 +152,8 @@ pub async fn get(
             "attributes": u.attributes,
             "enabled": u.enabled,
             "updated_at": u.updated_at.to_rfc3339(),
-        })).into_response(),
+        }))
+        .into_response(),
         Ok(None) => not_found(),
         Err(e) => {
             tracing::error!("get user error: {e}");
@@ -157,24 +191,44 @@ pub struct CreateRequest {
 }
 
 pub async fn create(State(state): State<AppState>, auth: AdminAuth, body: String) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
     let req: CreateRequest = match serde_json::from_str(&body) {
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
     if !is_valid_email(&req.email) {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_request", "error_description": "Invalid input"}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "invalid_request", "error_description": "Invalid input"})),
+        )
+            .into_response();
     }
     if !is_strong_password(&req.password) {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_request", "error_description": "Invalid input"}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "invalid_request", "error_description": "Invalid input"})),
+        )
+            .into_response();
     }
     if let Some(ref username) = req.username {
         if !is_valid_username(username) {
-            return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_request", "error_description": "Invalid input"}))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": "invalid_request", "error_description": "Invalid input"})),
+            )
+                .into_response();
         }
     }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
-    match UserRepo.find_by_email(&mut conn, req.realm_id, &req.email).await {
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    match UserRepo
+        .find_by_email(&mut conn, req.realm_id, &req.email)
+        .await
+    {
         Ok(Some(_)) => return conflict(),
         Ok(None) => {}
         Err(e) => {
@@ -228,7 +282,11 @@ pub async fn create(State(state): State<AppState>, auth: AdminAuth, body: String
             return internal_error();
         }
     }
-    let actor_type = if auth.is_api_key { ActorType::ApiKey } else { ActorType::User };
+    let actor_type = if auth.is_api_key {
+        ActorType::ApiKey
+    } else {
+        ActorType::User
+    };
     let actor_id = Uuid::parse_str(&auth.subject).ok();
     let audit = oidc_core::models::audit_event::AuditEvent {
         id: generate_uuid_v7(),
@@ -273,7 +331,8 @@ pub async fn create(State(state): State<AppState>, auth: AdminAuth, body: String
         "locale": user.locale,
         "attributes": user.attributes,
         "enabled": user.enabled,
-    })).into_response()
+    }))
+    .into_response()
 }
 
 #[derive(Deserialize)]
@@ -309,12 +368,17 @@ pub async fn update(
     auth: AdminAuth,
     body: String,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
     let req: UpdateRequest = match serde_json::from_str(&body) {
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     let mut user = match UserRepo.find_by_id(&mut conn, id).await {
         Ok(Some(u)) => u,
         Ok(None) => return not_found(),
@@ -323,29 +387,75 @@ pub async fn update(
             return internal_error();
         }
     };
-    if let Some(v) = req.email { user.email = v; }
-    if let Some(v) = req.email_verified { user.email_verified = v; }
-    if let Some(v) = req.username { user.username = Some(v); }
-    if let Some(v) = req.given_name { user.given_name = Some(v); }
-    if let Some(v) = req.family_name { user.family_name = Some(v); }
-    if let Some(v) = req.middle_name { user.middle_name = Some(v); }
-    if let Some(v) = req.nickname { user.nickname = Some(v); }
-    if let Some(v) = req.preferred_username { user.preferred_username = Some(v); }
-    if let Some(v) = req.profile { user.profile = Some(v); }
-    if let Some(v) = req.picture { user.picture = Some(v); }
-    if let Some(v) = req.website { user.website = Some(v); }
-    if let Some(v) = req.gender { user.gender = Some(v); }
-    if let Some(v) = req.birthdate { user.birthdate = Some(v); }
-    if let Some(v) = req.zoneinfo { user.zoneinfo = Some(v); }
-    if let Some(v) = req.phone_number { user.phone_number = Some(v); }
-    if let Some(v) = req.phone_number_verified { user.phone_number_verified = Some(v); }
-    if let Some(v) = req.street_address { user.street_address = Some(v); }
-    if let Some(v) = req.locality { user.locality = Some(v); }
-    if let Some(v) = req.region { user.region = Some(v); }
-    if let Some(v) = req.postal_code { user.postal_code = Some(v); }
-    if let Some(v) = req.country { user.country = Some(v); }
-    if let Some(v) = req.locale { user.locale = v; }
-    if let Some(v) = req.enabled { user.enabled = v; }
+    if let Some(v) = req.email {
+        user.email = v;
+    }
+    if let Some(v) = req.email_verified {
+        user.email_verified = v;
+    }
+    if let Some(v) = req.username {
+        user.username = Some(v);
+    }
+    if let Some(v) = req.given_name {
+        user.given_name = Some(v);
+    }
+    if let Some(v) = req.family_name {
+        user.family_name = Some(v);
+    }
+    if let Some(v) = req.middle_name {
+        user.middle_name = Some(v);
+    }
+    if let Some(v) = req.nickname {
+        user.nickname = Some(v);
+    }
+    if let Some(v) = req.preferred_username {
+        user.preferred_username = Some(v);
+    }
+    if let Some(v) = req.profile {
+        user.profile = Some(v);
+    }
+    if let Some(v) = req.picture {
+        user.picture = Some(v);
+    }
+    if let Some(v) = req.website {
+        user.website = Some(v);
+    }
+    if let Some(v) = req.gender {
+        user.gender = Some(v);
+    }
+    if let Some(v) = req.birthdate {
+        user.birthdate = Some(v);
+    }
+    if let Some(v) = req.zoneinfo {
+        user.zoneinfo = Some(v);
+    }
+    if let Some(v) = req.phone_number {
+        user.phone_number = Some(v);
+    }
+    if let Some(v) = req.phone_number_verified {
+        user.phone_number_verified = Some(v);
+    }
+    if let Some(v) = req.street_address {
+        user.street_address = Some(v);
+    }
+    if let Some(v) = req.locality {
+        user.locality = Some(v);
+    }
+    if let Some(v) = req.region {
+        user.region = Some(v);
+    }
+    if let Some(v) = req.postal_code {
+        user.postal_code = Some(v);
+    }
+    if let Some(v) = req.country {
+        user.country = Some(v);
+    }
+    if let Some(v) = req.locale {
+        user.locale = v;
+    }
+    if let Some(v) = req.enabled {
+        user.enabled = v;
+    }
     match UserRepo.update(&mut conn, &user).await {
         Ok(()) => Json(json!({"updated": true})).into_response(),
         Err(e) => {
@@ -360,8 +470,13 @@ pub async fn delete(
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     match UserRepo.delete(&mut conn, id).await {
         Ok(()) => Json(json!({"deleted": true})).into_response(),
         Err(e) => {
@@ -378,8 +493,13 @@ pub async fn list_roles(
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     let roles = match RoleRepo.find_by_user_id(&mut conn, id).await {
         Ok(r) => r,
         Err(e) => {
@@ -387,13 +507,18 @@ pub async fn list_roles(
             return internal_error();
         }
     };
-    let rows: Vec<Value> = roles.into_iter().map(|r| json!({
-        "id": r.id.to_string(),
-        "realm_id": r.realm_id.to_string(),
-        "name": r.name,
-        "description": r.description,
-        "permissions": r.permissions,
-    })).collect();
+    let rows: Vec<Value> = roles
+        .into_iter()
+        .map(|r| {
+            json!({
+                "id": r.id.to_string(),
+                "realm_id": r.realm_id.to_string(),
+                "name": r.name,
+                "description": r.description,
+                "permissions": r.permissions,
+            })
+        })
+        .collect();
     Json(json!({"items": rows})).into_response()
 }
 
@@ -408,12 +533,17 @@ pub async fn assign_role(
     auth: AdminAuth,
     body: String,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
     let req: AssignRoleRequest = match serde_json::from_str(&body) {
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     match UserRoleRepo.assign(&mut conn, id, req.role_id).await {
         Ok(()) => {
             let audit = oidc_core::models::AuditEvent {
@@ -421,7 +551,11 @@ pub async fn assign_role(
                 realm_id: None,
                 event_type: "user.role_assigned".to_string(),
                 actor_id: Uuid::parse_str(&auth.subject).ok(),
-                actor_type: if auth.is_api_key { ActorType::ApiKey } else { ActorType::User },
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
                 target_type: Some("user".to_string()),
                 target_id: Some(id),
                 details: json!({"role_id": req.role_id.to_string()}),
@@ -446,8 +580,13 @@ pub async fn unassign_role(
     axum::extract::Path((id, role_id)): axum::extract::Path<(Uuid, Uuid)>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     match UserRoleRepo.unassign(&mut conn, id, role_id).await {
         Ok(()) => {
             let audit = oidc_core::models::AuditEvent {
@@ -455,7 +594,11 @@ pub async fn unassign_role(
                 realm_id: None,
                 event_type: "user.role_unassigned".to_string(),
                 actor_id: Uuid::parse_str(&auth.subject).ok(),
-                actor_type: if auth.is_api_key { ActorType::ApiKey } else { ActorType::User },
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
                 target_type: Some("user".to_string()),
                 target_id: Some(id),
                 details: json!({"role_id": role_id.to_string()}),
@@ -482,8 +625,13 @@ pub async fn list_groups(
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     let groups = match UserGroupRepo.find_groups_by_user(&mut conn, id).await {
         Ok(g) => g,
         Err(e) => {
@@ -491,13 +639,18 @@ pub async fn list_groups(
             return internal_error();
         }
     };
-    let rows: Vec<Value> = groups.into_iter().map(|g| json!({
-        "id": g.id.to_string(),
-        "realm_id": g.realm_id.to_string(),
-        "name": g.name,
-        "description": g.description,
-        "parent_id": g.parent_id.map(|p| p.to_string()),
-    })).collect();
+    let rows: Vec<Value> = groups
+        .into_iter()
+        .map(|g| {
+            json!({
+                "id": g.id.to_string(),
+                "realm_id": g.realm_id.to_string(),
+                "name": g.name,
+                "description": g.description,
+                "parent_id": g.parent_id.map(|p| p.to_string()),
+            })
+        })
+        .collect();
     Json(json!({"items": rows})).into_response()
 }
 
@@ -512,12 +665,17 @@ pub async fn assign_group(
     auth: AdminAuth,
     body: String,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
     let req: AssignGroupRequest = match serde_json::from_str(&body) {
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     match UserGroupRepo.assign(&mut conn, id, req.group_id).await {
         Ok(()) => {
             let audit = oidc_core::models::AuditEvent {
@@ -525,7 +683,11 @@ pub async fn assign_group(
                 realm_id: None,
                 event_type: "user.group_assigned".to_string(),
                 actor_id: Uuid::parse_str(&auth.subject).ok(),
-                actor_type: if auth.is_api_key { ActorType::ApiKey } else { ActorType::User },
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
                 target_type: Some("user".to_string()),
                 target_id: Some(id),
                 details: json!({"group_id": req.group_id.to_string()}),
@@ -550,8 +712,13 @@ pub async fn unassign_group(
     axum::extract::Path((id, group_id)): axum::extract::Path<(Uuid, Uuid)>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     match UserGroupRepo.unassign(&mut conn, id, group_id).await {
         Ok(()) => {
             let audit = oidc_core::models::AuditEvent {
@@ -559,7 +726,11 @@ pub async fn unassign_group(
                 realm_id: None,
                 event_type: "user.group_unassigned".to_string(),
                 actor_id: Uuid::parse_str(&auth.subject).ok(),
-                actor_type: if auth.is_api_key { ActorType::ApiKey } else { ActorType::User },
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
                 target_type: Some("user".to_string()),
                 target_id: Some(id),
                 details: json!({"group_id": group_id.to_string()}),
@@ -592,15 +763,26 @@ pub async fn initiate_account_recovery(
     auth: AdminAuth,
     body: String,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
     let req: AccountRecoveryRequest = match serde_json::from_str(&body) {
         Ok(r) => r,
         Err(_) => AccountRecoveryRequest { creator_ip: None },
     };
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     let user = match UserRepo.find_by_id(&mut conn, id).await {
         Ok(Some(u)) => u,
-        Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({"error": "user not found"}))).into_response(),
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "user not found"})),
+            )
+                .into_response();
+        }
         Err(e) => {
             tracing::error!("account recovery user fetch error: {e}");
             return internal_error();
@@ -608,23 +790,37 @@ pub async fn initiate_account_recovery(
     };
     let admin_uuid = match Uuid::parse_str(&auth.subject) {
         Ok(u) => u,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "invalid admin identity"}))).into_response(),
-    };
-    let (token_entity, raw_token) = match AccountRecoveryToken::new(user.id, user.realm_id, admin_uuid, req.creator_ip) {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::error!("account recovery token creation error: {e}");
-            return internal_error();
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "invalid admin identity"})),
+            )
+                .into_response();
         }
     };
-    match AccountRecoveryTokenRepo.create(&mut conn, &token_entity).await {
+    let (token_entity, raw_token) =
+        match AccountRecoveryToken::new(user.id, user.realm_id, admin_uuid, req.creator_ip) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!("account recovery token creation error: {e}");
+                return internal_error();
+            }
+        };
+    match AccountRecoveryTokenRepo
+        .create(&mut conn, &token_entity)
+        .await
+    {
         Ok(()) => {
             let audit = oidc_core::models::AuditEvent {
                 id: generate_uuid_v7(),
                 realm_id: Some(user.realm_id),
                 event_type: "user.account_recovery_initiated".to_string(),
                 actor_id: Some(admin_uuid),
-                actor_type: if auth.is_api_key { ActorType::ApiKey } else { ActorType::User },
+                actor_type: if auth.is_api_key {
+                    ActorType::ApiKey
+                } else {
+                    ActorType::User
+                },
                 target_type: Some("user".to_string()),
                 target_id: Some(user.id),
                 details: json!({}),
@@ -639,7 +835,8 @@ pub async fn initiate_account_recovery(
                 "recovery_token": raw_token,
                 "user_id": user.id.to_string(),
                 "expires_at": token_entity.expires_at.to_rfc3339(),
-            })).into_response()
+            }))
+            .into_response()
         }
         Err(e) => {
             tracing::error!("account recovery token store error: {e}");
@@ -655,24 +852,42 @@ pub async fn impersonate(
     axum::extract::Path(id): axum::extract::Path<Uuid>,
     auth: AdminAuth,
 ) -> Response {
-    if let Some(r) = admin_or_forbidden(&auth) { return r; }
-    let mut conn = match connect(&state).await { Ok(c) => c, Err(r) => return r };
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
     let user = match UserRepo.find_by_id(&mut conn, id).await {
         Ok(Some(u)) => u,
-        Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({"error": "user not found"}))).into_response(),
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({"error": "user not found"})),
+            )
+                .into_response();
+        }
         Err(e) => {
             tracing::error!("impersonate user fetch error: {e}");
             return internal_error();
         }
     };
     if !user.enabled {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "user is disabled"}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "user is disabled"})),
+        )
+            .into_response();
     }
     let sub = user.id.to_string();
     let act_sub = auth.subject.clone();
     let scope = "openid profile email";
     let audience = vec!["account".to_string()];
-    let token = match state.token_service.encode_access_token_with_act(&sub, &act_sub, scope, &audience, 300) {
+    let token = match state
+        .token_service
+        .encode_access_token_with_act(&sub, &act_sub, scope, &audience, 300)
+    {
         Ok(t) => t,
         Err(e) => {
             tracing::error!("impersonate token encode error: {e}");
@@ -684,7 +899,11 @@ pub async fn impersonate(
         realm_id: Some(user.realm_id),
         event_type: "user.impersonated".to_string(),
         actor_id: Uuid::parse_str(&auth.subject).ok(),
-        actor_type: if auth.is_api_key { ActorType::ApiKey } else { ActorType::User },
+        actor_type: if auth.is_api_key {
+            ActorType::ApiKey
+        } else {
+            ActorType::User
+        },
         target_type: Some("user".to_string()),
         target_id: Some(user.id),
         details: json!({"impersonated_user_id": user.id.to_string(), "impersonated_by": auth.subject}),
@@ -701,5 +920,6 @@ pub async fn impersonate(
         "expires_in": 300,
         "impersonated_user_id": user.id.to_string(),
         "impersonated_by": auth.subject,
-    })).into_response()
+    }))
+    .into_response()
 }

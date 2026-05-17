@@ -73,11 +73,12 @@ mod http_tests {
         use std::sync::OnceLock;
         static INIT: OnceLock<()> = OnceLock::new();
         INIT.get_or_init(|| {
-            use rand::rngs::OsRng;
             use rand::RngCore;
+            use rand::rngs::OsRng;
 
             // RSA
-            let rsa_key = rsa::RsaPrivateKey::new(&mut OsRng, 2048).expect("failed to generate RSA key");
+            let rsa_key =
+                rsa::RsaPrivateKey::new(&mut OsRng, 2048).expect("failed to generate RSA key");
             use rsa::pkcs1::EncodeRsaPrivateKey;
             let rsa_pem: String = rsa_key
                 .to_pkcs1_pem(rsa::pkcs1::LineEnding::LF)
@@ -108,7 +109,12 @@ mod http_tests {
         ensure_env();
         let app = app_router();
         let response = app
-            .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/health")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
@@ -140,7 +146,11 @@ mod http_tests {
         assert!(body["scopes_supported"].as_array().is_some());
         assert!(body["response_types_supported"].as_array().is_some());
         assert!(body["grant_types_supported"].as_array().is_some());
-        assert!(body["id_token_signing_alg_values_supported"].as_array().is_some());
+        assert!(
+            body["id_token_signing_alg_values_supported"]
+                .as_array()
+                .is_some()
+        );
     }
 
     #[tokio::test]
@@ -148,12 +158,19 @@ mod http_tests {
         ensure_env();
         let app = app_router();
         let response = app
-            .oneshot(Request::builder().uri("/oidc/jwks").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/oidc/jwks")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let body = read_json_body(response).await;
-        let keys = body["keys"].as_array().expect("JWKS should have keys array");
+        let keys = body["keys"]
+            .as_array()
+            .expect("JWKS should have keys array");
         assert!(!keys.is_empty(), "JWKS should contain at least one key");
         let key = &keys[0];
         assert_eq!(key["kty"], "RSA");

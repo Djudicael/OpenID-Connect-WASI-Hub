@@ -505,7 +505,9 @@ async fn start_database(state: &Arc<Mutex<WasmDevState>>) -> Result<String> {
         .await
         .context("Failed to get host port from container")?;
 
-    let db_url = format!("postgresql://{DB_USER}:{DB_PASSWORD}@localhost:{host_port}/{DB_NAME}?sslmode=disable");
+    let db_url = format!(
+        "postgresql://{DB_USER}:{DB_PASSWORD}@localhost:{host_port}/{DB_NAME}?sslmode=disable"
+    );
 
     info!("Container started on host port {host_port}, waiting for PostgreSQL...");
 
@@ -944,7 +946,8 @@ async fn start_wasmtime(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
 
     let encryption_key =
         "2a3131371e4b5559606b70777e858f969da4acb3babec5ccc3cdd5dddbe3e9f0".to_string();
-    let pairwise_salt = "0000000000000000000000000000000000000000000000000000000000000000".to_string();
+    let pairwise_salt =
+        "0000000000000000000000000000000000000000000000000000000000000000".to_string();
 
     // Generate deterministic dev signing keys so all WASM instances share the
     // same keys. Without this, wasmtime serve creates fresh instances per

@@ -1,8 +1,8 @@
 //! Global error handler mapping domain errors to HTTP responses.
 
 use axum::{
-    response::{IntoResponse, Response},
     Json,
+    response::{IntoResponse, Response},
 };
 use serde_json::json;
 
@@ -29,5 +29,9 @@ impl IntoResponse for AppError {
 
 /// Health check error response.
 pub fn health_error(msg: &str) -> Response {
-    (axum::http::StatusCode::SERVICE_UNAVAILABLE, Json(json!({"status": "error", "message": msg}))).into_response()
+    (
+        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        Json(json!({"status": "error", "message": msg})),
+    )
+        .into_response()
 }

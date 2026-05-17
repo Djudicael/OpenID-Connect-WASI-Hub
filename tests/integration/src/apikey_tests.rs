@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::helpers::app::TestApp;
+use crate::helpers::fixtures;
 
 // ===================================================================
 // Helpers
@@ -102,6 +103,27 @@ async fn seed_second_realm(app: &TestApp) -> Uuid {
     let _ = conn.close().await;
 
     id
+}
+
+/// Seed a confidential client that can use the client_credentials grant and
+/// returns `(client_id, client_secret)` for token requests.
+async fn seed_client_credentials_client(app: &TestApp, client_id: &str, client_secret: &str) {
+    let mut conn = app.db_conn().await;
+    let mut client = fixtures::test_client(app.master_realm_id(), client_id, vec![]);
+    client.allowed_grant_types = vec!["client_credentials".to_string()];
+    client.allowed_scopes = vec!["openid".to_string(), "profile".to_string()];
+    client.token_endpoint_auth_method = "client_secret_post".to_string();
+
+    let hasher = oidc_core::traits::hasher::Argon2idHasher::new();
+    let hash = <dyn oidc_core::traits::Hasher>::hash(&hasher, client_secret)
+        .expect("failed to hash client secret");
+    client.client_secret_hash = Some(hash);
+
+    oidc_repository::repositories::client_repo::ClientRepo
+        .create(&mut conn, &client)
+        .await
+        .expect("failed to seed client_credentials client");
+    let _ = conn.close().await;
 }
 
 // ===================================================================
@@ -388,6 +410,89 @@ async fn test_api_key_auth_expired() {
     );
 }
 
+#[tokio::test]
+async fn test_api_key_routes_accept_admin_jwt() {
+    let app = TestApp::new().await;
+
+    let login_resp = app
+        .client()
+        .post(&format!("{}/oidc/login", app.url()))
+        .json(&json!({
+            "email": fixtures::TEST_USER_EMAIL,
+            "password": fixtures::TEST_USER_PASSWORD,
+            "client_id": fixtures::TEST_CLIENT_ID,
+        }))
+        .send()
+        .await
+        .expect("login request failed");
+
+    assert_eq!(login_resp.status(), StatusCode::OK);
+    let login_body: Value = login_resp.json().await.expect("response should be JSON");
+    let access_token = login_body["access_token"]
+        .as_str()
+        .expect("access_token must be present");
+
+    let resp = app
+        .client()
+        .get(&format!(
+            "{}/api/keys?realm_id={}",
+            app.url(),
+            app.master_realm_id()
+        ))
+        .header("Authorization", format!("Bearer {access_token}"))
+        .send()
+        .await
+        .expect("JWT-authenticated request failed");
+
+    assert_eq!(resp.status(), StatusCode::OK, "admin JWT should return 200");
+}
+
+#[tokio::test]
+async fn test_api_key_routes_reject_non_admin_jwt() {
+    let app = TestApp::new().await;
+
+    let client_id = "apikey-non-admin-client";
+    let client_secret = "ApiKeyClientSecret123!";
+    seed_client_credentials_client(&app, client_id, client_secret).await;
+
+    let token_resp = app
+        .client()
+        .post(&format!("{}/oidc/token", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "grant_type=client_credentials&client_id={}&client_secret={}",
+            urlencoding::encode(client_id),
+            urlencoding::encode(client_secret),
+        ))
+        .send()
+        .await
+        .expect("client credentials token request failed");
+
+    assert_eq!(token_resp.status(), StatusCode::OK);
+    let token_body: Value = token_resp.json().await.expect("response should be JSON");
+    let access_token = token_body["access_token"]
+        .as_str()
+        .expect("access_token must be present");
+
+    let resp = app
+        .client()
+        .get(&format!(
+            "{}/api/keys?realm_id={}",
+            app.url(),
+            app.master_realm_id()
+        ))
+        .header("Authorization", format!("Bearer {access_token}"))
+        .send()
+        .await
+        .expect("non-admin JWT request failed");
+
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "non-admin JWT should be forbidden on API key routes"
+    );
+}
+
 // ===================================================================
 // Group 3: API Key Security
 // ===================================================================
@@ -409,10 +514,6 @@ async fn test_api_key_cannot_access_other_realm() {
     .await;
 
     // Try to list keys in the MASTER realm using the OTHER realm's key.
-    // The key is valid (it authenticates), but it belongs to a different
-    // realm. The list endpoint filters by the `realm_id` query param, so
-    // the key will authenticate but should return an empty list (or 403
-    // if the server enforces realm matching).
     let resp = app
         .client()
         .get(&format!(
@@ -425,27 +526,73 @@ async fn test_api_key_cannot_access_other_realm() {
         .await
         .expect("cross-realm list request failed");
 
-    let status = resp.status();
-    // The key authenticates successfully (200), but the list should not
-    // contain keys from the other realm. Alternatively, the server may
-    // enforce realm isolation and return 403.
-    assert!(
-        status == StatusCode::OK || status == StatusCode::FORBIDDEN,
-        "cross-realm list should return 200 (empty list) or 403 (forbidden); got {status}"
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "cross-realm API key list should be forbidden"
     );
+}
 
-    if status == StatusCode::OK {
-        let body: Value = resp.json().await.expect("response should be JSON");
-        let items = body["items"].as_array().expect("items must be an array");
-        // The other realm's key should NOT appear in the master realm's list.
-        let found_other = items
-            .iter()
-            .any(|item| item["realm_id"].as_str() == Some(&other_realm_id.to_string()));
-        assert!(
-            !found_other,
-            "keys from other realm should not appear in master realm list"
-        );
-    }
+#[tokio::test]
+async fn test_api_key_cannot_create_in_other_realm() {
+    let app = TestApp::new().await;
+
+    let other_realm_id = seed_second_realm(&app).await;
+    let (_, other_realm_key) = seed_api_key_in_realm(
+        &app,
+        other_realm_id,
+        "realm-b-admin-key",
+        vec!["admin".into()],
+    )
+    .await;
+
+    let resp = app
+        .client()
+        .post(&format!("{}/api/keys", app.url()))
+        .header("X-API-Key", &other_realm_key)
+        .json(&json!({
+            "realm_id": app.master_realm_id().to_string(),
+            "name": "cross-realm-create",
+            "scopes": ["api_keys:read"],
+        }))
+        .send()
+        .await
+        .expect("cross-realm create request failed");
+
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "cross-realm API key creation should be forbidden"
+    );
+}
+
+#[tokio::test]
+async fn test_api_key_cannot_get_key_from_other_realm() {
+    let app = TestApp::new().await;
+
+    let (master_key, _) = seed_api_key(&app, "master-key", vec!["admin".into()], None).await;
+    let other_realm_id = seed_second_realm(&app).await;
+    let (_, other_realm_key) = seed_api_key_in_realm(
+        &app,
+        other_realm_id,
+        "realm-b-admin-key",
+        vec!["admin".into()],
+    )
+    .await;
+
+    let resp = app
+        .client()
+        .get(&format!("{}/api/keys/{}", app.url(), master_key.id))
+        .header("X-API-Key", &other_realm_key)
+        .send()
+        .await
+        .expect("cross-realm get request failed");
+
+    assert_eq!(
+        resp.status(),
+        StatusCode::FORBIDDEN,
+        "cross-realm API key fetch should be forbidden"
+    );
 }
 
 #[tokio::test]

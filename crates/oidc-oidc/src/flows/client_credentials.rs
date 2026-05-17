@@ -5,7 +5,6 @@ use oidc_core::models::Session;
 use oidc_core::traits::TokenService;
 use oidc_core::utils::{generate_uuid_v7, sha2_256_hex};
 use oidc_repository::mapper::pg_err;
-use oidc_repository::repositories::client_repo::ClientRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::with_transaction;
 use serde_json::{Value, json};
@@ -22,33 +21,14 @@ impl ClientCredentialsFlow {
     /// key via a `cnf.jkt` claim and `token_type` is `"DPoP"` (RFC 9449).
     pub async fn execute(
         state: &OidcState,
-        client_id: &str,
-        client_secret: &str,
+        client: &oidc_core::models::Client,
         dpop_jkt: Option<&str>,
     ) -> Result<Value, OidcError> {
         let mut conn = state.connect().await?;
 
         with_transaction!(conn, pg_err, {
-            let client = match ClientRepo.find_by_client_id(&mut conn, client_id).await? {
-                Some(c) if c.enabled => c,
-                Some(_) => return Err(OidcError::InvalidClient),
-                None => return Err(OidcError::InvalidClient),
-            };
-
-            match client.client_secret_hash {
-                Some(ref hash) => {
-                    let verified = match state.hasher.verify(client_secret, hash) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            tracing::error!("Internal error: verify failed: {}", e);
-                            return Err(OidcError::Internal(e.to_string()));
-                        }
-                    };
-                    if !verified {
-                        return Err(OidcError::InvalidClient);
-                    }
-                }
-                None => return Err(OidcError::InvalidClient),
+            if !client.enabled {
+                return Err(OidcError::InvalidClient);
             }
 
             let token_svc = state.token_service_for_realm(client.realm_id).await?;

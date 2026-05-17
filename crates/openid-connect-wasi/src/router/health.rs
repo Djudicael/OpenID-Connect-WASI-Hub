@@ -3,7 +3,7 @@
 use axum::extract::State;
 use axum::routing::get;
 use axum::{Json, Router};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::state::AppState;
 
@@ -42,15 +42,13 @@ async fn live_handler() -> Json<Value> {
 /// Check database connectivity by opening a connection and running a simple query.
 async fn check_database(state: &AppState) -> bool {
     match wasi_pg_client::Connection::connect(&state.db_config).await {
-        Ok(mut conn) => {
-            match conn.query("SELECT 1").await {
-                Ok(_) => true,
-                Err(e) => {
-                    tracing::warn!("Database query failed: {}", e);
-                    false
-                }
+        Ok(mut conn) => match conn.query("SELECT 1").await {
+            Ok(_) => true,
+            Err(e) => {
+                tracing::warn!("Database query failed: {}", e);
+                false
             }
-        }
+        },
         Err(e) => {
             tracing::warn!("Database connection failed: {}", e);
             false

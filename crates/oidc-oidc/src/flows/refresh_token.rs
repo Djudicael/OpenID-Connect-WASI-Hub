@@ -24,6 +24,7 @@ impl RefreshTokenFlow {
     pub async fn execute(
         state: &OidcState,
         refresh_token: &str,
+        authenticated_client_id: uuid::Uuid,
         dpop_jkt: Option<&str>,
     ) -> Result<Value, OidcError> {
         let refresh_hash = sha2_256_hex(refresh_token);
@@ -45,6 +46,11 @@ impl RefreshTokenFlow {
                     return Err(OidcError::InvalidRequest);
                 }
             };
+
+            if session.client_id != authenticated_client_id {
+                let _ = conn.rollback().await;
+                return Err(OidcError::InvalidClient);
+            }
 
             if session.revoked || session.family_revoked {
                 let _ = conn.rollback().await;
@@ -76,7 +82,17 @@ impl RefreshTokenFlow {
                 .find_by_refresh_token_hash(&mut conn, &refresh_hash)
                 .await?
             {
-                Some(s) if !s.revoked && !s.family_revoked && s.rotated_at.is_none() => s,
+                Some(s)
+                    if s.client_id == authenticated_client_id
+                        && !s.revoked
+                        && !s.family_revoked
+                        && s.rotated_at.is_none() =>
+                {
+                    s
+                }
+                Some(s) if s.client_id != authenticated_client_id => {
+                    return Err(OidcError::InvalidClient);
+                }
                 Some(_) => return Err(OidcError::InvalidRequest),
                 None => return Err(OidcError::InvalidRequest),
             };

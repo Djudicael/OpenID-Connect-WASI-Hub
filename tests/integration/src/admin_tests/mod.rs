@@ -2,8 +2,8 @@
 //!
 //! Covers: Stats, Users CRUD, Clients CRUD, Realms CRUD, Sessions, Audit Events.
 
-mod rbac_tests;
 mod policy_tests;
+mod rbac_tests;
 
 use reqwest::StatusCode;
 use serde_json::{Value, json};
@@ -233,7 +233,10 @@ async fn test_get_user_not_found() {
     let token = admin_login(&app).await;
 
     let resp = admin_client(&app, &token)
-        .get(&format!("{}/api/users/00000000-0000-0000-0000-000000000000", app.url()))
+        .get(&format!(
+            "{}/api/users/00000000-0000-0000-0000-000000000000",
+            app.url()
+        ))
         .bearer_auth(&token)
         .send()
         .await
@@ -664,7 +667,10 @@ async fn test_list_audit_events_with_filter() {
         .unwrap();
 
     let resp = admin_client(&app, &token)
-        .get(&format!("{}/api/audit/events?limit=10&event_type=user.login", app.url()))
+        .get(&format!(
+            "{}/api/audit/events?limit=10&event_type=user.login",
+            app.url()
+        ))
         .bearer_auth(&token)
         .send()
         .await

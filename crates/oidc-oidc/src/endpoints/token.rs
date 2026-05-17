@@ -5,6 +5,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use oidc_core::OidcError;
+use oidc_core::models::ClientType;
 
 use oidc_repository::repositories::client_repo::ClientRepo;
 
@@ -17,6 +18,14 @@ use crate::flows::token_exchange::TokenExchangeFlow;
 use crate::state::OidcState;
 use crate::tokens::JwtTokenService;
 use crate::tokens::dpop::verify_dpop_proof;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PresentedClientAuthMethod {
+    None,
+    ClientSecretBasic,
+    ClientSecretPost,
+    ClientAssertion,
+}
 
 /// Token endpoint handler.
 /// Supports `client_secret_basic` (Authorization header), `client_secret_post`
@@ -31,6 +40,22 @@ pub async fn token_handler(
     headers: axum::http::HeaderMap,
     mut params: HashMap<String, String>,
 ) -> Result<Json<Value>, OidcError> {
+    let has_basic_auth = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|auth| auth.starts_with("Basic "));
+    let has_client_assertion = params.contains_key("client_assertion");
+    let has_client_secret_post = params.contains_key("client_secret");
+
+    let presented_auth_method = match (has_basic_auth, has_client_assertion, has_client_secret_post)
+    {
+        (true, false, false) => PresentedClientAuthMethod::ClientSecretBasic,
+        (false, true, false) => PresentedClientAuthMethod::ClientAssertion,
+        (false, false, true) => PresentedClientAuthMethod::ClientSecretPost,
+        (false, false, false) => PresentedClientAuthMethod::None,
+        _ => return Err(OidcError::InvalidClient),
+    };
+
     // Extract client_secret_basic from Authorization header if present
     if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION) {
         if let Ok(auth_str) = auth_header.to_str() {
@@ -39,6 +64,12 @@ pub async fn token_handler(
                 if let Ok(decoded) = STANDARD.decode(credentials) {
                     if let Ok(cred_str) = String::from_utf8(decoded) {
                         if let Some((client_id, client_secret)) = cred_str.split_once(':') {
+                            if params
+                                .get("client_id")
+                                .is_some_and(|provided| provided != client_id)
+                            {
+                                return Err(OidcError::InvalidClient);
+                            }
                             params
                                 .entry("client_id".to_string())
                                 .or_insert_with(|| client_id.to_string());
@@ -58,7 +89,7 @@ pub async fn token_handler(
         .as_str();
 
     // ── Client authentication ──────────────────────────────────────────
-    let (client, client_id) = authenticate_client(&state, &params).await?;
+    let (client, client_id) = authenticate_client(&state, &params, presented_auth_method).await?;
 
     // Check grant type is allowed
     if !client.allowed_grant_types.contains(&grant_type.to_string()) {
@@ -103,19 +134,14 @@ pub async fn token_handler(
             .await?
         }
         "client_credentials" => {
-            let client_secret = params
-                .get("client_secret")
-                .ok_or(OidcError::InvalidClient)?;
-
-            ClientCredentialsFlow::execute(&state, &client_id, client_secret, dpop_jkt.as_deref())
-                .await?
+            ClientCredentialsFlow::execute(&state, &client, dpop_jkt.as_deref()).await?
         }
         "refresh_token" => {
             let refresh_token = params
                 .get("refresh_token")
                 .ok_or(OidcError::InvalidRequest)?;
 
-            RefreshTokenFlow::execute(&state, refresh_token, dpop_jkt.as_deref()).await?
+            RefreshTokenFlow::execute(&state, refresh_token, client.id, dpop_jkt.as_deref()).await?
         }
         "urn:ietf:params:oauth:grant-type:device_code" => {
             let device_code = params.get("device_code").ok_or(OidcError::InvalidRequest)?;
@@ -178,8 +204,12 @@ pub async fn token_handler(
 async fn authenticate_client(
     state: &OidcState,
     params: &HashMap<String, String>,
+    presented_auth_method: PresentedClientAuthMethod,
 ) -> Result<(oidc_core::models::Client, String), OidcError> {
     if let Some(assertion) = params.get("client_assertion") {
+        if presented_auth_method != PresentedClientAuthMethod::ClientAssertion {
+            return Err(OidcError::InvalidClient);
+        }
         let assertion_type = params
             .get("client_assertion_type")
             .ok_or(OidcError::InvalidClient)?;
@@ -188,6 +218,11 @@ async fn authenticate_client(
         }
 
         let (_, claims, _, _) = JwtTokenService::parse_client_assertion_unverified(assertion)?;
+        if let Some(provided_client_id) = params.get("client_id") {
+            if provided_client_id != &claims.iss {
+                return Err(OidcError::InvalidClient);
+            }
+        }
         let client_id = claims.iss;
 
         let mut conn = state.connect().await?;
@@ -267,12 +302,49 @@ async fn authenticate_client(
         return Err(OidcError::InvalidClient);
     }
 
-    if let Some(client_secret) = params.get("client_secret") {
-        if let Some(ref hash) = client.client_secret_hash {
+    match client.token_endpoint_auth_method.as_str() {
+        "none" => {
+            if presented_auth_method != PresentedClientAuthMethod::None
+                || matches!(client.client_type, ClientType::Confidential)
+            {
+                return Err(OidcError::InvalidClient);
+            }
+        }
+        "client_secret_basic" => {
+            if presented_auth_method != PresentedClientAuthMethod::ClientSecretBasic {
+                return Err(OidcError::InvalidClient);
+            }
+            let client_secret = params
+                .get("client_secret")
+                .ok_or(OidcError::InvalidClient)?;
+            let hash = client
+                .client_secret_hash
+                .as_ref()
+                .ok_or(OidcError::InvalidClient)?;
             if !state.hasher.verify(client_secret, hash)? {
                 return Err(OidcError::InvalidClient);
             }
         }
+        "client_secret_post" => {
+            if presented_auth_method != PresentedClientAuthMethod::ClientSecretPost {
+                return Err(OidcError::InvalidClient);
+            }
+            let client_secret = params
+                .get("client_secret")
+                .ok_or(OidcError::InvalidClient)?;
+            let hash = client
+                .client_secret_hash
+                .as_ref()
+                .ok_or(OidcError::InvalidClient)?;
+            if !state.hasher.verify(client_secret, hash)? {
+                return Err(OidcError::InvalidClient);
+            }
+        }
+        "private_key_jwt" | "client_secret_jwt" => {
+            // These methods must authenticate through the client_assertion path above.
+            return Err(OidcError::InvalidClient);
+        }
+        _ => return Err(OidcError::InvalidClient),
     }
 
     Ok((client, client_id))

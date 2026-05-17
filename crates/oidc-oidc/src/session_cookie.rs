@@ -25,8 +25,8 @@ type HmacSha256 = Hmac<Sha256>;
 /// attacker from forging or tampering with the session ID.
 pub fn create_session_cookie_value(session_id: &str, encryption_key: &[u8]) -> String {
     // HMAC-SHA256 accepts keys of any size, so this never fails.
-    let mut mac = HmacSha256::new_from_slice(encryption_key)
-        .expect("HMAC-SHA256 accepts keys of any size");
+    let mut mac =
+        HmacSha256::new_from_slice(encryption_key).expect("HMAC-SHA256 accepts keys of any size");
     mac.update(session_id.as_bytes());
     let result = mac.finalize();
     let hmac_hex = hex::encode(result.into_bytes());
@@ -47,8 +47,8 @@ pub fn verify_session_cookie_value(cookie_value: &str, encryption_key: &[u8]) ->
     let provided_hmac = parts[1];
 
     // HMAC-SHA256 accepts keys of any size, so this never fails.
-    let mut mac = HmacSha256::new_from_slice(encryption_key)
-        .expect("HMAC-SHA256 accepts keys of any size");
+    let mut mac =
+        HmacSha256::new_from_slice(encryption_key).expect("HMAC-SHA256 accepts keys of any size");
     mac.update(session_id.as_bytes());
     let expected = mac.finalize();
     let expected_hex = hex::encode(expected.into_bytes());
