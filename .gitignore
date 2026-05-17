@@ -13,3 +13,4 @@ front/admin/dist/
 *.dump
 *.pem
 *.key
+test-results/

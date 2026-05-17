@@ -4,7 +4,7 @@
  */
 
 const DEFAULT_EMAIL = 'admin@example.com';
-const DEFAULT_PASSWORD = 'admin123';
+const DEFAULT_PASSWORD = 'Admin123';
 
 /**
  * Perform login via the password form on /login.

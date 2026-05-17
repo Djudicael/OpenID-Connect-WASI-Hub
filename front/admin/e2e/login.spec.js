@@ -31,14 +31,14 @@ test.describe('Login page', () => {
 
   test('redirects to dashboard on successful login', async ({ page }) => {
     await page.locator('#email').fill('admin@example.com');
-    await page.locator('#password').fill('admin123');
+    await page.locator('#password').fill('Admin123');
     await page.locator('button[type="submit"]').click();
 
     // Should redirect to /
     await expect(page).toHaveURL('/', { timeout: 10000 });
 
     // Dashboard heading should be visible (rendered by c-page-layout with title="Dashboard")
-    const dashboardHeading = page.locator('text=Dashboard');
+    const dashboardHeading = page.getByRole('heading', { name: 'Dashboard' });
     await expect(dashboardHeading).toBeVisible();
   });
 

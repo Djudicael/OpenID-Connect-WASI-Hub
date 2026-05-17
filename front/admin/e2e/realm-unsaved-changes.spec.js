@@ -46,6 +46,6 @@ test.describe('Realm unsaved changes', () => {
     await expect.poll(() => acceptedMessage).toContain('unsaved changes');
     await expect(page).toHaveURL('/realms', { timeout: 10000 });
     await expect(page.locator('text=Create Realm')).not.toBeVisible();
-    await expect(page.locator('text=master')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('cell', { name: 'master', exact: true })).toBeVisible({ timeout: 10000 });
   });
 });

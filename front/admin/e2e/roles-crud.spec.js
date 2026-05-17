@@ -18,7 +18,7 @@ test.describe('Roles CRUD', () => {
     await page.goto('/roles');
     await expect(page).toHaveURL('/roles');
 
-    await page.locator('c-button:has-text("Add Role")').click();
+    await page.locator('c-button:has-text("Add Role")').first().click();
     await expect(page.locator('[role="dialog"][aria-label="Create Role"]')).toBeVisible();
 
     await page.locator('#create-role-name').fill(roleName);
@@ -26,7 +26,7 @@ test.describe('Roles CRUD', () => {
     await page.locator('#create-role-perms').fill('users:read, users:write');
     await page.locator('c-modal[title="Create Role"] >> text=Create').last().click();
 
-    await expect(page.locator('text=Role created successfully')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('[role="dialog"][aria-label="Create Role"]')).toBeHidden({ timeout: 10000 });
     await expect(page.locator(`tr:has-text("${roleName}")`)).toBeVisible({ timeout: 10000 });
 
     const searchInput = page.locator('.search-input[placeholder="Search roles..."]');

@@ -72,14 +72,14 @@ test.describe('Admin authz and accessibility', () => {
 
     await page.locator('.sidebar-nav >> text=Roles').click();
     await expect(page).toHaveURL('/roles');
-    await expect(page.locator('text=Roles')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Roles' })).toBeVisible();
 
     await expect.poll(async () => {
       const focus = await getFocusState(page);
       return focus.isPageFocusTarget;
     }).toBe(true);
 
-    await page.locator('c-button:has-text("Add Role")').click();
+    await page.locator('c-button:has-text("Add Role")').first().click();
 
     const dialog = page.locator('[role="dialog"][aria-label="Create Role"]');
     await expect(dialog).toBeVisible();
