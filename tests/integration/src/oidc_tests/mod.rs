@@ -7,6 +7,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 
 use crate::helpers::app::TestApp;
 use crate::helpers::fixtures;
@@ -70,6 +71,76 @@ fn decode_jwt_payload(token: &str) -> Value {
         .unwrap_or_else(|e| panic!("failed to base64url-decode JWT payload: {e}"));
     serde_json::from_slice(&payload_bytes)
         .unwrap_or_else(|e| panic!("failed to parse JWT payload as JSON: {e}"))
+}
+
+struct MockBackchannelRp {
+    base_url: String,
+    receiver: tokio::sync::mpsc::UnboundedReceiver<HashMap<String, String>>,
+    shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
+    server_handle: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl MockBackchannelRp {
+    async fn start() -> Self {
+        async fn handle_logout(
+            axum::extract::State(sender): axum::extract::State<
+                tokio::sync::mpsc::UnboundedSender<HashMap<String, String>>,
+            >,
+            axum::extract::Form(form): axum::extract::Form<HashMap<String, String>>,
+        ) -> axum::http::StatusCode {
+            let _ = sender.send(form);
+            axum::http::StatusCode::NO_CONTENT
+        }
+
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let app = axum::Router::new()
+            .route("/backchannel-logout", axum::routing::post(handle_logout))
+            .with_state(tx);
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("mock backchannel listener should bind");
+        let port = listener
+            .local_addr()
+            .expect("mock backchannel addr should exist")
+            .port();
+        let base_url = format!("http://127.0.0.1:{port}");
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let server_handle = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async {
+                    let _ = shutdown_rx.await;
+                })
+                .await
+                .expect("mock backchannel server should run");
+        });
+
+        Self {
+            base_url,
+            receiver: rx,
+            shutdown_tx: Some(shutdown_tx),
+            server_handle: Some(server_handle),
+        }
+    }
+
+    async fn recv_logout_form(&mut self) -> HashMap<String, String> {
+        tokio::time::timeout(std::time::Duration::from_secs(5), self.receiver.recv())
+            .await
+            .expect("timed out waiting for backchannel logout request")
+            .expect("backchannel logout channel closed unexpectedly")
+    }
+}
+
+impl Drop for MockBackchannelRp {
+    fn drop(&mut self) {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+        if let Some(handle) = self.server_handle.take() {
+            handle.abort();
+        }
+    }
 }
 
 /// Login via the direct password grant and return the full response body.
@@ -1271,6 +1342,110 @@ async fn test_logout_frontchannel_page_allows_rp_iframes_and_preserves_redirect_
     assert!(body.contains("sid="));
     assert!(body.contains(post_logout_uri));
     assert!(body.contains(state));
+}
+
+#[tokio::test]
+async fn test_logout_backchannel_sends_logout_token_and_redirects() {
+    let app = TestApp::new().await;
+    let mut mock_rp = MockBackchannelRp::start().await;
+    let post_logout_uri = "https://app.example.com/logged-out";
+    let state = "backchannel-state-123";
+
+    app.seed_public_client("backchannel-client", &["https://app.example.com/callback"])
+        .await;
+    {
+        let mut conn = app.db_conn().await;
+        conn.execute_params(
+            "UPDATE clients SET backchannel_logout_uri = $1, backchannel_logout_session_required = TRUE, post_logout_redirect_uris = $2 WHERE client_id = $3",
+            &[
+                &format!("{}/backchannel-logout", mock_rp.base_url),
+                &serde_json::json!([post_logout_uri]),
+                &"backchannel-client",
+            ],
+        )
+        .await
+        .expect("failed to update client backchannel logout settings");
+        let _ = conn.close().await;
+    }
+
+    let login_resp = app
+        .client()
+        .post(&format!("{}/oidc/login", app.url()))
+        .json(&json!({
+            "email": fixtures::TEST_USER_EMAIL,
+            "password": fixtures::TEST_USER_PASSWORD,
+            "client_id": "backchannel-client",
+        }))
+        .send()
+        .await
+        .expect("login request failed");
+    assert_eq!(login_resp.status(), StatusCode::OK);
+    let login_body: Value = login_resp
+        .json()
+        .await
+        .expect("login response should be JSON");
+    let id_token = login_body["id_token"]
+        .as_str()
+        .expect("id_token must be present")
+        .to_string();
+
+    let resp = app
+        .client()
+        .get(&format!(
+            "{}/oidc/logout?id_token_hint={}&client_id={}&post_logout_redirect_uri={}&state={}",
+            app.url(),
+            urlencoding::encode(&id_token),
+            urlencoding::encode("backchannel-client"),
+            urlencoding::encode(post_logout_uri),
+            urlencoding::encode(state),
+        ))
+        .send()
+        .await
+        .expect("logout request failed");
+
+    assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
+    let location = resp
+        .headers()
+        .get("location")
+        .expect("redirect must have Location header")
+        .to_str()
+        .expect("Location must be valid UTF-8");
+    assert!(location.starts_with(post_logout_uri));
+    assert!(location.contains(&format!("state={}", urlencoding::encode(state))));
+
+    let form = mock_rp.recv_logout_form().await;
+    let logout_token = form
+        .get("logout_token")
+        .expect("logout_token form field must be present");
+    let claims = decode_jwt_payload(logout_token);
+
+    let issuer = claims["iss"]
+        .as_str()
+        .expect("logout token issuer claim must be present");
+    assert!(
+        issuer.ends_with(&format!(
+            ":{}",
+            app.url().rsplit(':').next().unwrap_or_default()
+        )),
+        "logout token issuer should target the test server, got: {issuer}"
+    );
+    assert_eq!(claims["aud"], "backchannel-client");
+    assert_eq!(claims["sub"], login_body["user"]["id"]);
+    assert!(
+        claims["jti"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
+    assert!(claims["iat"].as_i64().is_some());
+    assert_eq!(
+        claims["events"]["http://schemas.openid.net/event/backchannel-logout"],
+        json!({})
+    );
+    assert!(
+        claims["sid"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty())
+    );
 }
 
 #[tokio::test]
