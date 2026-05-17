@@ -1,6 +1,11 @@
 //! Application state shared across all request handlers.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use uuid::Uuid;
+
+type RealmTokenServiceCache = Arc<Mutex<HashMap<Uuid, Arc<oidc_oidc::tokens::JwtTokenService>>>>;
 
 /// Shared application state.
 #[derive(Clone)]
@@ -15,6 +20,8 @@ pub struct AppState {
     pub email_sender: Arc<dyn oidc_core::traits::EmailSender>,
     /// Database configuration for per-request connections.
     pub db_config: wasi_pg_client::Config,
+    /// Shared per-realm token-service cache reused across request-scoped `OidcState` clones.
+    pub oidc_realm_token_services: RealmTokenServiceCache,
 }
 
 /// Runtime configuration.
@@ -72,6 +79,7 @@ impl AppState {
             hasher,
             email_sender,
             db_config,
+            oidc_realm_token_services: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -123,10 +131,53 @@ impl AppState {
             email_sender: self.email_sender.clone(),
             db_config: self.db_config.clone(),
             encryption_key: self.config.encryption_key.clone(),
-            realm_token_services: std::sync::Arc::new(std::sync::Mutex::new(
-                std::collections::HashMap::new(),
-            )),
+            realm_token_services: self.oidc_realm_token_services.clone(),
             pairwise_salt: self.config.pairwise_salt.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn oidc_state_reuses_realm_token_service_cache_across_requests() {
+        let realm_keys = oidc_oidc::tokens::keygen::generate_realm_keys(Uuid::new_v4())
+            .expect("test signing key generation should succeed");
+        let state = AppState::from_config(AppConfig {
+            database_url: "postgresql://localhost/oidc_hub?sslmode=prefer".to_string(),
+            bind_address: "127.0.0.1".to_string(),
+            port: 8080,
+            issuer: "http://localhost:8080".to_string(),
+            encryption_key: "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+                .to_string(),
+            pairwise_salt: "test-pairwise-salt".to_string(),
+            signing_key: Some(realm_keys.rsa_private_pem.clone()),
+            ed25519_key: Some(realm_keys.ed25519_private_pem.clone()),
+        });
+
+        let oidc_state_a = state.oidc_state();
+        let oidc_state_b = state.oidc_state();
+
+        assert!(Arc::ptr_eq(
+            &oidc_state_a.realm_token_services,
+            &oidc_state_b.realm_token_services,
+        ));
+
+        let realm_id = Uuid::new_v4();
+        oidc_state_a
+            .realm_token_services
+            .lock()
+            .expect("cache lock should succeed")
+            .insert(realm_id, state.token_service.clone());
+
+        assert!(
+            oidc_state_b
+                .realm_token_services
+                .lock()
+                .expect("cache lock should succeed")
+                .contains_key(&realm_id)
+        );
     }
 }

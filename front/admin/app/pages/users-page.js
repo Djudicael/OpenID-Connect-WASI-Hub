@@ -129,7 +129,7 @@ class UsersPage extends BaseComponent {
   }
 
   async _deleteUser(id) {
-    const confirmed = await cModal.confirm('Are you sure you want to delete this user?', 'Delete User');
+    const confirmed = await ConfirmDialog.confirm('Are you sure you want to delete this user?', 'Delete User');
     if (!confirmed) return;
     try {
       await deleteUser(id);

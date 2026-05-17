@@ -31,8 +31,7 @@ class RealmDetailPage extends BaseComponent {
     }
   }
 
-  get _isDirty() {
-    const { realm, savedRealm } = this._state;
+  _computeDirty(realm, savedRealm = this._state.savedRealm) {
     if (!realm || !savedRealm) return false;
     const themeDirty = this._themeFields.some(
       (k) => this._getThemeValue(realm, k) !== this._getThemeValue(savedRealm, k)
@@ -43,6 +42,10 @@ class RealmDetailPage extends BaseComponent {
       realm.enabled !== savedRealm.enabled ||
       themeDirty
     );
+  }
+
+  get _isDirty() {
+    return this._computeDirty(this._state.realm, this._state.savedRealm);
   }
 
   _getThemeValue(realm, key) {
@@ -57,7 +60,8 @@ class RealmDetailPage extends BaseComponent {
       if (!realm.config) realm.config = {};
       if (!realm.config.theme) realm.config.theme = {};
       this.setState({ realm, savedRealm: JSON.parse(JSON.stringify(realm)), loading: false, dirty: false });
-    } catch (err) { if (err.name === "AbortError") return;
+    } catch (err) {
+      if (err.name === "AbortError") return;
       showToast('Failed to load realm', 'error');
       this.setState({ loading: false });
     }
@@ -76,7 +80,8 @@ class RealmDetailPage extends BaseComponent {
       });
       showToast('Realm updated', 'success');
       this.setState({ saving: false, savedRealm: JSON.parse(JSON.stringify(realm)), dirty: false });
-    } catch (err) { if (err.name === "AbortError") return;
+    } catch (err) {
+      if (err.name === "AbortError") return;
       showToast('Failed to update realm', 'error');
       this.setState({ saving: false });
     }
@@ -84,8 +89,7 @@ class RealmDetailPage extends BaseComponent {
 
   _updateField(field, value) {
     const realm = { ...this._state.realm, [field]: value };
-    const savedRealm = this._state.savedRealm;
-    const dirty = this._isDirty;
+    const dirty = this._computeDirty(realm);
     this.setState({ realm, dirty });
   }
 
@@ -93,7 +97,8 @@ class RealmDetailPage extends BaseComponent {
     const realm = { ...this._state.realm };
     realm.config = { ...realm.config };
     realm.config.theme = { ...realm.config.theme, [key]: value };
-    this.setState({ realm, dirty: true });
+    const dirty = this._computeDirty(realm);
+    this.setState({ realm, dirty });
   }
 
   _navigateAway(path) {

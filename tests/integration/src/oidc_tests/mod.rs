@@ -92,18 +92,9 @@ async fn login(app: &TestApp) -> Value {
         StatusCode::OK,
         "login should succeed, got {status}: {body}"
     );
-    // Parse as JSON (re-request since body was consumed)
-    let resp = app
-        .client()
-        .post(&format!("{}/oidc/login", app.url()))
-        .json(&json!({
-            "email": fixtures::TEST_USER_EMAIL,
-            "password": fixtures::TEST_USER_PASSWORD,
-        }))
-        .send()
-        .await
-        .expect("login request failed");
-    resp.json().await.expect("login response should be JSON")
+
+    serde_json::from_str(&body)
+        .unwrap_or_else(|e| panic!("login response should be valid JSON: {e}; body={body}"))
 }
 
 // ===================================================================
