@@ -2,6 +2,12 @@
 
 Target deployment directory: `D:\dev\Wasm-Cloud-Platform`
 
+This plan now reflects the current deployment posture more explicitly:
+
+- the recommended browser-facing deployment is **same-origin via a reverse proxy/gateway**
+- built-in app rate limiting is only a **per-instance safety net** unless a shared upstream gateway is the real source of truth
+- forwarded/proxy headers must be trusted only behind a proxy that strips and rewrites them
+
 ---
 
 ## 1. Deployment Architecture
@@ -10,8 +16,8 @@ Target deployment directory: `D:\dev\Wasm-Cloud-Platform`
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                           Proxy API Gateway                              │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────────┐ │
-│  │   TLS       │  │   Rate      │  │  API Key    │  │   Route to      │ │
-│  │ Termination │  │   Limit     │  │  Validation │  │   WASM Host     │ │
+│  │   TLS       │  │ Shared /    │  │  API Key    │  │   Route to      │ │
+│  │ Termination │  │ Gateway     │  │  Validation │  │   WASM Host     │ │
 │  │  (443)      │  │   (Token)   │  │   (Edge)    │  │   (8080)        │ │
 │  └─────────────┘  └─────────────┘  └─────────────┘  └─────────────────┘ │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -103,33 +109,25 @@ $env:OIDC_DATABASE_URL = "postgresql://oidc:secret@localhost:5432/oidc_hub"
 # Server
 $env:OIDC_SERVER_BIND_ADDRESS = "0.0.0.0"
 $env:OIDC_SERVER_PORT = "8080"
+$env:OIDC_ISSUER = "https://auth.example.com"
 
-# Security
+# Security / deterministic key material
 $env:OIDC_ENCRYPTION_KEY = "64-hex-characters"
-$env:OIDC_SIGNING_KEY_PEM = "-----BEGIN PRIVATE KEY-----..."
+$env:OIDC_SIGNING_KEY = "-----BEGIN RSA PRIVATE KEY-----..."
+$env:OIDC_ED25519_KEY = "-----BEGIN PRIVATE KEY-----..."
 
-# Features
-$env:OIDC_LOG_LEVEL = "info"
+# Proxy / deployment posture
+$env:OIDC_RATE_LIMIT_MODE = "proxy"   # recommended when gateway/CDN enforces shared limits
+$env:OIDC_TRUST_PROXY_HEADERS = "true" # only behind a trusted proxy that strips + rewrites them
+$env:OIDC_CORS_ORIGINS = ""            # keep empty for same-origin browser deployment
 ```
 
-### Config File (`config/oidc.toml`)
-```toml
-[server]
-bind_address = "0.0.0.0"
-port = 8080
+### Deployment posture notes
 
-[database]
-url = "postgresql://oidc:secret@localhost:5432/oidc_hub"
-max_connections = 5
-
-[security]
-encryption_key = "${OIDC_ENCRYPTION_KEY}"
-signing_key_pem = "${OIDC_SIGNING_KEY_PEM}"
-
-[logging]
-format = "json"
-level = "info"
-```
+- **Recommended browser posture:** one browser origin, with the proxy/gateway serving or fronting the admin UI and forwarding `/api`, `/oidc`, `/.well-known`, `/health`, and `/realms/*` to the backend.
+- **Separate-origin frontend/API hosting is not the primary tested posture**. If you choose it, you must explicitly review CORS, CSP `connect-src`, CSRF/cookie behavior, and frontend auth authority configuration.
+- **Gateway/CDN rate limiting should be the real production control** for multi-instance/WASM deployments. The app-local limiter is only a per-instance safety net.
+- **Forwarded headers are ignored by default**. Only enable `OIDC_TRUST_PROXY_HEADERS=true` when direct app access is blocked and the first-hop proxy strips and rebuilds forwarding headers.
 
 ---
 
@@ -154,8 +152,8 @@ wasmtime run `
   --env OIDC_DATABASE_URL=$env:OIDC_DATABASE_URL `
   --env OIDC_SERVER_PORT=$env:OIDC_SERVER_PORT `
   --env OIDC_ENCRYPTION_KEY=$env:OIDC_ENCRYPTION_KEY `
-  --env OIDC_SIGNING_KEY_PEM=$env:OIDC_SIGNING_KEY_PEM `
-  --listenfd `
+  --env OIDC_SIGNING_KEY=$env:OIDC_SIGNING_KEY `
+  --env OIDC_ED25519_KEY=$env:OIDC_ED25519_KEY `
   $wasmPath
 ```
 
@@ -163,7 +161,18 @@ wasmtime run `
 ```powershell
 wasmtime serve `
   --addr 127.0.0.1:8080 `
-  --wasi inherit-env `
+  -S cli=y `
+  -S inherit-env=y `
+  -S inherit-network=y `
+  -S tcp=y `
+  -S allow-ip-name-lookup=y `
+  --env OIDC_DATABASE_URL=$env:OIDC_DATABASE_URL `
+  --env OIDC_ISSUER=$env:OIDC_ISSUER `
+  --env OIDC_ENCRYPTION_KEY=$env:OIDC_ENCRYPTION_KEY `
+  --env OIDC_SIGNING_KEY=$env:OIDC_SIGNING_KEY `
+  --env OIDC_ED25519_KEY=$env:OIDC_ED25519_KEY `
+  --env OIDC_RATE_LIMIT_MODE=$env:OIDC_RATE_LIMIT_MODE `
+  --env OIDC_TRUST_PROXY_HEADERS=$env:OIDC_TRUST_PROXY_HEADERS `
   $wasmPath
 ```
 
@@ -190,7 +199,10 @@ server {
     add_header X-Content-Type-Options "nosniff" always;
     add_header Strict-Transport-Security "max-age=31536000" always;
 
-    # Rate limiting
+    # Shared / upstream production rate limiting
+    # The gateway is the production source of truth. Run the app with:
+    #   OIDC_RATE_LIMIT_MODE=proxy
+    # so the in-app limiter does not act as a conflicting per-instance policy.
     limit_req_zone $binary_remote_addr zone=oidc:10m rate=10r/s;
     limit_req zone=oidc burst=20 nodelay;
 
@@ -208,6 +220,7 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Forwarded "for=$remote_addr;proto=$scheme;host=$host";
         proxy_read_timeout 30s;
     }
 
@@ -277,14 +290,23 @@ services:
     command: >
       serve
       --addr 0.0.0.0:8080
-      --wasi inherit-network
-      --wasi inherit-env
+      -S cli=y
+      -S inherit-env=y
+      -S inherit-network=y
+      -S tcp=y
+      -S allow-ip-name-lookup=y
       /wasm/openid_connect_wasi.wasm
     volumes:
       - ./oidc-hub/wasm:/wasm:ro
     environment:
       OIDC_DATABASE_URL: postgresql://oidc:${PG_PASSWORD}@postgres:5432/oidc_hub
       OIDC_SERVER_PORT: "8080"
+      OIDC_ISSUER: https://auth.example.com
+      OIDC_ENCRYPTION_KEY: ${OIDC_ENCRYPTION_KEY}
+      OIDC_SIGNING_KEY: ${OIDC_SIGNING_KEY}
+      OIDC_ED25519_KEY: ${OIDC_ED25519_KEY}
+      OIDC_RATE_LIMIT_MODE: proxy
+      OIDC_TRUST_PROXY_HEADERS: "true"
     depends_on:
       postgres:
         condition: service_healthy
@@ -365,8 +387,9 @@ pg_restore -h localhost -U oidc -d oidc_hub D:\Backups\oidc_hub_2025-05-07.dump
 - [ ] Discovery document available at `/.well-known/openid-configuration`
 - [ ] Admin UI served at `/admin/`
 - [ ] TLS configured on proxy gateway
-- [ ] Rate limiting active
-- [ ] Security headers present (`X-Frame-Options`, `HSTS`)
+- [ ] Shared/gateway rate limiting active and app configured with `OIDC_RATE_LIMIT_MODE=proxy` (or an intentional alternative is documented)
+- [ ] Proxy header trust reviewed (`OIDC_TRUST_PROXY_HEADERS=true` only behind sanitized trusted proxy)
+- [ ] Security headers present (`X-Frame-Options`, `HSTS`, CSP same-origin posture)
 - [ ] Logging outputs structured JSON
 - [ ] Database backups scheduled and tested
 - [ ] Rollback procedure documented and tested

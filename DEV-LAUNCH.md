@@ -5,7 +5,7 @@ The project provides **two** development orchestrators:
 | Crate | Runtime | Use Case |
 |-------|---------|----------|
 | `oidc-dev` | Native (`cargo run`) | Full stack with frontend dev server + proxy |
-| `oidc-wasm-dev` | WASM (`wasmtime serve`) | Test the exact WASM artifact that deploys to production |
+| `oidc-wasm-dev` | WASM (`wasmtime serve`) | Test the closest local approximation of the recommended same-origin proxy deployment |
 
 Both handle PostgreSQL container lifecycle, migrations, and seed data automatically.
 
@@ -71,7 +71,7 @@ The proxy eliminates CORS issues by serving both frontend and backend from the s
 
 ## Option B: `oidc-wasm-dev` (WASI Preview 2 + JAMstack)
 
-Best for testing the **exact production deployment**: WASM backend + pre-built static frontend served by a proxy. This mimics how you would deploy with a CDN (static files) + edge runtime (WASM).
+Best for testing the **recommended same-origin proxy deployment posture**: WASM backend + pre-built static frontend served by a proxy. This is production-like for the browser model the project currently tests most heavily.
 
 ```bash
 cd openid_connect_wasi
@@ -135,6 +135,12 @@ Production CDN (static files)          Edge Runtime (WASM)
 ```
 
 The proxy in `oidc-wasm-dev` acts like a CDN edge node: static files are served directly, API calls are forwarded to the WASM backend.
+
+Important posture note:
+
+- this is the recommended and most-tested browser deployment shape today: one browser origin fronting both the admin UI and backend routes
+- separate-origin frontend/API hosting is possible only with additional configuration and explicit browser-flow testing; it is not the primary tested posture today
+- production abuse controls should still live at the gateway/CDN layer; the app-local limiter is only a per-instance safety net unless you intentionally rely on it
 
 ---
 

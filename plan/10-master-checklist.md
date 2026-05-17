@@ -1,6 +1,6 @@
 # Master Implementation Checklist
 
-Complete checklist for building the production-grade OpenID Connect WASI Hub. Each item includes the validation test that proves it is done.
+Complete checklist for building and hardening the OpenID Connect WASI Hub. Each item includes the validation test that proves it is done.
 
 **Last updated**: 2026-05-10 (Phase 9 — transactions, auth, validation, PKCE)
 
@@ -57,7 +57,7 @@ All 6 items done.
 - 8.7: JWT `alg:none` rejected ✅
 - 8.8: Session cookies (HttpOnly, Secure, SameSite=Lax, HMAC-protected) ✅
 - 8.9: Security headers present ✅
-- 8.10: Rate limiting active ✅
+- 8.10: Rate limiting baseline present ✅ (local app limiter; shared upstream production enforcement still deployment-dependent)
 - 8.11: Secrets not logged ✅
 - 8.12: ZAP baseline scan tooling ✅ (security/zap-baseline.sh, zap-config.conf, zap-baseline.yaml)
 - 8.13: `cargo audit` / `cargo deny` in CI ✅
@@ -71,7 +71,7 @@ All 6 items done.
 ### Phase 10: Deployment — ⚠️ PARTIAL
 - 10.1–10.7: Done (WASM artifact, frontend build, PostgreSQL, migrations, env vars, wasmtime, health) ✅
 - 10.8: TLS handled by proxy gateway ✅ (not in WASM)
-- 10.9: Rate limiting active ✅
+- 10.9: Rate limiting posture defined ✅ (gateway/shared enforcement recommended; app-local limiter available as safety net)
 - 10.10: Security headers present ✅
 - 10.11: JSON logging ✅
 - 10.12: DB backup — `scripts/backup-db.sh` with rotation and verification ✅

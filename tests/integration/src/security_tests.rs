@@ -711,6 +711,10 @@ async fn test_security_headers_present_on_health_response() {
         .and_then(|v| v.to_str().ok())
         .expect("content-security-policy must be present");
     assert!(csp.contains("default-src 'self'"));
+    assert!(csp.contains("connect-src 'self'"));
+    assert!(csp.contains("object-src 'none'"));
+    assert!(csp.contains("base-uri 'self'"));
+    assert!(csp.contains("form-action 'self'"));
     assert!(csp.contains("frame-ancestors 'none'"));
 
     let hsts = headers
@@ -812,6 +816,9 @@ async fn test_rate_limiting_on_login() {
     let mut rate_limited_count = 0usize;
     let total_requests = 110;
 
+    let mut saw_local_mode_header = false;
+    let mut saw_retry_after_on_429 = false;
+
     for i in 0..total_requests {
         let resp = app
             .client()
@@ -824,15 +831,41 @@ async fn test_rate_limiting_on_login() {
             .await
             .expect("login request failed");
 
+        if resp
+            .headers()
+            .get("x-oidc-rate-limit-mode")
+            .and_then(|v| v.to_str().ok())
+            == Some("local")
+        {
+            saw_local_mode_header = true;
+        }
+
         if resp.status() == StatusCode::TOO_MANY_REQUESTS {
             rate_limited_count += 1;
+            if resp
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                == Some("60")
+            {
+                saw_retry_after_on_429 = true;
+            }
         }
     }
+
+    assert!(
+        saw_local_mode_header,
+        "default in-process rate limiting should advertise x-oidc-rate-limit-mode=local"
+    );
 
     assert!(
         rate_limited_count > 0,
         "at least one request should be rate-limited (429) after {total_requests} rapid requests, \
          but none were"
+    );
+    assert!(
+        saw_retry_after_on_429,
+        "429 responses should include Retry-After matching the local rate-limit window"
     );
 }
 

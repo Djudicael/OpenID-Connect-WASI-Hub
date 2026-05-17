@@ -58,7 +58,9 @@ The entire frontend runs on:
 
 That's it. Two runtime dependencies. The entire bundle builds through `esbuild` in milliseconds. There is no framework to upgrade, no breaking API to migrate, no node_modules black hole. Your browser already ships the Web Components runtime — I just use it directly.
 
-This also means the admin UI is deployable as a **JAMstack architecture**: a static HTML page, a small JavaScript bundle, and a few CSS files. Serve it from a CDN, an S3 bucket, or the same binary as the API — it doesn't care. The frontend talks to the backend exclusively through the OIDC and admin REST APIs, so they are completely decoupled. You can host them on different domains, version them independently, or replace the UI entirely without touching a line of backend code.
+This also means the admin UI is deployable as a **JAMstack architecture**: a static HTML page, a small JavaScript bundle, and a few CSS files. Serve it from a CDN, an S3 bucket, or behind the same reverse proxy as the API — it doesn't require a heavyweight app server.
+
+In practice, the current browser-facing deployment posture is **same-origin first**: the admin UI is most heavily tested when one browser origin fronts both the static UI and the `/api`, `/oidc`, `/.well-known`, and `/realms/*` backend routes. The frontend talks to the backend exclusively through the OIDC and admin REST APIs, so it remains architecturally decoupled, but separate-origin hosting still requires explicit CORS/CSP/auth/CSRF review rather than being treated as a zero-config default. You can still replace the UI entirely without touching a line of backend code.
 
 The goal was simple: a frontend that will still build and work the same way in five years, with zero maintenance churn.
 
@@ -69,6 +71,6 @@ This project exists because:
 1. Infrastructure costs are not going down, and WASI is the most credible path to reducing them without sacrificing capability.
 2. No existing OpenID provider works under WASI without massive, invasive modifications.
 3. Building WASI-first from scratch produced a cleaner, more portable architecture than retrofitting would have.
-4. The WASI ecosystem needs more practical, production-grade examples — not just "hello world" demos — to prove the model works.
+4. The WASI ecosystem needs more practical, production-oriented examples — not just "hello world" demos — to prove the model works.
 
 If you are reading this and thinking about building for WASI: it is harder today, but the constraints force better design. And once you ship, you can deploy anywhere.

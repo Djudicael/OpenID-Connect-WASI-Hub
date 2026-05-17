@@ -1,13 +1,13 @@
 # OpenID Connect WASI Hub
 
-A production-grade, multi-tenant OpenID Connect / OAuth2 identity provider built in Rust with first-class **WASI Preview 2** support.
+A multi-tenant OpenID Connect / OAuth2 identity provider built in Rust with first-class **WASI Preview 2** support and an explicit focus on production hardening.
 
 ## Features
 
 - **OIDC Core** — Authorization Code + PKCE, Client Credentials, Refresh Token, ID Tokens (RS256 / EdDSA)
 - **Multi-Tenancy** — Per-realm users, clients, sessions, scopes, and branded login pages
 - **WASI Preview 2** — Runs as a WASM component via `wasmtime serve` with no filesystem access
-- **Admin Console** — Native Web Components management UI (no React/Vue/Angular)
+- **Admin Console** — Native Web Components management UI (no React/Vue/Angular), primarily tested behind a same-origin proxy deployment
 - **Security** — Argon2id password hashing, HMAC-protected session cookies, brute-force protection, CSRF tokens
 - **PostgreSQL** — All state persisted in PostgreSQL via `wasi-pg-client`
 
@@ -85,7 +85,11 @@ cargo build --release -p openid-connect-wasi --target wasm32-wasip2
 | `OIDC_SERVER_PORT` | `8080` | HTTP server port |
 | `OIDC_ISSUER` | `http://localhost:8080` | Base URL for OIDC issuer |
 | `OIDC_ENCRYPTION_KEY` | *(required)* | 64 hex chars / 32-byte key for session cookie HMAC and JWE encryption |
-| `OIDC_CORS_ORIGINS` | *(none)* | Comma-separated allowed CORS origins |
+| `OIDC_CORS_ORIGINS` | *(none)* | Comma-separated allowed CORS origins. This only affects backend CORS responses; it does not by itself make the admin UI cross-origin-ready. |
+| `OIDC_RATE_LIMIT_MODE` | `local` | `local` = in-process safety-net limiter, `proxy` / `upstream` = rely on gateway/CDN/global rate limiting, `off` = disable app-local limiting |
+| `OIDC_RATE_LIMIT_MAX` | `100` | Max requests per in-process rate-limit window when `OIDC_RATE_LIMIT_MODE=local` |
+| `OIDC_RATE_LIMIT_WINDOW_SECS` | `60` | Window size in seconds for the in-process limiter |
+| `OIDC_TRUST_PROXY_HEADERS` | `false` | Trust `Forwarded` / `X-Forwarded-For` / `X-Real-IP` only when running behind a proxy that strips and rewrites them |
 | `OIDC_SIGNING_KEY` | *(auto-generated)* | RSA private key in PKCS#1 PEM format (global fallback; per-realm keys preferred in production) |
 | `OIDC_SIGNING_KID` | `key-1` | Key ID for the global RSA signing key |
 | `OIDC_ED25519_KEY` | *(auto-generated)* | Ed25519 private key in PKCS#8 PEM format (global fallback; per-realm keys preferred in production) |
@@ -141,6 +145,42 @@ The server accepts **two** authentication methods on protected admin endpoints:
 1. **Bearer Token** — OIDC access token with `admin` scope in the `Authorization: Bearer <token>` header
 2. **API Key** — `X-API-Key: <key>` or `Authorization: Bearer <api_key>` header
 
+## Deployment Posture
+
+### Recommended browser-facing deployment
+
+The primary supported browser deployment model today is:
+
+- **one browser origin** for the admin UI and OIDC/browser-facing routes
+- a reverse proxy or gateway in front of the hub
+- the proxy serves or fronts the admin UI and forwards `/api`, `/oidc`, `/.well-known`, `/health`, and `/realms/*` to the backend
+
+This matches the current frontend/runtime assumptions:
+
+- frontend OIDC authority uses relative `/oidc`
+- browser admin requests use `credentials: 'same-origin'`
+- the frontend CSP is same-origin by default
+- CSRF handling is designed around same-origin browser/admin traffic
+
+### Separate-origin frontend/API deployments
+
+Separate-origin hosting is **not the primary tested posture** today. If you host the admin UI on a different origin from the API, you must review and test at least:
+
+- frontend OIDC authority / API base configuration
+- CSP `connect-src`
+- CORS policy (`OIDC_CORS_ORIGINS`)
+- CSRF and cookie behavior through the chosen proxy/origin setup
+
+### Production rate limiting
+
+The built-in rate limiter is a **per-instance, in-memory safety net**. For real multi-instance or edge deployments, the recommended production control is a **gateway/CDN/shared upstream rate limiter**.
+
+Suggested production approach:
+
+- enforce the real rate limit at the gateway/CDN/load balancer
+- run the app with `OIDC_RATE_LIMIT_MODE=proxy` when that upstream layer is the source of truth
+- only enable `OIDC_TRUST_PROXY_HEADERS=true` behind a trusted first-hop proxy that strips and rebuilds forwarding headers
+
 ## Testing
 
 ```bash
@@ -159,6 +199,8 @@ cargo build -p openid-connect-wasi --target wasm32-wasip2 --release
 ### WASM Runtime (`wasmtime serve`)
 
 When running as a WASI Preview 2 component, **every HTTP request may instantiate a fresh WASM component** (depending on `--max-instance-reuse-count`). If signing keys are randomly generated at startup, tokens issued by instance *N* will fail verification on instance *N+1* because the keys differ.
+
+This deployment mode is production-appropriate only when all instances share deterministic key/config material and when abuse controls such as rate limiting are enforced at the gateway/CDN or another shared upstream layer.
 
 **You must provide deterministic signing keys via environment variables:**
 
@@ -231,6 +273,8 @@ Realms (tenants) are fully isolated:
 - **Passwords** are hashed with Argon2id (pure Rust, WASM-compatible).
 - **Tokens** use RS256 (RSA) and EdDSA (Ed25519) for signing. Global keys are auto-generated on first startup; per-realm keys are auto-generated when a realm is created.
 - **Brute-force protection** locks accounts after 5 failed login attempts within a short window.
+- **Built-in rate limiting** is local/in-memory unless you intentionally place the app in `proxy` mode and rely on upstream shared enforcement.
+- **Proxy headers** are ignored by default. Only enable `OIDC_TRUST_PROXY_HEADERS=true` behind a trusted proxy that strips and rewrites forwarding headers.
 - **No filesystem access** in WASM mode — all configuration, theming, and signing keys live in PostgreSQL.
 - **Key isolation** — per-realm signing keys prevent cross-tenant token forgery at the cryptographic layer.
 

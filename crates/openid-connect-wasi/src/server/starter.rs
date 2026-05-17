@@ -20,7 +20,9 @@ pub fn build_router_with_config(config: AppConfig) -> Router {
 }
 
 fn build_router_with_state(state: AppState) -> Router {
-    // Rate limiter shared state (per-IP, in-memory)
+    // Rate limiter shared state. In `local` mode this is a per-instance in-memory
+    // safety net; in `proxy` mode the upstream gateway is expected to be the
+    // production source of truth.
     let rate_limiter = std::sync::Arc::new(crate::middleware::rate_limit::RateLimiter::from_env());
 
     Router::new()

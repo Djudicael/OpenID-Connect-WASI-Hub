@@ -23,7 +23,7 @@ fn insert_header_if_absent(
 /// - X-Frame-Options: DENY
 /// - X-XSS-Protection: 0 (disabled, modern browsers don't need it)
 /// - Referrer-Policy: strict-origin-when-cross-origin
-/// - Content-Security-Policy: default-src 'self'
+/// - Content-Security-Policy: same-origin-only baseline with no framing/object embeds
 /// - Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
 /// - Cache-Control: no-store (for OIDC endpoints)
 pub async fn security_headers_middleware(request: Request<Body>, next: Next) -> Response {
@@ -41,7 +41,7 @@ pub async fn security_headers_middleware(request: Request<Body>, next: Next) -> 
     insert_header_if_absent(
         headers,
         "content-security-policy",
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'",
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
     );
     insert_header_if_absent(
         headers,

@@ -3,9 +3,16 @@
 //! Tracks request counts per IP in an in-memory `HashMap` protected by a
 //! `std::sync::Mutex` (WASM-compatible — no background threads).
 //!
+//! This limiter is intentionally a **local safety net**, not a distributed
+//! production-abuse control by itself. For multi-instance or edge deployments,
+//! prefer gateway/CDN/global rate limiting and use `OIDC_RATE_LIMIT_MODE=proxy`
+//! to make that upstream layer the source of truth.
+//!
 //! Configuration via environment variables:
 //! - `OIDC_RATE_LIMIT_MAX`: max requests per window (default: 100)
 //! - `OIDC_RATE_LIMIT_WINDOW_SECS`: window duration in seconds (default: 60)
+//! - `OIDC_RATE_LIMIT_MODE`: `local` (default), `proxy` / `upstream`, or `off`
+//! - `OIDC_TRUST_PROXY_HEADERS`: trust sanitized proxy forwarding headers
 
 use axum::body::Body;
 use axum::extract::Request;
@@ -17,6 +24,38 @@ use std::net::SocketAddr;
 use std::sync::Mutex;
 use std::time::Instant;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RateLimitMode {
+    /// Enforce per-instance in-memory limits inside the app.
+    Local,
+    /// Rely on an upstream gateway/CDN or external layer as the source of truth.
+    Proxy,
+    /// Disable rate limiting entirely.
+    Disabled,
+}
+
+impl RateLimitMode {
+    fn parse(value: Option<&str>) -> Self {
+        match value.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+            Some("proxy") | Some("proxy-only") | Some("upstream") | Some("gateway") => Self::Proxy,
+            Some("off") | Some("disabled") | Some("none") => Self::Disabled,
+            _ => Self::Local,
+        }
+    }
+
+    fn enforces_in_process(self) -> bool {
+        matches!(self, Self::Local)
+    }
+
+    fn as_header_value(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Proxy => "proxy",
+            Self::Disabled => "disabled",
+        }
+    }
+}
+
 /// Shared rate-limiter state.
 #[derive(Debug)]
 pub struct RateLimiter {
@@ -24,6 +63,7 @@ pub struct RateLimiter {
     max_requests: u32,
     window_secs: u64,
     trust_proxy_headers: bool,
+    mode: RateLimitMode,
 }
 
 #[derive(Debug)]
@@ -55,6 +95,8 @@ impl RateLimiter {
             })
             .unwrap_or(false);
 
+        let mode = RateLimitMode::parse(std::env::var("OIDC_RATE_LIMIT_MODE").ok().as_deref());
+
         Self {
             inner: Mutex::new(RateLimiterInner {
                 buckets: HashMap::new(),
@@ -62,6 +104,7 @@ impl RateLimiter {
             max_requests,
             window_secs,
             trust_proxy_headers,
+            mode,
         }
     }
 
@@ -101,6 +144,15 @@ pub async fn rate_limit_middleware(request: Request<Body>, next: Next) -> Respon
         }
     };
 
+    if !limiter.mode.enforces_in_process() {
+        let mut response = next.run(request).await;
+        response.headers_mut().insert(
+            HeaderName::from_static("x-oidc-rate-limit-mode"),
+            HeaderValue::from_static(limiter.mode.as_header_value()),
+        );
+        return response;
+    }
+
     // Extract the client IP from a trusted proxy header when configured,
     // otherwise fall back to the actual peer address if available.
     let ip = extract_client_ip(&request, limiter.trust_proxy_headers);
@@ -119,6 +171,10 @@ pub async fn rate_limit_middleware(request: Request<Body>, next: Next) -> Respon
             headers.insert(
                 HeaderName::from_static("x-ratelimit-remaining"),
                 remaining_val,
+            );
+            headers.insert(
+                HeaderName::from_static("x-oidc-rate-limit-mode"),
+                HeaderValue::from_static(limiter.mode.as_header_value()),
             );
 
             response
@@ -140,6 +196,13 @@ pub async fn rate_limit_middleware(request: Request<Body>, next: Next) -> Respon
             headers.insert(
                 HeaderName::from_static("x-ratelimit-remaining"),
                 HeaderValue::from_static("0"),
+            );
+            let retry_after = HeaderValue::from_str(&limiter.window_secs.to_string())
+                .unwrap_or_else(|_| HeaderValue::from_static("60"));
+            headers.insert(HeaderName::from_static("retry-after"), retry_after);
+            headers.insert(
+                HeaderName::from_static("x-oidc-rate-limit-mode"),
+                HeaderValue::from_static(limiter.mode.as_header_value()),
             );
 
             response
@@ -269,5 +332,29 @@ mod tests {
             normalize_forwarded_ip("[2001:db8::1]:443").as_deref(),
             Some("2001:db8::1")
         );
+    }
+
+    #[test]
+    fn parse_rate_limit_mode_defaults_to_local() {
+        assert_eq!(RateLimitMode::parse(None), RateLimitMode::Local);
+        assert_eq!(RateLimitMode::parse(Some("local")), RateLimitMode::Local);
+        assert_eq!(RateLimitMode::parse(Some("unknown")), RateLimitMode::Local);
+    }
+
+    #[test]
+    fn parse_rate_limit_mode_accepts_proxy_aliases() {
+        assert_eq!(RateLimitMode::parse(Some("proxy")), RateLimitMode::Proxy);
+        assert_eq!(RateLimitMode::parse(Some("upstream")), RateLimitMode::Proxy);
+        assert_eq!(RateLimitMode::parse(Some("gateway")), RateLimitMode::Proxy);
+    }
+
+    #[test]
+    fn parse_rate_limit_mode_accepts_disabled_aliases() {
+        assert_eq!(RateLimitMode::parse(Some("off")), RateLimitMode::Disabled);
+        assert_eq!(
+            RateLimitMode::parse(Some("disabled")),
+            RateLimitMode::Disabled
+        );
+        assert_eq!(RateLimitMode::parse(Some("none")), RateLimitMode::Disabled);
     }
 }
