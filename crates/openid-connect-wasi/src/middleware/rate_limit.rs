@@ -13,6 +13,7 @@ use axum::http::{HeaderName, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -22,6 +23,7 @@ pub struct RateLimiter {
     inner: Mutex<RateLimiterInner>,
     max_requests: u32,
     window_secs: u64,
+    trust_proxy_headers: bool,
 }
 
 #[derive(Debug)]
@@ -43,12 +45,23 @@ impl RateLimiter {
             .and_then(|v| v.parse().ok())
             .unwrap_or(60);
 
+        let trust_proxy_headers = std::env::var("OIDC_TRUST_PROXY_HEADERS")
+            .ok()
+            .map(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                )
+            })
+            .unwrap_or(false);
+
         Self {
             inner: Mutex::new(RateLimiterInner {
                 buckets: HashMap::new(),
             }),
             max_requests,
             window_secs,
+            trust_proxy_headers,
         }
     }
 
@@ -88,8 +101,9 @@ pub async fn rate_limit_middleware(request: Request<Body>, next: Next) -> Respon
         }
     };
 
-    // Extract client IP from X-Forwarded-For, X-Real-IP, or fallback to "unknown"
-    let ip = extract_client_ip(request.headers());
+    // Extract the client IP from a trusted proxy header when configured,
+    // otherwise fall back to the actual peer address if available.
+    let ip = extract_client_ip(&request, limiter.trust_proxy_headers);
 
     match limiter.check(&ip) {
         Ok(remaining) => {
@@ -133,32 +147,127 @@ pub async fn rate_limit_middleware(request: Request<Body>, next: Next) -> Respon
     }
 }
 
-/// Extract the client IP from request headers.
+/// Extract the client IP from the request.
 ///
-/// Checks `X-Forwarded-For` (first entry), then `X-Real-IP`, then falls back
-/// to `"unknown"`.
-fn extract_client_ip(headers: &axum::http::HeaderMap) -> String {
-    // X-Forwarded-For: client, proxy1, proxy2 — take the first
-    if let Some(xff) = headers.get("x-forwarded-for") {
-        if let Ok(val) = xff.to_str() {
-            if let Some(first) = val.split(',').next() {
-                let trimmed = first.trim();
-                if !trimmed.is_empty() {
-                    return trimmed.to_string();
-                }
-            }
+/// By default the middleware ignores forwarded headers to avoid trusting
+/// spoofable values. If `OIDC_TRUST_PROXY_HEADERS=true` is configured, it will
+/// consult `Forwarded`, `X-Forwarded-For`, and `X-Real-IP` in that order.
+fn extract_client_ip(request: &Request<Body>, trust_proxy_headers: bool) -> String {
+    if trust_proxy_headers {
+        if let Some(ip) = forwarded_ip(request.headers()) {
+            return ip;
+        }
+        if let Some(ip) = x_forwarded_for_ip(request.headers()) {
+            return ip;
+        }
+        if let Some(ip) = x_real_ip(request.headers()) {
+            return ip;
         }
     }
 
-    // X-Real-IP
-    if let Some(xri) = headers.get("x-real-ip") {
-        if let Ok(val) = xri.to_str() {
-            let trimmed = val.trim();
-            if !trimmed.is_empty() {
-                return trimmed.to_string();
+    peer_addr(request).unwrap_or_else(|| "unknown".to_string())
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn peer_addr(request: &Request<Body>) -> Option<String> {
+    request
+        .extensions()
+        .get::<axum::extract::connect_info::ConnectInfo<SocketAddr>>()
+        .map(|info| info.0.ip().to_string())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn peer_addr(_request: &Request<Body>) -> Option<String> {
+    None
+}
+
+fn forwarded_ip(headers: &axum::http::HeaderMap) -> Option<String> {
+    let header = headers.get("forwarded")?.to_str().ok()?;
+    for segment in header.split(',') {
+        for part in segment.split(';') {
+            let part = part.trim();
+            let value = part.strip_prefix("for=")?.trim_matches('"');
+            if let Some(ip) = normalize_forwarded_ip(value) {
+                return Some(ip);
             }
         }
     }
+    None
+}
 
-    "unknown".to_string()
+fn x_forwarded_for_ip(headers: &axum::http::HeaderMap) -> Option<String> {
+    let header = headers.get("x-forwarded-for")?.to_str().ok()?;
+    let first = header.split(',').next()?.trim();
+    normalize_forwarded_ip(first)
+}
+
+fn x_real_ip(headers: &axum::http::HeaderMap) -> Option<String> {
+    let header = headers.get("x-real-ip")?.to_str().ok()?;
+    normalize_forwarded_ip(header.trim())
+}
+
+fn normalize_forwarded_ip(value: &str) -> Option<String> {
+    if value.is_empty() || value.eq_ignore_ascii_case("unknown") {
+        return None;
+    }
+
+    if let Some(stripped) = value.strip_prefix('[') {
+        let end = stripped.find(']')?;
+        let ip = &stripped[..end];
+        return Some(ip.to_string());
+    }
+
+    if let Ok(addr) = value.parse::<SocketAddr>() {
+        return Some(addr.ip().to_string());
+    }
+
+    Some(value.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::extract::connect_info::ConnectInfo;
+    use axum::http::Request as HttpRequest;
+
+    #[test]
+    fn extract_client_ip_uses_peer_addr_when_proxy_headers_untrusted() {
+        let mut request = HttpRequest::builder()
+            .uri("/")
+            .body(Body::empty())
+            .expect("request should build");
+        request
+            .headers_mut()
+            .insert("x-forwarded-for", HeaderValue::from_static("203.0.113.10"));
+        request.extensions_mut().insert(ConnectInfo(
+            "127.0.0.1:8080".parse::<SocketAddr>().expect("socket addr"),
+        ));
+
+        assert_eq!(extract_client_ip(&request, false), "127.0.0.1");
+    }
+
+    #[test]
+    fn extract_client_ip_uses_forwarded_headers_when_proxy_is_trusted() {
+        let mut request = HttpRequest::builder()
+            .uri("/")
+            .body(Body::empty())
+            .expect("request should build");
+        request.headers_mut().insert(
+            "forwarded",
+            HeaderValue::from_static("for=198.51.100.7:1234"),
+        );
+        request.extensions_mut().insert(ConnectInfo(
+            "127.0.0.1:8080".parse::<SocketAddr>().expect("socket addr"),
+        ));
+
+        assert_eq!(extract_client_ip(&request, true), "198.51.100.7");
+    }
+
+    #[test]
+    fn normalize_forwarded_ip_handles_ipv6_brackets() {
+        assert_eq!(
+            normalize_forwarded_ip("[2001:db8::1]:443").as_deref(),
+            Some("2001:db8::1")
+        );
+    }
 }

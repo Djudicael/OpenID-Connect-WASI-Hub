@@ -3,6 +3,8 @@
 use crate::router;
 use crate::state::{AppConfig, AppState};
 use axum::Router;
+#[cfg(not(target_arch = "wasm32"))]
+use std::net::SocketAddr;
 
 /// Assemble all sub-routers into the application router from env vars.
 pub fn build_router() -> Router {
@@ -48,9 +50,12 @@ pub async fn run_tcp(app: Router, addr: &str, port: u16) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(format!("{}:{}", addr, port)).await?;
     tracing::info!("Listening on {}:{}", addr, port);
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     Ok(())
 }
