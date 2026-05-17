@@ -9,7 +9,8 @@ pub struct SocialLoginStateRepo;
 
 const SOCIAL_LOGIN_STATE_COLUMNS: &str = r#"
     id, state_token_hash, realm_id, identity_provider_id, client_id,
-    redirect_uri, original_state, nonce, expires_at, used, created_at
+    redirect_uri, original_state, nonce, code_challenge, requested_scopes,
+    expires_at, used, created_at
 "#;
 
 impl SocialLoginStateRepo {
@@ -22,8 +23,9 @@ impl SocialLoginStateRepo {
         let sql = r#"
             INSERT INTO social_login_states (
                 id, state_token_hash, realm_id, identity_provider_id, client_id,
-                redirect_uri, original_state, nonce, expires_at, used, created_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                redirect_uri, original_state, nonce, code_challenge, requested_scopes,
+                expires_at, used, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         "#;
         conn.execute_params(
             sql,
@@ -36,6 +38,8 @@ impl SocialLoginStateRepo {
                 &entity.redirect_uri,
                 &entity.original_state,
                 &entity.nonce,
+                &entity.code_challenge,
+                &mapper::to_json_value_vec(&entity.requested_scopes),
                 &entity.expires_at,
                 &entity.used,
                 &entity.created_at,
@@ -97,9 +101,11 @@ impl SocialLoginStateRepo {
             redirect_uri: mapper::string(row, 5)?,
             original_state: mapper::opt_string(row, 6)?,
             nonce: mapper::opt_string(row, 7)?,
-            expires_at: mapper::datetime(row, 8)?,
-            used: mapper::bool_(row, 9)?,
-            created_at: mapper::datetime(row, 10)?,
+            code_challenge: mapper::string(row, 8)?,
+            requested_scopes: mapper::json_string_vec(row, 9)?,
+            expires_at: mapper::datetime(row, 10)?,
+            used: mapper::bool_(row, 11)?,
+            created_at: mapper::datetime(row, 12)?,
         })
     }
 }

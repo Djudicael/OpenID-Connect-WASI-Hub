@@ -7,6 +7,8 @@ CREATE TABLE IF NOT EXISTS social_login_states (
     redirect_uri TEXT NOT NULL,
     original_state TEXT,
     nonce TEXT,
+    code_challenge TEXT NOT NULL,
+    requested_scopes JSONB NOT NULL DEFAULT '["openid","profile","email"]',
     expires_at TIMESTAMPTZ NOT NULL,
     used BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

@@ -1,11 +1,19 @@
 //! Social login / federation integration tests.
 
 use axum::Json;
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::helpers::app::TestApp;
+
+fn pkce_s256_challenge(verifier: &str) -> String {
+    let mut hasher = sha2::Sha256::new();
+    use sha2::Digest;
+    hasher.update(verifier.as_bytes());
+    URL_SAFE_NO_PAD.encode(hasher.finalize())
+}
 
 fn parse_query_param(url: &str, key: &str) -> Option<String> {
     let parsed = url::Url::parse(url).expect("URL should be valid");
@@ -136,6 +144,8 @@ async fn test_social_login_callback_uses_persisted_state_and_binds_session_to_cl
     let provider_id = seed_identity_provider(&app, &upstream, provider_alias).await;
 
     let redirect_uri = "https://app.example.com/callback";
+    let code_verifier = "social-login-verifier-1234567890";
+    let code_challenge = pkce_s256_challenge(code_verifier);
     let local_client_id = app
         .seed_public_client("social-client", &[redirect_uri])
         .await;
@@ -143,13 +153,15 @@ async fn test_social_login_callback_uses_persisted_state_and_binds_session_to_cl
     let initiate_resp = app
         .client()
         .get(&format!(
-            "{}/realms/master/protocol/openid-connect/social/{}?client_id={}&redirect_uri={}&state={}&nonce={}",
+            "{}/realms/master/protocol/openid-connect/social/{}?client_id={}&redirect_uri={}&state={}&nonce={}&code_challenge={}&code_challenge_method=S256&scope={}",
             app.url(),
             provider_alias,
             urlencoding::encode("social-client"),
             urlencoding::encode(redirect_uri),
             urlencoding::encode("rp-state-123"),
             urlencoding::encode("nonce-123"),
+            urlencoding::encode(&code_challenge),
+            urlencoding::encode("openid profile email"),
         ))
         .send()
         .await
@@ -187,26 +199,56 @@ async fn test_social_login_callback_uses_persisted_state_and_binds_session_to_cl
         .await
         .expect("social login callback should succeed");
 
-    assert_eq!(callback_resp.status(), StatusCode::OK);
+    assert_eq!(callback_resp.status(), StatusCode::TEMPORARY_REDIRECT);
     let callback_headers = callback_resp.headers().clone();
-    let callback_body = callback_resp
-        .text()
-        .await
-        .expect("callback body should be readable");
+    let redirect_location = callback_headers
+        .get(reqwest::header::LOCATION)
+        .expect("callback redirect should include location")
+        .to_str()
+        .expect("callback redirect location should be valid UTF-8")
+        .to_string();
 
-    assert!(callback_body.contains(&format!("action=\"{}\"", redirect_uri)));
-    assert!(callback_body.contains("name=\"access_token\""));
-    assert!(callback_body.contains("name=\"refresh_token\""));
-    assert!(callback_body.contains("name=\"id_token\""));
-    assert!(callback_body.contains("name=\"state\" value=\"rp-state-123\""));
-    assert!(
-        !callback_body.contains(&format!("{}?access_token=", redirect_uri)),
-        "tokens must not be placed into redirect query parameters"
+    assert!(redirect_location.starts_with(redirect_uri));
+    assert!(parse_query_param(&redirect_location, "code").is_some());
+    assert_eq!(
+        parse_query_param(&redirect_location, "state").as_deref(),
+        Some("rp-state-123")
     );
     assert!(
-        !callback_body.contains(&format!("{}#access_token=", redirect_uri)),
+        parse_query_param(&redirect_location, "access_token").is_none(),
+        "access_token must not be placed into redirect query parameters"
+    );
+    assert!(
+        !redirect_location.contains("#access_token="),
         "tokens must not be placed into redirect fragments"
     );
+
+    let auth_code = parse_query_param(&redirect_location, "code")
+        .expect("authorization code should be present");
+
+    let token_resp = app
+        .client()
+        .post(&format!("{}/oidc/token", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&code_verifier={}",
+            urlencoding::encode(&auth_code),
+            urlencoding::encode(redirect_uri),
+            urlencoding::encode("social-client"),
+            urlencoding::encode(code_verifier),
+        ))
+        .send()
+        .await
+        .expect("token exchange should succeed");
+
+    assert_eq!(token_resp.status(), StatusCode::OK);
+    let token_body: Value = token_resp
+        .json()
+        .await
+        .expect("token response should be valid JSON");
+    assert!(token_body["access_token"].as_str().is_some());
+    assert!(token_body["refresh_token"].as_str().is_some());
+    assert!(token_body["id_token"].as_str().is_some());
 
     let clear_cookie = callback_headers
         .get_all(reqwest::header::SET_COOKIE)
@@ -255,18 +297,22 @@ async fn test_social_login_callback_rejects_mismatched_cookie_and_replay() {
     seed_identity_provider(&app, &upstream, provider_alias).await;
 
     let redirect_uri = "https://app.example.com/callback";
+    let code_verifier = "social-login-replay-verifier-1234567890";
+    let code_challenge = pkce_s256_challenge(code_verifier);
     app.seed_public_client("social-client-replay", &[redirect_uri])
         .await;
 
     let initiate_resp = app
         .client()
         .get(&format!(
-            "{}/realms/master/protocol/openid-connect/social/{}?client_id={}&redirect_uri={}&state={}",
+            "{}/realms/master/protocol/openid-connect/social/{}?client_id={}&redirect_uri={}&state={}&code_challenge={}&code_challenge_method=S256&scope={}",
             app.url(),
             provider_alias,
             urlencoding::encode("social-client-replay"),
             urlencoding::encode(redirect_uri),
             urlencoding::encode("rp-state-replay"),
+            urlencoding::encode(&code_challenge),
+            urlencoding::encode("openid profile email"),
         ))
         .send()
         .await
@@ -307,6 +353,8 @@ async fn test_social_login_callback_rejects_mismatched_cookie_and_replay() {
         .expect("mismatched cookie body should be readable");
     assert!(mismatched_body.contains("Invalid state"));
 
+    let _ = code_verifier;
+
     let success_resp = app
         .client()
         .get(&format!(
@@ -323,7 +371,7 @@ async fn test_social_login_callback_rejects_mismatched_cookie_and_replay() {
         .send()
         .await
         .expect("first callback should succeed");
-    assert_eq!(success_resp.status(), StatusCode::OK);
+    assert_eq!(success_resp.status(), StatusCode::TEMPORARY_REDIRECT);
 
     let replay_resp = app
         .client()

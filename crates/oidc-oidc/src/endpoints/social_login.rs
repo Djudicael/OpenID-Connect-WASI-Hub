@@ -6,13 +6,17 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
-use axum::response::{Html, IntoResponse, Response};
+use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::json;
 
-use oidc_core::models::{FederatedIdentity, IdentityProvider, SocialLoginState, User};
+use oidc_core::models::{
+    AuthCode, CodeChallengeMethod, FederatedIdentity, IdentityProvider, ResponseType,
+    SocialLoginState, User,
+};
 use oidc_core::traits::token_service::TokenService;
-use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, html_escape, sha2_256_hex};
+use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, sha2_256_hex};
+use oidc_repository::repositories::auth_code_repo::AuthCodeRepo;
 use oidc_repository::repositories::client_repo::ClientRepo;
 use oidc_repository::repositories::federated_identity_repo::FederatedIdentityRepo;
 use oidc_repository::repositories::identity_provider_repo::IdentityProviderRepo;
@@ -35,6 +39,12 @@ pub struct SocialLoginParams {
     pub state: Option<String>,
     /// The nonce for the local OIDC flow.
     pub nonce: Option<String>,
+    /// PKCE code_challenge for the local auth code that will be issued.
+    pub code_challenge: Option<String>,
+    /// PKCE code_challenge_method for the local auth code.
+    pub code_challenge_method: Option<String>,
+    /// Requested local scopes.
+    pub scope: Option<String>,
 }
 
 /// Callback parameters from the upstream IdP.
@@ -71,35 +81,6 @@ fn extract_social_state_from_headers(headers: &HeaderMap) -> Option<String> {
         }
     }
     None
-}
-
-fn render_form_post_redirect(redirect_uri: &str, fields: &[(String, String)]) -> String {
-    let inputs = fields
-        .iter()
-        .map(|(k, v)| {
-            format!(
-                r#"<input type="hidden" name="{}" value="{}" />"#,
-                html_escape(k),
-                html_escape(v)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    format!(
-        r#"<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><title>Redirecting…</title></head>
-<body onload="document.forms[0].submit()">
-<form method="post" action="{}">
-{}
-<noscript><button type="submit">Continue</button></noscript>
-</form>
-</body>
-</html>"#,
-        html_escape(redirect_uri),
-        inputs
-    )
 }
 
 /// Initiate social login with an upstream identity provider.
@@ -167,6 +148,49 @@ pub async fn social_login_initiate_handler(
         return (axum::http::StatusCode::BAD_REQUEST, "Invalid redirect_uri").into_response();
     }
 
+    let code_challenge = match params.code_challenge.as_deref() {
+        Some(challenge) if !challenge.is_empty() => challenge,
+        _ => {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                "Missing code_challenge",
+            )
+                .into_response();
+        }
+    };
+
+    match params.code_challenge_method.as_deref() {
+        Some("S256") | None => {}
+        _ => {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                "Unsupported code_challenge_method",
+            )
+                .into_response();
+        }
+    }
+
+    let requested_scopes: Vec<String> = params
+        .scope
+        .as_deref()
+        .unwrap_or("openid profile email")
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    if !requested_scopes.iter().any(|scope| scope == "openid") {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "The 'openid' scope is required",
+        )
+            .into_response();
+    }
+    if requested_scopes
+        .iter()
+        .any(|scope| !client.allowed_scopes.contains(scope))
+    {
+        return (axum::http::StatusCode::BAD_REQUEST, "Invalid scope").into_response();
+    }
+
     let internal_state = match generate_opaque_token() {
         Ok(state) => state,
         Err(e) => {
@@ -189,6 +213,8 @@ pub async fn social_login_initiate_handler(
         redirect_uri: redirect_uri.to_string(),
         original_state: params.state.clone(),
         nonce: params.nonce.clone(),
+        code_challenge: code_challenge.to_string(),
+        requested_scopes,
         expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
         used: false,
         created_at: chrono::Utc::now(),
@@ -321,6 +347,8 @@ pub async fn social_login_callback_handler(
     let redirect_uri = social_state.redirect_uri.clone();
     let original_state = social_state.original_state.clone();
     let nonce = social_state.nonce.clone();
+    let scopes = social_state.requested_scopes.clone();
+    let code_challenge = social_state.code_challenge.clone();
 
     // Exchange the upstream authorization code for tokens
     let token_response = match exchange_code_for_tokens(
@@ -403,14 +431,9 @@ pub async fn social_login_callback_handler(
         }
     };
 
-    // Issue local OIDC tokens
+    // Issue local OIDC tokens for the browser session and create a local authorization code.
     let subject = user.id.to_string();
     let audience = local_client.client_id.clone();
-    let scopes = vec![
-        "openid".to_string(),
-        "profile".to_string(),
-        "email".to_string(),
-    ];
 
     let sid = oidc_core::utils::generate_sid().unwrap_or_default();
 
@@ -444,7 +467,7 @@ pub async fn social_login_callback_handler(
     let at_hash = oidc_core::utils::compute_at_hash(&access_token);
 
     let id_token_extra = oidc_core::traits::token_service::IdTokenExtraClaims {
-        nonce,
+        nonce: nonce.clone(),
         at_hash: Some(at_hash),
         auth_time: Some(chrono::Utc::now().timestamp()),
         sid: Some(sid.clone()),
@@ -532,23 +555,79 @@ pub async fn social_login_callback_handler(
         }
     };
 
-    let mut fields = vec![
-        ("access_token".to_string(), access_token),
-        ("token_type".to_string(), "Bearer".to_string()),
-        ("expires_in".to_string(), "900".to_string()),
-        ("id_token".to_string(), id_token),
-        ("refresh_token".to_string(), refresh_token),
-    ];
-    if let Some(s) = original_state {
-        fields.push(("state".to_string(), s));
+    let auth_code_value = match generate_opaque_token() {
+        Ok(code) => code,
+        Err(e) => {
+            tracing::error!("Failed to generate authorization code: {e}");
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Authorization code generation failed",
+            )
+                .into_response();
+        }
+    };
+
+    let auth_code = AuthCode {
+        id: generate_uuid_v7(),
+        code: auth_code_value.clone(),
+        client_id: local_client.id,
+        user_id: user.id,
+        realm_id: realm.id,
+        redirect_uri: redirect_uri.clone(),
+        scope: scopes.clone(),
+        code_challenge,
+        code_challenge_method: CodeChallengeMethod::S256,
+        nonce,
+        used: false,
+        claims_request: None,
+        display: None,
+        response_type: ResponseType::CODE,
+        acr_values: vec![],
+        claims_locales: vec![],
+        expires_at: now + chrono::Duration::seconds(60),
+        response_mode: None,
+        authorization_details: None,
+        resource: vec![],
+    };
+
+    if let Err(e) = AuthCodeRepo.create(&mut conn, &auth_code).await {
+        tracing::error!("Failed to create auth code: {e}");
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "Authorization code creation failed",
+        )
+            .into_response();
     }
 
-    let mut response = Html(render_form_post_redirect(&redirect_uri, &fields)).into_response();
+    let mut redirect = match url::Url::parse(&redirect_uri) {
+        Ok(url) => url,
+        Err(e) => {
+            tracing::error!("Validated redirect_uri became unparsable: {e}");
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Redirect construction failed",
+            )
+                .into_response();
+        }
+    };
+    {
+        let mut query = redirect.query_pairs_mut();
+        query.append_pair("code", &auth_code_value);
+        if let Some(state_value) = original_state.as_deref() {
+            query.append_pair("state", state_value);
+        }
+    }
+
+    let mut response = axum::response::Redirect::temporary(redirect.as_ref()).into_response();
     session_cookie::append_set_cookie(
         response.headers_mut(),
         session_cookie::session_cookie_header(&session.id.to_string(), &encryption_key),
     );
     session_cookie::append_set_cookie(response.headers_mut(), clear_social_state_cookie_header());
+
+    let _ = access_token;
+    let _ = id_token;
+    let _ = refresh_token;
 
     response
 }

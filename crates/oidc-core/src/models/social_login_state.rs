@@ -24,6 +24,10 @@ pub struct SocialLoginState {
     pub original_state: Option<String>,
     /// OIDC nonce to place into the resulting local ID token.
     pub nonce: Option<String>,
+    /// PKCE code challenge for the local authorization code that will be issued.
+    pub code_challenge: String,
+    /// Requested local scopes to attach to the resulting authorization code.
+    pub requested_scopes: Vec<String>,
     /// When this state expires.
     pub expires_at: chrono::DateTime<chrono::Utc>,
     /// Whether this state has already been consumed.
@@ -47,6 +51,8 @@ mod tests {
             redirect_uri: "https://app.example.com/callback".into(),
             original_state: Some("rp-state".into()),
             nonce: Some("nonce-123".into()),
+            code_challenge: "challenge-123".into(),
+            requested_scopes: vec!["openid".into(), "profile".into()],
             expires_at: chrono::Utc::now(),
             used: false,
             created_at: chrono::Utc::now(),
