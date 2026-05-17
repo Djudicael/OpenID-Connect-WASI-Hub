@@ -1,7 +1,8 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
 import { listIdentityProviders, createIdentityProvider, deleteIdentityProvider } from '../services/idp-service.js';
-import { listRealms } from '../services/realm-service.js';
+import { listAllRealms } from '../services/realm-service.js';
+import { resolveSelectedRealmId, setSelectedRealmId } from '../core/realm-context.js';
 import { showToast } from '../components/ui/toast.js';
 import { handleApiError } from '../utils/error-handler.js';
 import { isRequired } from '../utils/validators.js';
@@ -42,11 +43,11 @@ class IdentityProvidersPage extends BaseComponent {
 
   async _loadRealms() {
     try {
-      const data = await listRealms({ limit: '100' }, this.signal);
-      const realms = data.items || [];
-      const defaultRealmId = realms.length > 0 ? realms[0].id : '';
-      this.setState({ realms, realmId: defaultRealmId });
-      if (defaultRealmId) this._loadProviders(defaultRealmId);
+      const realms = await listAllRealms(this.signal);
+      const realmId = resolveSelectedRealmId(realms, this._state.realmId);
+      setSelectedRealmId(realmId);
+      this.setState({ realms, realmId });
+      if (realmId) this._loadProviders(realmId);
     } catch (err) {
       if (err.name === 'AbortError') return;
       handleApiError(err, 'Failed to load realms');
@@ -67,6 +68,7 @@ class IdentityProvidersPage extends BaseComponent {
 
   async _onRealmChange(e) {
     const realmId = e.target.value;
+    setSelectedRealmId(realmId);
     await this.setState({ realmId });
     this._loadProviders(realmId);
   }

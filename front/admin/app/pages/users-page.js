@@ -1,7 +1,8 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
 import { listUsers, createUser, deleteUser } from '../services/user-service.js';
-import { listRealms } from '../services/realm-service.js';
+import { listAllRealms } from '../services/realm-service.js';
+import { resolveSelectedRealmId, setSelectedRealmId } from '../core/realm-context.js';
 import { navigate } from '../core/router.js';
 import { formatDate } from '../utils/format.js';
 import { showToast } from '../components/ui/toast.js';
@@ -22,6 +23,7 @@ class UsersPage extends BaseComponent {
       pageSize: 20,
       total: 0,
       showCreateModal: false,
+      realmId: '',
       createRealmId: '',
       createEmail: '',
       createPassword: '',
@@ -38,7 +40,6 @@ class UsersPage extends BaseComponent {
 
   connectedCallback() {
     super.connectedCallback();
-    this._loadUsers();
     this._loadRealms();
   }
 
@@ -49,23 +50,26 @@ class UsersPage extends BaseComponent {
 
   async _loadRealms() {
     try {
-      const data = await listRealms({ limit: '100' }, this.signal);
-      const realms = data.items || [];
-      const defaultRealmId = realms.length > 0 ? realms[0].id : '';
-      this.setState({ realms, createRealmId: defaultRealmId });
+      const realms = await listAllRealms(this.signal);
+      const realmId = resolveSelectedRealmId(realms, this._state.realmId || this._state.createRealmId);
+      setSelectedRealmId(realmId);
+      await this.setState({ realms, realmId, createRealmId: realmId });
+      this._loadUsers();
     } catch (err) {
       if (err.name === 'AbortError') return;
       handleApiError(err, 'Failed to load realms');
-      this.setState({ realms: [] });
+      this.setState({ realms: [], realmId: '', createRealmId: '' });
+      this._loadUsers();
     }
   }
 
   async _loadUsers() {
     this.setState({ loading: true });
     try {
-      const { search, page, pageSize } = this._state;
+      const { search, page, pageSize, realmId } = this._state;
       const offset = (page - 1) * pageSize;
       const data = await listUsers({
+        ...(realmId ? { realm_id: realmId } : {}),
         ...(search ? { search } : {}),
         limit: String(pageSize),
         offset: String(offset),
@@ -92,6 +96,13 @@ class UsersPage extends BaseComponent {
 
   async _onPageChange(e) {
     await this.setState({ page: e.detail.page });
+    this._loadUsers();
+  }
+
+  async _onRealmChange(e) {
+    const realmId = e.target.value;
+    setSelectedRealmId(realmId);
+    await this.setState({ realmId, createRealmId: realmId, page: 1 });
     this._loadUsers();
   }
 
@@ -144,6 +155,7 @@ class UsersPage extends BaseComponent {
   _openCreateModal() {
     this.setState({
       showCreateModal: true,
+      createRealmId: this._state.realmId,
       createEmail: '',
       createPassword: '',
       createUsername: '',
@@ -201,7 +213,7 @@ class UsersPage extends BaseComponent {
   }
 
   template() {
-    const { users, loading, search, page, pageSize, total, showCreateModal, createRealmId, createEmail, createPassword, createUsername, createFirstName, createLastName, createEnabled, createLoading, createErrors, realms, selectedIds } = this._state;
+    const { users, loading, search, page, pageSize, total, showCreateModal, realmId, createRealmId, createEmail, createPassword, createUsername, createFirstName, createLastName, createEnabled, createLoading, createErrors, realms, selectedIds } = this._state;
     const columns = [
       {
         key: 'select',
@@ -233,6 +245,12 @@ class UsersPage extends BaseComponent {
           </c-button>
         </div>
         <div class="toolbar">
+          <label style="font-size:0.875rem;color:var(--color-text-muted)">
+            Realm:
+            <select class="realm-select" aria-label="Select realm" .value=${realmId} @change=${(e) => this._onRealmChange(e)}>
+              ${realms.map(r => html`<option value=${r.id} ?selected=${realmId === r.id}>${r.display_name || r.name}</option>`)}
+            </select>
+          </label>
           <input
             class="search-input"
             type="text"

@@ -1,6 +1,7 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
-import { listRealms } from '../services/realm-service.js';
+import { listAllRealms } from '../services/realm-service.js';
+import { resolveSelectedRealmId, setSelectedRealmId } from '../core/realm-context.js';
 import { listScopes } from '../services/scope-service.js';
 import { createApiKey } from '../services/apikey-service.js';
 import { navigate } from '../core/router.js';
@@ -28,11 +29,11 @@ class ApiKeyCreatePage extends BaseComponent {
 
   async _loadRealms() {
     try {
-      const data = await listRealms({ limit: '100' });
-      const realms = data.items || [];
-      const defaultRealmId = realms.length > 0 ? realms[0].id : '00000000-0000-0000-0000-000000000000';
-      this.setState({ realms, realmId: defaultRealmId });
-      if (defaultRealmId) this._loadScopes(defaultRealmId);
+      const realms = await listAllRealms(this.signal);
+      const realmId = resolveSelectedRealmId(realms, this._state.realmId) || '00000000-0000-0000-0000-000000000000';
+      setSelectedRealmId(realmId);
+      this.setState({ realms, realmId });
+      if (realmId) this._loadScopes(realmId);
     } catch (err) {
       showToast('Failed to load realms', 'error');
       this.setState({ realms: [], realmId: '00000000-0000-0000-0000-000000000000' });
@@ -52,6 +53,7 @@ class ApiKeyCreatePage extends BaseComponent {
 
   _onRealmChange(e) {
     const realmId = e.target.value;
+    setSelectedRealmId(realmId);
     this.setState({ realmId });
     this._loadScopes(realmId);
   }

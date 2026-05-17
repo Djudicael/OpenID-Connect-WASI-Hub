@@ -1,7 +1,8 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
 import { listRoles, createRole, deleteRole } from '../services/role-service.js';
-import { listRealms } from '../services/realm-service.js';
+import { listAllRealms } from '../services/realm-service.js';
+import { resolveSelectedRealmId, setSelectedRealmId } from '../core/realm-context.js';
 import { navigate } from '../core/router.js';
 import { showToast } from '../components/ui/toast.js';
 import { handleApiError } from '../utils/error-handler.js';
@@ -21,6 +22,7 @@ class RolesPage extends BaseComponent {
       pageSize: 20,
       total: 0,
       showCreateModal: false,
+      realmId: '',
       createRealmId: '',
       createName: '',
       createDescription: '',
@@ -33,7 +35,6 @@ class RolesPage extends BaseComponent {
 
   connectedCallback() {
     super.connectedCallback();
-    this._loadRoles();
     this._loadRealms();
   }
 
@@ -44,23 +45,26 @@ class RolesPage extends BaseComponent {
 
   async _loadRealms() {
     try {
-      const data = await listRealms({ limit: '100' }, this.signal);
-      const realms = data.items || [];
-      const defaultRealmId = realms.length > 0 ? realms[0].id : '';
-      this.setState({ realms, createRealmId: defaultRealmId });
+      const realms = await listAllRealms(this.signal);
+      const realmId = resolveSelectedRealmId(realms, this._state.realmId || this._state.createRealmId);
+      setSelectedRealmId(realmId);
+      await this.setState({ realms, realmId, createRealmId: realmId });
+      this._loadRoles();
     } catch (err) {
       if (err.name === 'AbortError') return;
       handleApiError(err, 'Failed to load realms');
-      this.setState({ realms: [] });
+      this.setState({ realms: [], realmId: '', createRealmId: '' });
+      this._loadRoles();
     }
   }
 
   async _loadRoles() {
     this.setState({ loading: true });
     try {
-      const { search, page, pageSize } = this._state;
+      const { search, page, pageSize, realmId } = this._state;
       const offset = (page - 1) * pageSize;
       const data = await listRoles({
+        ...(realmId ? { realm_id: realmId } : {}),
         ...(search ? { search } : {}),
         limit: String(pageSize),
         offset: String(offset),
@@ -87,6 +91,13 @@ class RolesPage extends BaseComponent {
 
   async _onPageChange(e) {
     await this.setState({ page: e.detail.page });
+    this._loadRoles();
+  }
+
+  async _onRealmChange(e) {
+    const realmId = e.target.value;
+    setSelectedRealmId(realmId);
+    await this.setState({ realmId, createRealmId: realmId, page: 1 });
     this._loadRoles();
   }
 
@@ -139,6 +150,7 @@ class RolesPage extends BaseComponent {
   _openCreateModal() {
     this.setState({
       showCreateModal: true,
+      createRealmId: this._state.realmId,
       createName: '',
       createDescription: '',
       createPermissions: '',
@@ -181,7 +193,7 @@ class RolesPage extends BaseComponent {
   }
 
   template() {
-    const { roles, loading, search, page, pageSize, total, showCreateModal, createRealmId, createName, createDescription, createPermissions, createLoading, realms, selectedIds } = this._state;
+    const { roles, loading, search, page, pageSize, total, showCreateModal, realmId, createRealmId, createName, createDescription, createPermissions, createLoading, realms, selectedIds } = this._state;
     const columns = [
       {
         key: 'select',
@@ -215,6 +227,12 @@ class RolesPage extends BaseComponent {
           </c-button>
         </div>
         <div class="toolbar">
+          <label style="font-size:0.875rem;color:var(--color-text-muted)">
+            Realm:
+            <select class="realm-select" aria-label="Select realm" .value=${realmId} @change=${(e) => this._onRealmChange(e)}>
+              ${realms.map(r => html`<option value=${r.id} ?selected=${realmId === r.id}>${r.display_name || r.name}</option>`)}
+            </select>
+          </label>
           <input
             class="search-input"
             type="text"

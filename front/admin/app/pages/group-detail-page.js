@@ -20,6 +20,11 @@ class GroupDetailPage extends BaseComponent {
       membersLoading: false,
       showAddRoleModal: false,
       availableRoles: [],
+      roleSearch: '',
+      rolePage: 1,
+      rolePageSize: 20,
+      roleTotal: 0,
+      selectedRoleId: '',
       addRoleLoading: false,
     };
     this._onBeforeUnload = this._onBeforeUnload.bind(this);
@@ -34,7 +39,9 @@ class GroupDetailPage extends BaseComponent {
   }
 
   disconnectedCallback() {
+    super.disconnectedCallback();
     window.removeEventListener('beforeunload', this._onBeforeUnload);
+    clearTimeout(this._roleSearchTimer);
   }
 
   _onBeforeUnload(e) {
@@ -60,7 +67,8 @@ class GroupDetailPage extends BaseComponent {
       this.setState({ group, savedGroup: { ...group }, loading: false, dirty: false });
       this._loadGroupRoles(id);
       this._loadGroupMembers(id);
-    } catch (err) { if (err.name === "AbortError") return;
+    } catch (err) {
+      if (err.name === "AbortError") return;
       showToast('Failed to load group', 'error');
       this.setState({ loading: false });
     }
@@ -71,7 +79,8 @@ class GroupDetailPage extends BaseComponent {
     try {
       const data = await listGroupRoles(id);
       this.setState({ groupRoles: data.items || data || [], rolesLoading: false });
-    } catch (err) { if (err.name === "AbortError") return;
+    } catch (err) {
+      if (err.name === "AbortError") return;
       this.setState({ groupRoles: [], rolesLoading: false });
     }
   }
@@ -82,7 +91,8 @@ class GroupDetailPage extends BaseComponent {
       // The group object may include members; if not, we leave it empty
       const group = this._state.group;
       this.setState({ groupMembers: group.members || [], membersLoading: false });
-    } catch (err) { if (err.name === "AbortError") return;
+    } catch (err) {
+      if (err.name === "AbortError") return;
       this.setState({ groupMembers: [], membersLoading: false });
     }
   }
@@ -99,7 +109,8 @@ class GroupDetailPage extends BaseComponent {
       showToast('Group updated', 'success');
       const savedGroup = { ...group };
       this.setState({ saving: false, savedGroup, dirty: false });
-    } catch (err) { if (err.name === "AbortError") return;
+    } catch (err) {
+      if (err.name === "AbortError") return;
       showToast('Failed to update group', 'error');
       this.setState({ saving: false });
     }
@@ -126,32 +137,62 @@ class GroupDetailPage extends BaseComponent {
   }
 
   _openAddRoleModal() {
-    this.setState({ showAddRoleModal: true, addRoleLoading: false });
+    this.setState({
+      showAddRoleModal: true,
+      addRoleLoading: false,
+      roleSearch: '',
+      rolePage: 1,
+      selectedRoleId: '',
+    });
     requestAnimationFrame(() => {
       const modal = this.shadowRoot.querySelector('c-modal.add-role-modal');
       if (modal) modal.open();
     });
-    // Load available roles
-    this._loadAvailableRoles();
+    this._loadAvailableRoles('', 1);
   }
 
   _closeAddRoleModal() {
     const modal = this.shadowRoot.querySelector('c-modal.add-role-modal');
     if (modal) modal.close();
-    this.setState({ showAddRoleModal: false });
+    this.setState({ showAddRoleModal: false, selectedRoleId: '' });
   }
 
-  async _loadAvailableRoles() {
-    try {
-      const data = await listRoles({ limit: '100' });
-      const allRoles = data.items || [];
-      // Filter out already-assigned roles
-      const assignedIds = new Set((this._state.groupRoles || []).map(r => r.id));
-      const available = allRoles.filter(r => !assignedIds.has(r.id));
-      this.setState({ availableRoles: available });
-    } catch (err) { if (err.name === "AbortError") return;
-      this.setState({ availableRoles: [] });
+  async _loadAvailableRoles(search = this._state.roleSearch, page = this._state.rolePage) {
+    const group = this._state.group;
+    if (!group?.realm_id) {
+      this.setState({ availableRoles: [], roleTotal: 0 });
+      return;
     }
+
+    try {
+      const pageSize = this._state.rolePageSize;
+      const offset = (page - 1) * pageSize;
+      const data = await listRoles({
+        realm_id: group.realm_id,
+        ...(search ? { search } : {}),
+        limit: String(pageSize),
+        offset: String(offset),
+      }, this.signal);
+      const assignedIds = new Set((this._state.groupRoles || []).map(r => r.id));
+      const available = (data.items || []).filter(r => !assignedIds.has(r.id));
+      this.setState({ availableRoles: available, roleTotal: data.total || 0, rolePage: page });
+    } catch (err) {
+      if (err.name === "AbortError") return;
+      this.setState({ availableRoles: [], roleTotal: 0 });
+    }
+  }
+
+  _onRoleSearch(e) {
+    const roleSearch = e.target.value;
+    this.setState({ roleSearch, rolePage: 1, selectedRoleId: '' });
+    clearTimeout(this._roleSearchTimer);
+    this._roleSearchTimer = setTimeout(() => this._loadAvailableRoles(roleSearch, 1), 300);
+  }
+
+  async _onRolePageChange(e) {
+    const nextPage = e.detail.page;
+    await this.setState({ rolePage: nextPage, selectedRoleId: '' });
+    this._loadAvailableRoles(this._state.roleSearch, nextPage);
   }
 
   async _addRole(roleId) {
@@ -163,7 +204,8 @@ class GroupDetailPage extends BaseComponent {
       showToast('Role assigned', 'success');
       this._closeAddRoleModal();
       this._loadGroupRoles(group.id);
-    } catch (err) { if (err.name === "AbortError") return;
+    } catch (err) {
+      if (err.name === "AbortError") return;
       showToast('Failed to assign role', 'error');
       this.setState({ addRoleLoading: false });
     }
@@ -176,13 +218,14 @@ class GroupDetailPage extends BaseComponent {
       await unassignRoleFromGroup(group.id, roleId);
       showToast('Role removed', 'success');
       this._loadGroupRoles(group.id);
-    } catch (err) { if (err.name === "AbortError") return;
+    } catch (err) {
+      if (err.name === "AbortError") return;
       showToast('Failed to remove role', 'error');
     }
   }
 
   template() {
-    const { group, loading, saving, dirty, groupRoles, groupMembers, rolesLoading, showAddRoleModal, availableRoles, addRoleLoading } = this._state;
+    const { group, loading, saving, dirty, groupRoles, groupMembers, rolesLoading, showAddRoleModal, availableRoles, roleSearch, rolePage, rolePageSize, roleTotal, selectedRoleId, addRoleLoading } = this._state;
     return html`
       <c-page-layout title="Group Details">
         <span class="back-link" @click=${() => this._navigateAway('/groups')}>
@@ -259,20 +302,23 @@ class GroupDetailPage extends BaseComponent {
         ${showAddRoleModal ? html`
           <div class="form">
             <div class="field">
+              <label class="field-label">Search Roles</label>
+              <input class="field-input" type="text" placeholder="Search roles..." .value=${roleSearch} @input=${(e) => this._onRoleSearch(e)} />
+            </div>
+            <div class="field">
               <label class="field-label">Select Role</label>
-              <select class="field-select" id="role-select">
+              <select class="field-select" .value=${selectedRoleId} @change=${(e) => this.setState({ selectedRoleId: e.target.value })}>
                 <option value="">-- Select a role --</option>
                 ${availableRoles.map(r => html`<option value=${r.id}>${r.name}${r.description ? ` - ${r.description}` : ''}</option>`)}
               </select>
+              <div class="hint">Search and page through roles in this group's realm.</div>
             </div>
+            <c-pagination .page=${rolePage} .pageSize=${rolePageSize} .total=${roleTotal} @page-change=${(e) => this._onRolePageChange(e)}></c-pagination>
           </div>
         ` : ''}
         <div slot="footer">
           <c-button variant="secondary" @click=${() => this._closeAddRoleModal()}>Cancel</c-button>
-          <c-button variant="primary" ?disabled=${addRoleLoading} @click=${() => {
-        const select = this.shadowRoot.querySelector('#role-select');
-        if (select && select.value) this._addRole(select.value);
-      }}>
+          <c-button variant="primary" ?disabled=${addRoleLoading || !selectedRoleId} @click=${() => this._addRole(selectedRoleId)}>
             ${addRoleLoading ? 'Adding...' : 'Add Role'}
           </c-button>
         </div>

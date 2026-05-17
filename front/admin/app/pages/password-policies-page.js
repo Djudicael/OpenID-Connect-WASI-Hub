@@ -1,6 +1,7 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
-import { listRealms, getRealm } from '../services/realm-service.js';
+import { listAllRealms } from '../services/realm-service.js';
+import { resolveSelectedRealmId, setSelectedRealmId } from '../core/realm-context.js';
 import { get, put } from '../core/http.js';
 import { showToast } from '../components/ui/toast.js';
 import { handleApiError } from '../utils/error-handler.js';
@@ -32,11 +33,11 @@ class PasswordPoliciesPage extends BaseComponent {
 
   async _loadRealms() {
     try {
-      const data = await listRealms({ limit: '100' }, this.signal);
-      const realms = data.items || [];
-      const defaultRealmId = realms.length > 0 ? realms[0].id : '';
-      this.setState({ realms, realmId: defaultRealmId });
-      if (defaultRealmId) this._loadPolicy(defaultRealmId);
+      const realms = await listAllRealms(this.signal);
+      const realmId = resolveSelectedRealmId(realms, this._state.realmId);
+      setSelectedRealmId(realmId);
+      this.setState({ realms, realmId });
+      if (realmId) this._loadPolicy(realmId);
     } catch (err) {
       if (err.name === 'AbortError') return;
       handleApiError(err, 'Failed to load realms');
@@ -72,6 +73,7 @@ class PasswordPoliciesPage extends BaseComponent {
 
   async _onRealmChange(e) {
     const realmId = e.target.value;
+    setSelectedRealmId(realmId);
     await this.setState({ realmId });
     this._loadPolicy(realmId);
   }

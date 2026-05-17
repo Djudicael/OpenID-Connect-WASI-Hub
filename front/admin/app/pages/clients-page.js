@@ -1,7 +1,8 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
 import { listClients, createClient, deleteClient } from '../services/client-service.js';
-import { listRealms } from '../services/realm-service.js';
+import { listAllRealms } from '../services/realm-service.js';
+import { resolveSelectedRealmId, setSelectedRealmId } from '../core/realm-context.js';
 import { listScopes } from '../services/scope-service.js';
 import { navigate } from '../core/router.js';
 import { showToast } from '../components/ui/toast.js';
@@ -22,6 +23,7 @@ class ClientsPage extends BaseComponent {
       pageSize: 20,
       total: 0,
       showCreateModal: false,
+      realmId: '',
       createRealmId: '',
       createClientId: '',
       createName: '',
@@ -52,7 +54,6 @@ class ClientsPage extends BaseComponent {
 
   connectedCallback() {
     super.connectedCallback();
-    this._loadClients();
     this._loadRealms();
   }
 
@@ -63,14 +64,17 @@ class ClientsPage extends BaseComponent {
 
   async _loadRealms() {
     try {
-      const data = await listRealms({ limit: '100' }, this.signal);
-      const realms = data.items || [];
-      const defaultRealmId = realms.length > 0 ? realms[0].id : '';
-      this.setState({ realms, createRealmId: defaultRealmId });
+      const realms = await listAllRealms(this.signal);
+      const realmId = resolveSelectedRealmId(realms, this._state.realmId || this._state.createRealmId);
+      setSelectedRealmId(realmId);
+      await this.setState({ realms, realmId, createRealmId: realmId });
+      this._loadScopesForRealm(realmId);
+      this._loadClients();
     } catch (err) {
       if (err.name === 'AbortError') return;
       handleApiError(err, 'Failed to load realms');
-      this.setState({ realms: [] });
+      this.setState({ realms: [], realmId: '', createRealmId: '' });
+      this._loadClients();
     }
   }
 
@@ -89,9 +93,10 @@ class ClientsPage extends BaseComponent {
   async _loadClients() {
     this.setState({ loading: true });
     try {
-      const { search, page, pageSize } = this._state;
+      const { search, page, pageSize, realmId } = this._state;
       const offset = (page - 1) * pageSize;
       const data = await listClients({
+        ...(realmId ? { realm_id: realmId } : {}),
         ...(search ? { search } : {}),
         limit: String(pageSize),
         offset: String(offset),
@@ -113,6 +118,14 @@ class ClientsPage extends BaseComponent {
 
   async _onPageChange(e) {
     await this.setState({ page: e.detail.page });
+    this._loadClients();
+  }
+
+  async _onRealmChange(e) {
+    const realmId = e.target.value;
+    setSelectedRealmId(realmId);
+    await this.setState({ realmId, createRealmId: realmId, page: 1 });
+    this._loadScopesForRealm(realmId);
     this._loadClients();
   }
 
@@ -165,6 +178,7 @@ class ClientsPage extends BaseComponent {
   _openCreateModal() {
     this.setState({
       showCreateModal: true,
+      createRealmId: this._state.realmId,
       createClientId: '',
       createName: '',
       createClientType: 'confidential',
@@ -246,7 +260,7 @@ class ClientsPage extends BaseComponent {
   }
 
   template() {
-    const { clients, loading, search, page, pageSize, total, showCreateModal, createRealmId, createClientId, createName, createClientType, createClientSecret, createRedirectUris, createAllowedScopes, createAllowedGrantTypes, createPkceRequired, createEnabled, createLoading, realms, availableScopes, selectedScopes, selectedIds } = this._state;
+    const { clients, loading, search, page, pageSize, total, showCreateModal, realmId, createRealmId, createClientId, createName, createClientType, createClientSecret, createRedirectUris, createAllowedScopes, createAllowedGrantTypes, createPkceRequired, createEnabled, createLoading, realms, availableScopes, selectedScopes, selectedIds } = this._state;
     const columns = [
       {
         key: 'select',
@@ -262,11 +276,19 @@ class ClientsPage extends BaseComponent {
     ];
     return html`<c-page-layout title="Clients">
         <div slot="actions"><c-button variant="primary" @click=${() => this._openCreateModal()}>+ Add Client</c-button></div>
-        <div class="toolbar"><input class="search-input" type="text" placeholder="Search clients..." aria-label="Search clients" .value=${search} @input=${(e) => this._onSearch(e)}/></div>
+        <div class="toolbar">
+          <label style="font-size:0.875rem;color:var(--color-text-muted)">
+            Realm:
+            <select class="realm-select" aria-label="Select realm" .value=${realmId} @change=${(e) => this._onRealmChange(e)}>
+              ${realms.map(r => html`<option value=${r.id} ?selected=${realmId === r.id}>${r.display_name || r.name}</option>`)}
+            </select>
+          </label>
+          <input class="search-input" type="text" placeholder="Search clients..." aria-label="Search clients" .value=${search} @input=${(e) => this._onSearch(e)}/>
+        </div>
         ${selectedIds.size > 0 ? html`<div class="bulk-bar"><span>${selectedIds.size} selected</span><c-button size="sm" variant="danger" @click=${() => this._bulkDelete()}>Delete Selected</c-button><c-button size="sm" variant="ghost" @click=${() => this.setState({ selectedIds: new Set() })}>Clear</c-button></div>` : ''}
         ${loading ? html`<div style="padding:2rem;text-align:center;color:var(--color-text-muted)">Loading...</div>`
         : clients.length === 0 ? html`<div class="empty-state"><div class="empty-state-icon">&#128220;</div><div class="empty-state-text">${search ? 'No clients match your search' : 'No clients yet'}</div>${!search ? html`<c-button variant="primary" @click=${() => this._openCreateModal()}>+ Add Client</c-button>` : ''}</div>`
-        : html`<c-table .columns=${columns} .rows=${clients}></c-table>`}
+          : html`<c-table .columns=${columns} .rows=${clients}></c-table>`}
         <c-pagination .page=${page} .pageSize=${pageSize} .total=${total} @page-change=${(e) => this._onPageChange(e)}></c-pagination>
       </c-page-layout>
       <c-modal title="Create Client" @close=${() => this._closeCreateModal()}>

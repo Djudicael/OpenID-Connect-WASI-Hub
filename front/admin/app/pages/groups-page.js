@@ -1,7 +1,9 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
 import { listGroups, createGroup, deleteGroup } from '../services/group-service.js';
-import { listRealms } from '../services/realm-service.js';
+import { listAllRealms } from '../services/realm-service.js';
+import { resolveSelectedRealmId, setSelectedRealmId } from '../core/realm-context.js';
+import { listAllPages } from '../utils/http-utils.js';
 import { navigate } from '../core/router.js';
 import { showToast } from '../components/ui/toast.js';
 import { handleApiError } from '../utils/error-handler.js';
@@ -13,6 +15,7 @@ class GroupsPage extends BaseComponent {
   constructor() {
     super();
     this._searchTimer = null;
+    this._parentSearchTimer = null;
     this._state = {
       groups: [],
       loading: false,
@@ -21,6 +24,7 @@ class GroupsPage extends BaseComponent {
       pageSize: 20,
       total: 0,
       showCreateModal: false,
+      realmId: '',
       createRealmId: '',
       createName: '',
       createDescription: '',
@@ -28,40 +32,48 @@ class GroupsPage extends BaseComponent {
       createLoading: false,
       realms: [],
       allGroups: [],
+      createParentOptions: [],
+      createParentSearch: '',
+      createParentPage: 1,
+      createParentPageSize: 20,
+      createParentTotal: 0,
       selectedIds: new Set(),
     };
   }
 
   connectedCallback() {
     super.connectedCallback();
-    this._loadGroups();
     this._loadRealms();
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
     clearTimeout(this._searchTimer);
+    clearTimeout(this._parentSearchTimer);
   }
 
   async _loadRealms() {
     try {
-      const data = await listRealms({ limit: '100' }, this.signal);
-      const realms = data.items || [];
-      const defaultRealmId = realms.length > 0 ? realms[0].id : '';
-      this.setState({ realms, createRealmId: defaultRealmId });
+      const realms = await listAllRealms(this.signal);
+      const realmId = resolveSelectedRealmId(realms, this._state.realmId || this._state.createRealmId);
+      setSelectedRealmId(realmId);
+      await this.setState({ realms, realmId, createRealmId: realmId });
+      this._loadGroups();
     } catch (err) {
       if (err.name === 'AbortError') return;
       handleApiError(err, 'Failed to load realms');
-      this.setState({ realms: [] });
+      this.setState({ realms: [], realmId: '', createRealmId: '' });
+      this._loadGroups();
     }
   }
 
   async _loadGroups() {
     this.setState({ loading: true });
     try {
-      const { search, page, pageSize } = this._state;
+      const { search, page, pageSize, realmId } = this._state;
       const offset = (page - 1) * pageSize;
       const data = await listGroups({
+        ...(realmId ? { realm_id: realmId } : {}),
         ...(search ? { search } : {}),
         limit: String(pageSize),
         offset: String(offset),
@@ -72,8 +84,12 @@ class GroupsPage extends BaseComponent {
         loading: false,
         selectedIds: new Set(),
       });
-      const allData = await listGroups({ limit: '100' }, this.signal);
-      this.setState({ allGroups: allData.items || [] });
+      const allGroups = await listAllPages(
+        listGroups,
+        realmId ? { realm_id: realmId } : {},
+        this.signal,
+      );
+      this.setState({ allGroups });
     } catch (err) {
       if (err.name === 'AbortError') return;
       handleApiError(err, 'Failed to load groups');
@@ -90,6 +106,13 @@ class GroupsPage extends BaseComponent {
 
   async _onPageChange(e) {
     await this.setState({ page: e.detail.page });
+    this._loadGroups();
+  }
+
+  async _onRealmChange(e) {
+    const realmId = e.target.value;
+    setSelectedRealmId(realmId);
+    await this.setState({ realmId, createRealmId: realmId, page: 1 });
     this._loadGroups();
   }
 
@@ -142,21 +165,76 @@ class GroupsPage extends BaseComponent {
   _openCreateModal() {
     this.setState({
       showCreateModal: true,
+      createRealmId: this._state.realmId,
       createName: '',
       createDescription: '',
       createParentId: '',
+      createParentSearch: '',
+      createParentPage: 1,
       createLoading: false,
     });
     requestAnimationFrame(() => {
       const modal = this.shadowRoot.querySelector('c-modal');
       if (modal) modal.open();
     });
+    this._loadCreateParentOptions(this._state.realmId, '', 1);
   }
 
   _closeCreateModal() {
     const modal = this.shadowRoot.querySelector('c-modal');
     if (modal) modal.close();
     this.setState({ showCreateModal: false });
+  }
+
+  async _loadCreateParentOptions(realmId = this._state.createRealmId, search = this._state.createParentSearch, page = this._state.createParentPage) {
+    if (!realmId) {
+      this.setState({ createParentOptions: [], createParentTotal: 0 });
+      return;
+    }
+
+    const pageSize = this._state.createParentPageSize;
+    const offset = (page - 1) * pageSize;
+    try {
+      const data = await listGroups({
+        realm_id: realmId,
+        ...(search ? { search } : {}),
+        limit: String(pageSize),
+        offset: String(offset),
+      }, this.signal);
+      this.setState({
+        createParentOptions: data.items || [],
+        createParentTotal: data.total || 0,
+        createParentPage: page,
+      });
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      handleApiError(err, 'Failed to load parent groups');
+      this.setState({ createParentOptions: [], createParentTotal: 0 });
+    }
+  }
+
+  async _onCreateRealmChange(e) {
+    const createRealmId = e.target.value;
+    await this.setState({
+      createRealmId,
+      createParentId: '',
+      createParentSearch: '',
+      createParentPage: 1,
+    });
+    this._loadCreateParentOptions(createRealmId, '', 1);
+  }
+
+  _onCreateParentSearch(e) {
+    const value = e.target.value;
+    this.setState({ createParentSearch: value, createParentPage: 1 });
+    clearTimeout(this._parentSearchTimer);
+    this._parentSearchTimer = setTimeout(() => this._loadCreateParentOptions(this._state.createRealmId, value, 1), 300);
+  }
+
+  async _onCreateParentPageChange(e) {
+    const nextPage = e.detail.page;
+    await this.setState({ createParentPage: nextPage });
+    this._loadCreateParentOptions(this._state.createRealmId, this._state.createParentSearch, nextPage);
   }
 
   async _createGroup() {
@@ -182,7 +260,7 @@ class GroupsPage extends BaseComponent {
   }
 
   template() {
-    const { groups, loading, search, page, pageSize, total, showCreateModal, createRealmId, createName, createDescription, createParentId, createLoading, realms, allGroups, selectedIds } = this._state;
+    const { groups, loading, search, page, pageSize, total, showCreateModal, realmId, createRealmId, createName, createDescription, createParentId, createLoading, realms, allGroups, createParentOptions, createParentSearch, createParentPage, createParentPageSize, createParentTotal, selectedIds } = this._state;
     const columns = [
       {
         key: 'select',
@@ -220,6 +298,12 @@ class GroupsPage extends BaseComponent {
           </c-button>
         </div>
         <div class="toolbar">
+          <label style="font-size:0.875rem;color:var(--color-text-muted)">
+            Realm:
+            <select class="realm-select" aria-label="Select realm" .value=${realmId} @change=${(e) => this._onRealmChange(e)}>
+              ${realms.map(r => html`<option value=${r.id} ?selected=${realmId === r.id}>${r.display_name || r.name}</option>`)}
+            </select>
+          </label>
           <input
             class="search-input"
             type="text"
@@ -258,7 +342,7 @@ class GroupsPage extends BaseComponent {
                 class="field-select"
                 id="create-group-realm"
                 .value=${createRealmId}
-                @change=${(e) => this.setState({ createRealmId: e.target.value })}
+                @change=${(e) => this._onCreateRealmChange(e)}
               >
                 ${realms.map(r => html`<option value=${r.id} ?selected=${createRealmId === r.id}>${r.display_name || r.name}</option>`)}
               </select>
@@ -286,7 +370,15 @@ class GroupsPage extends BaseComponent {
               />
             </div>
             <div class="field">
-              <label class="field-label" for="create-group-parent">Parent Group</label>
+              <label class="field-label" for="create-group-parent-search">Parent Group</label>
+              <input
+                class="field-input"
+                id="create-group-parent-search"
+                type="text"
+                placeholder="Search parent groups..."
+                .value=${createParentSearch}
+                @input=${(e) => this._onCreateParentSearch(e)}
+              />
               <select
                 class="field-select"
                 id="create-group-parent"
@@ -294,9 +386,15 @@ class GroupsPage extends BaseComponent {
                 @change=${(e) => this.setState({ createParentId: e.target.value })}
               >
                 <option value="">None</option>
-                ${allGroups.map(g => html`<option value=${g.id} ?selected=${createParentId === g.id}>${g.name}</option>`)}
+                ${createParentOptions.map(g => html`<option value=${g.id} ?selected=${createParentId === g.id}>${g.name}</option>`)}
               </select>
-              <div class="hint">Optional parent group</div>
+              <div class="hint">Optional parent group. Search and page through groups in the selected realm.</div>
+              <c-pagination
+                .page=${createParentPage}
+                .pageSize=${createParentPageSize}
+                .total=${createParentTotal}
+                @page-change=${(e) => this._onCreateParentPageChange(e)}
+              ></c-pagination>
             </div>
           </div>
         ` : ''}

@@ -1,7 +1,8 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
 import { listScopes, createScope, deleteScope } from '../services/scope-service.js';
-import { listRealms } from '../services/realm-service.js';
+import { listAllRealms } from '../services/realm-service.js';
+import { resolveSelectedRealmId, setSelectedRealmId } from '../core/realm-context.js';
 import { showToast } from '../components/ui/toast.js';
 
 class ScopesPage extends BaseComponent {
@@ -27,11 +28,11 @@ class ScopesPage extends BaseComponent {
 
   async _loadRealms() {
     try {
-      const data = await listRealms({ limit: '100' });
-      const realms = data.items || [];
-      const defaultRealmId = realms.length > 0 ? realms[0].id : '';
-      this.setState({ realms, realmId: defaultRealmId });
-      if (defaultRealmId) this._loadScopes();
+      const realms = await listAllRealms(this.signal);
+      const realmId = resolveSelectedRealmId(realms, this._state.realmId);
+      setSelectedRealmId(realmId);
+      this.setState({ realms, realmId });
+      if (realmId) this._loadScopes();
     } catch (err) {
       showToast('Failed to load realms', 'error');
     }
@@ -51,7 +52,9 @@ class ScopesPage extends BaseComponent {
   }
 
   _onRealmChange(e) {
-    this.setState({ realmId: e.target.value });
+    const realmId = e.target.value;
+    setSelectedRealmId(realmId);
+    this.setState({ realmId });
     requestAnimationFrame(() => this._loadScopes());
   }
 

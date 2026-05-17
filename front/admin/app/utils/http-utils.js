@@ -10,6 +10,36 @@ export function buildQuery(params) {
   return qs.toString() ? `?${qs.toString()}` : '';
 }
 
+export async function listAllPages(listFn, params = {}, signal, options = {}) {
+  const pageSize = Number(options.pageSize) || 100;
+  let offset = 0;
+  let total = null;
+  const items = [];
+
+  while (true) {
+    const response = await listFn({
+      ...params,
+      limit: String(pageSize),
+      offset: String(offset),
+    }, signal);
+
+    const pageItems = response?.items || [];
+    items.push(...pageItems);
+
+    if (typeof response?.total === 'number') {
+      total = response.total;
+    }
+
+    if (pageItems.length === 0) break;
+    offset += pageItems.length;
+
+    if (pageItems.length < pageSize) break;
+    if (total !== null && offset >= total) break;
+  }
+
+  return items;
+}
+
 export function createCrudService(resource) {
   return {
     list: (params = {}, signal) => get(`/api/${resource}${buildQuery(params)}`, signal),

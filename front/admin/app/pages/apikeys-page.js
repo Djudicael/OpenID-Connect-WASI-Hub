@@ -1,7 +1,8 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
 import { listApiKeys, deleteApiKey, rotateApiKey } from '../services/apikey-service.js';
-import { listRealms } from '../services/realm-service.js';
+import { listAllRealms } from '../services/realm-service.js';
+import { resolveSelectedRealmId, setSelectedRealmId } from '../core/realm-context.js';
 import { navigate } from '../core/router.js';
 import { formatDate, formatRelativeTime } from '../utils/format.js';
 import { showToast } from '../components/ui/toast.js';
@@ -28,10 +29,10 @@ class ApiKeysPage extends BaseComponent {
 
   async _loadRealms() {
     try {
-      const data = await listRealms({ limit: '100' }, this.signal);
-      const realms = data.items || [];
-      const defaultRealmId = realms.length > 0 ? realms[0].id : '00000000-0000-0000-0000-000000000000';
-      this.setState({ realms, realmId: defaultRealmId });
+      const realms = await listAllRealms(this.signal);
+      const realmId = resolveSelectedRealmId(realms, this._state.realmId) || '00000000-0000-0000-0000-000000000000';
+      setSelectedRealmId(realmId);
+      this.setState({ realms, realmId });
       this._loadKeys();
     } catch (err) {
       if (err.name === 'AbortError') return;
@@ -95,6 +96,7 @@ class ApiKeysPage extends BaseComponent {
 
   async _onRealmChange(e) {
     const realmId = e.target.value;
+    setSelectedRealmId(realmId);
     await this.setState({ realmId });
     this._loadKeys();
   }

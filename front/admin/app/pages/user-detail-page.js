@@ -32,6 +32,16 @@ class UserDetailPage extends BaseComponent {
       showAddGroupModal: false,
       availableRoles: [],
       availableGroups: [],
+      roleSearch: '',
+      rolePage: 1,
+      rolePageSize: 20,
+      roleTotal: 0,
+      selectedRoleId: '',
+      groupSearch: '',
+      groupPage: 1,
+      groupPageSize: 20,
+      groupTotal: 0,
+      selectedGroupId: '',
       addRoleLoading: false,
       addGroupLoading: false,
     };
@@ -47,7 +57,10 @@ class UserDetailPage extends BaseComponent {
   }
 
   disconnectedCallback() {
+    super.disconnectedCallback();
     window.removeEventListener('beforeunload', this._onBeforeUnload);
+    clearTimeout(this._roleSearchTimer);
+    clearTimeout(this._groupSearchTimer);
   }
 
   _onBeforeUnload(e) {
@@ -140,36 +153,69 @@ class UserDetailPage extends BaseComponent {
     try {
       const data = await listUserRoles(userId);
       this.setState({ userRoles: data.items || data || [], rolesLoading: false });
-    } catch (err) { if (err.name === "AbortError") return;
+    } catch (err) {
+      if (err.name === "AbortError") return;
       this.setState({ userRoles: [], rolesLoading: false });
     }
   }
 
   _openAddRoleModal() {
-    this.setState({ showAddRoleModal: true, addRoleLoading: false });
+    this.setState({
+      showAddRoleModal: true,
+      addRoleLoading: false,
+      roleSearch: '',
+      rolePage: 1,
+      selectedRoleId: '',
+    });
     requestAnimationFrame(() => {
       const modal = this.shadowRoot.querySelector('c-modal.add-role-modal');
       if (modal) modal.open();
     });
-    this._loadAvailableRoles();
+    this._loadAvailableRoles('', 1);
   }
 
   _closeAddRoleModal() {
     const modal = this.shadowRoot.querySelector('c-modal.add-role-modal');
     if (modal) modal.close();
-    this.setState({ showAddRoleModal: false });
+    this.setState({ showAddRoleModal: false, selectedRoleId: '' });
   }
 
-  async _loadAvailableRoles() {
-    try {
-      const data = await listRoles({ limit: '100' });
-      const allRoles = data.items || [];
-      const assignedIds = new Set((this._state.userRoles || []).map(r => r.id));
-      const available = allRoles.filter(r => !assignedIds.has(r.id));
-      this.setState({ availableRoles: available });
-    } catch (err) { if (err.name === "AbortError") return;
-      this.setState({ availableRoles: [] });
+  async _loadAvailableRoles(search = this._state.roleSearch, page = this._state.rolePage) {
+    const user = this._state.user;
+    if (!user?.realm_id) {
+      this.setState({ availableRoles: [], roleTotal: 0 });
+      return;
     }
+
+    try {
+      const pageSize = this._state.rolePageSize;
+      const offset = (page - 1) * pageSize;
+      const data = await listRoles({
+        realm_id: user.realm_id,
+        ...(search ? { search } : {}),
+        limit: String(pageSize),
+        offset: String(offset),
+      }, this.signal);
+      const assignedIds = new Set((this._state.userRoles || []).map(r => r.id));
+      const available = (data.items || []).filter(r => !assignedIds.has(r.id));
+      this.setState({ availableRoles: available, roleTotal: data.total || 0, rolePage: page });
+    } catch (err) {
+      if (err.name === "AbortError") return;
+      this.setState({ availableRoles: [], roleTotal: 0 });
+    }
+  }
+
+  _onRoleSearch(e) {
+    const roleSearch = e.target.value;
+    this.setState({ roleSearch, rolePage: 1, selectedRoleId: '' });
+    clearTimeout(this._roleSearchTimer);
+    this._roleSearchTimer = setTimeout(() => this._loadAvailableRoles(roleSearch, 1), 300);
+  }
+
+  async _onRolePageChange(e) {
+    const nextPage = e.detail.page;
+    await this.setState({ rolePage: nextPage, selectedRoleId: '' });
+    this._loadAvailableRoles(this._state.roleSearch, nextPage);
   }
 
   async _addRole(roleId) {
@@ -208,36 +254,69 @@ class UserDetailPage extends BaseComponent {
     try {
       const data = await listUserGroups(userId);
       this.setState({ userGroups: data.items || data || [], groupsLoading: false });
-    } catch (err) { if (err.name === "AbortError") return;
+    } catch (err) {
+      if (err.name === "AbortError") return;
       this.setState({ userGroups: [], groupsLoading: false });
     }
   }
 
   _openAddGroupModal() {
-    this.setState({ showAddGroupModal: true, addGroupLoading: false });
+    this.setState({
+      showAddGroupModal: true,
+      addGroupLoading: false,
+      groupSearch: '',
+      groupPage: 1,
+      selectedGroupId: '',
+    });
     requestAnimationFrame(() => {
       const modal = this.shadowRoot.querySelector('c-modal.add-group-modal');
       if (modal) modal.open();
     });
-    this._loadAvailableGroups();
+    this._loadAvailableGroups('', 1);
   }
 
   _closeAddGroupModal() {
     const modal = this.shadowRoot.querySelector('c-modal.add-group-modal');
     if (modal) modal.close();
-    this.setState({ showAddGroupModal: false });
+    this.setState({ showAddGroupModal: false, selectedGroupId: '' });
   }
 
-  async _loadAvailableGroups() {
-    try {
-      const data = await listGroups({ limit: '100' });
-      const allGroups = data.items || [];
-      const assignedIds = new Set((this._state.userGroups || []).map(g => g.id));
-      const available = allGroups.filter(g => !assignedIds.has(g.id));
-      this.setState({ availableGroups: available });
-    } catch (err) { if (err.name === "AbortError") return;
-      this.setState({ availableGroups: [] });
+  async _loadAvailableGroups(search = this._state.groupSearch, page = this._state.groupPage) {
+    const user = this._state.user;
+    if (!user?.realm_id) {
+      this.setState({ availableGroups: [], groupTotal: 0 });
+      return;
     }
+
+    try {
+      const pageSize = this._state.groupPageSize;
+      const offset = (page - 1) * pageSize;
+      const data = await listGroups({
+        realm_id: user.realm_id,
+        ...(search ? { search } : {}),
+        limit: String(pageSize),
+        offset: String(offset),
+      }, this.signal);
+      const assignedIds = new Set((this._state.userGroups || []).map(g => g.id));
+      const available = (data.items || []).filter(g => !assignedIds.has(g.id));
+      this.setState({ availableGroups: available, groupTotal: data.total || 0, groupPage: page });
+    } catch (err) {
+      if (err.name === "AbortError") return;
+      this.setState({ availableGroups: [], groupTotal: 0 });
+    }
+  }
+
+  _onGroupSearch(e) {
+    const groupSearch = e.target.value;
+    this.setState({ groupSearch, groupPage: 1, selectedGroupId: '' });
+    clearTimeout(this._groupSearchTimer);
+    this._groupSearchTimer = setTimeout(() => this._loadAvailableGroups(groupSearch, 1), 300);
+  }
+
+  async _onGroupPageChange(e) {
+    const nextPage = e.detail.page;
+    await this.setState({ groupPage: nextPage, selectedGroupId: '' });
+    this._loadAvailableGroups(this._state.groupSearch, nextPage);
   }
 
   async _addGroup(groupId) {
@@ -270,7 +349,7 @@ class UserDetailPage extends BaseComponent {
   }
 
   template() {
-    const { user, loading, saving, dirty } = this._state;
+    const { user, loading, saving, dirty, roleSearch, rolePage, rolePageSize, roleTotal, selectedRoleId, groupSearch, groupPage, groupPageSize, groupTotal, selectedGroupId } = this._state;
     return html`
       <c-page-layout title="User Details">
         <span class="back-link" @click=${() => this._navigateAway('/users')}>
@@ -460,20 +539,23 @@ class UserDetailPage extends BaseComponent {
         ${this._state.showAddRoleModal ? html`
           <div class="form">
             <div class="field">
+              <label class="field-label">Search Roles</label>
+              <input class="field-input" type="text" placeholder="Search roles..." .value=${roleSearch} @input=${(e) => this._onRoleSearch(e)} />
+            </div>
+            <div class="field">
               <label class="field-label">Select Role</label>
-              <select class="field-select" id="role-select">
+              <select class="field-select" .value=${selectedRoleId} @change=${(e) => this.setState({ selectedRoleId: e.target.value })}>
                 <option value="">-- Select a role --</option>
                 ${this._state.availableRoles.map(r => html`<option value=${r.id}>${r.name}${r.description ? ` - ${r.description}` : ''}</option>`)}
               </select>
+              <div class="hint">Search and page through roles in this user's realm.</div>
             </div>
+            <c-pagination .page=${rolePage} .pageSize=${rolePageSize} .total=${roleTotal} @page-change=${(e) => this._onRolePageChange(e)}></c-pagination>
           </div>
         ` : ''}
         <div slot="footer">
           <c-button variant="secondary" @click=${() => this._closeAddRoleModal()}>Cancel</c-button>
-          <c-button variant="primary" ?disabled=${this._state.addRoleLoading} @click=${() => {
-        const select = this.shadowRoot.querySelector('#role-select');
-        if (select && select.value) this._addRole(select.value);
-      }}>
+          <c-button variant="primary" ?disabled=${this._state.addRoleLoading || !selectedRoleId} @click=${() => this._addRole(selectedRoleId)}>
             ${this._state.addRoleLoading ? 'Adding...' : 'Add Role'}
           </c-button>
         </div>
@@ -483,20 +565,23 @@ class UserDetailPage extends BaseComponent {
         ${this._state.showAddGroupModal ? html`
           <div class="form">
             <div class="field">
+              <label class="field-label">Search Groups</label>
+              <input class="field-input" type="text" placeholder="Search groups..." .value=${groupSearch} @input=${(e) => this._onGroupSearch(e)} />
+            </div>
+            <div class="field">
               <label class="field-label">Select Group</label>
-              <select class="field-select" id="group-select">
+              <select class="field-select" .value=${selectedGroupId} @change=${(e) => this.setState({ selectedGroupId: e.target.value })}>
                 <option value="">-- Select a group --</option>
                 ${this._state.availableGroups.map(g => html`<option value=${g.id}>${g.name}${g.description ? ` - ${g.description}` : ''}</option>`)}
               </select>
+              <div class="hint">Search and page through groups in this user's realm.</div>
             </div>
+            <c-pagination .page=${groupPage} .pageSize=${groupPageSize} .total=${groupTotal} @page-change=${(e) => this._onGroupPageChange(e)}></c-pagination>
           </div>
         ` : ''}
         <div slot="footer">
           <c-button variant="secondary" @click=${() => this._closeAddGroupModal()}>Cancel</c-button>
-          <c-button variant="primary" ?disabled=${this._state.addGroupLoading} @click=${() => {
-        const select = this.shadowRoot.querySelector('#group-select');
-        if (select && select.value) this._addGroup(select.value);
-      }}>
+          <c-button variant="primary" ?disabled=${this._state.addGroupLoading || !selectedGroupId} @click=${() => this._addGroup(selectedGroupId)}>
             ${this._state.addGroupLoading ? 'Adding...' : 'Add Group'}
           </c-button>
         </div>
