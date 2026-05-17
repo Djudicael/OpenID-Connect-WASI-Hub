@@ -696,12 +696,14 @@ async fn exchange_code_for_tokens(
         state.issuer, realm_name, provider_alias
     );
 
+    let client_secret = state.decrypt_sensitive_string_or_plaintext(&provider.client_secret)?;
+
     let body = serde_urlencoded::to_string(&[
         ("grant_type", "authorization_code"),
         ("code", code),
         ("redirect_uri", &redirect_uri),
         ("client_id", &provider.client_id),
-        ("client_secret", &provider.client_secret),
+        ("client_secret", &client_secret),
     ])
     .map_err(|e| oidc_core::OidcError::Internal(format!("URL encoding failed: {e}")))?;
 

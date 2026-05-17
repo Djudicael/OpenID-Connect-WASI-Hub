@@ -70,6 +70,50 @@ impl oidc_apikey::ApiKeyVerifierState for AppState {
 }
 
 impl AppState {
+    /// Decode the configured encryption key into raw bytes.
+    pub fn decode_encryption_key(&self) -> Result<[u8; 32], oidc_core::OidcError> {
+        let bytes = hex::decode(&self.config.encryption_key).map_err(|e| {
+            oidc_core::OidcError::Internal(format!("Invalid encryption key hex: {e}"))
+        })?;
+        if bytes.len() != 32 {
+            return Err(oidc_core::OidcError::Internal(
+                "Encryption key must be 32 bytes (64 hex chars)".to_string(),
+            ));
+        }
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&bytes);
+        Ok(key)
+    }
+
+    /// Encrypt an arbitrary sensitive value using the server encryption key.
+    pub fn encrypt_sensitive_value(
+        &self,
+        plaintext: &[u8],
+    ) -> Result<String, oidc_core::OidcError> {
+        use aes_gcm::aead::Aead;
+        use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
+        use base64::Engine;
+
+        let key_bytes = self.decode_encryption_key()?;
+        let cipher = Aes256Gcm::new_from_slice(&key_bytes)
+            .map_err(|e| oidc_core::OidcError::Internal(format!("AES key error: {e}")))?;
+
+        let mut nonce_bytes = [0u8; 12];
+        getrandom::fill(&mut nonce_bytes)
+            .map_err(|e| oidc_core::OidcError::Internal(format!("getrandom failed: {e}")))?;
+        let nonce = Nonce::from_slice(&nonce_bytes);
+
+        let ciphertext = cipher
+            .encrypt(nonce, plaintext)
+            .map_err(|e| oidc_core::OidcError::Internal(format!("AES-GCM encrypt error: {e}")))?;
+
+        let mut result = Vec::with_capacity(12 + ciphertext.len());
+        result.extend_from_slice(&nonce_bytes);
+        result.extend_from_slice(&ciphertext);
+
+        Ok(base64::engine::general_purpose::STANDARD.encode(&result))
+    }
+
     /// Build state directly from a config struct (no env vars).
     pub fn from_config(config: AppConfig) -> Self {
         validate_encryption_key_hex(&config.encryption_key);

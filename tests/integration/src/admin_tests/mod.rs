@@ -482,6 +482,47 @@ async fn test_delete_client() {
 // ===================================================================
 
 #[tokio::test]
+async fn test_create_realm_encrypts_signing_keys_at_rest() {
+    let app = TestApp::new().await;
+    let token = admin_login(&app).await;
+
+    let resp = admin_client(&app, &token)
+        .post(&format!("{}/api/realms", app.url()))
+        .bearer_auth(&token)
+        .json(&json!({
+            "name": "encrypted-keys-realm",
+            "display_name": "Encrypted Keys Realm",
+            "enabled": true,
+        }))
+        .send()
+        .await
+        .expect("create realm failed");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body: Value = resp.json().await.unwrap();
+    let realm_id = body["id"].as_str().expect("realm id must be present");
+
+    let mut conn = app.db_conn().await;
+    let row = conn
+        .query_one_params(
+            "SELECT rsa_private_pem, ed25519_private_pem FROM realm_signing_keys WHERE realm_id = $1",
+            &[&uuid::Uuid::parse_str(realm_id).expect("realm id should parse")],
+        )
+        .await
+        .expect("realm signing keys lookup should succeed")
+        .expect("realm signing keys should exist");
+    let rsa_private = row
+        .get::<String>(0)
+        .expect("rsa_private_pem should be readable");
+    let ed_private = row
+        .get::<String>(1)
+        .expect("ed25519_private_pem should be readable");
+    assert!(!rsa_private.contains("BEGIN RSA PRIVATE KEY"));
+    assert!(!ed_private.contains("BEGIN PRIVATE KEY"));
+    let _ = conn.close().await;
+}
+
+#[tokio::test]
 async fn test_create_realm() {
     let app = TestApp::new().await;
     let token = admin_login(&app).await;

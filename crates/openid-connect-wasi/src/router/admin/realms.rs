@@ -151,13 +151,28 @@ pub async fn create(State(state): State<AppState>, auth: AdminAuth, body: String
             return internal_error();
         }
     }
-    let keys = match oidc_oidc::tokens::generate_realm_keys(realm.id) {
+    let mut keys = match oidc_oidc::tokens::generate_realm_keys(realm.id) {
         Ok(k) => k,
         Err(e) => {
             tracing::error!("generate realm keys error: {e}");
             return internal_error();
         }
     };
+    keys.rsa_private_pem = match state.encrypt_sensitive_value(keys.rsa_private_pem.as_bytes()) {
+        Ok(value) => value,
+        Err(e) => {
+            tracing::error!("encrypt realm RSA private key error: {e}");
+            return internal_error();
+        }
+    };
+    keys.ed25519_private_pem =
+        match state.encrypt_sensitive_value(keys.ed25519_private_pem.as_bytes()) {
+            Ok(value) => value,
+            Err(e) => {
+                tracing::error!("encrypt realm Ed25519 private key error: {e}");
+                return internal_error();
+            }
+        };
     if let Err(e) = RealmSigningKeysRepo.create(&mut conn, &keys).await {
         tracing::error!("store realm keys error: {e}");
         return internal_error();
@@ -558,6 +573,15 @@ pub async fn create_identity_provider(
         ),
     };
     let id = generate_uuid_v7();
+    let encrypted_client_secret = match state
+        .encrypt_sensitive_value(req.client_secret.as_deref().unwrap_or_default().as_bytes())
+    {
+        Ok(value) => value,
+        Err(e) => {
+            tracing::error!("encrypt identity provider secret error: {e}");
+            return internal_error();
+        }
+    };
     let idp = oidc_core::models::IdentityProvider {
         id,
         realm_id: req.realm_id,
@@ -571,7 +595,7 @@ pub async fn create_identity_provider(
         userinfo_url,
         jwks_url,
         client_id: req.client_id,
-        client_secret: req.client_secret.unwrap_or_default(),
+        client_secret: encrypted_client_secret,
         scopes: req
             .scopes
             .unwrap_or_else(|| vec!["openid".into(), "profile".into(), "email".into()]),
@@ -749,7 +773,13 @@ pub async fn update_identity_provider(
         idp.client_id = v;
     }
     if let Some(v) = req.client_secret {
-        idp.client_secret = v;
+        idp.client_secret = match state.encrypt_sensitive_value(v.as_bytes()) {
+            Ok(value) => value,
+            Err(e) => {
+                tracing::error!("encrypt identity provider secret error: {e}");
+                return internal_error();
+            }
+        };
     }
     if let Some(v) = req.scopes {
         idp.scopes = v;

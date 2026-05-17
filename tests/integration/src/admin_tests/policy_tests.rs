@@ -123,6 +123,57 @@ async fn test_update_password_policy() {
 // ===================================================================
 
 #[tokio::test]
+async fn test_create_identity_provider_encrypts_client_secret_at_rest() {
+    let app = TestApp::new().await;
+    let token = admin_login(&app).await;
+    let realm_id = get_master_realm_id(&app, &token).await;
+    let plain_secret = "test-client-secret";
+
+    let resp = app
+        .client()
+        .post(&format!("{}/api/identity-providers", app.url()))
+        .bearer_auth(&token)
+        .json(&json!({
+            "realm_id": realm_id,
+            "alias": "google-secret-at-rest",
+            "display_name": "Google",
+            "provider_type": "oidc",
+            "enabled": true,
+            "issuer": "https://accounts.google.com",
+            "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
+            "token_url": "https://oauth2.googleapis.com/token",
+            "userinfo_url": "https://openidconnect.googleapis.com/v1/userinfo",
+            "client_id": "test-client-id",
+            "client_secret": plain_secret,
+            "scopes": ["openid", "email", "profile"],
+        }))
+        .send()
+        .await
+        .expect("create identity provider failed");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let mut conn = app.db_conn().await;
+    let row = conn
+        .query_one_params(
+            "SELECT client_secret FROM identity_providers WHERE alias = $1",
+            &[&"google-secret-at-rest"],
+        )
+        .await
+        .expect("identity provider lookup should succeed")
+        .expect("identity provider should exist");
+    let stored_secret = row
+        .get::<String>(0)
+        .expect("client_secret should be readable");
+    assert_ne!(stored_secret, plain_secret);
+    assert!(
+        !stored_secret.contains(plain_secret),
+        "stored secret must not contain the plaintext"
+    );
+    let _ = conn.close().await;
+}
+
+#[tokio::test]
 async fn test_create_identity_provider() {
     let app = TestApp::new().await;
     let token = admin_login(&app).await;
