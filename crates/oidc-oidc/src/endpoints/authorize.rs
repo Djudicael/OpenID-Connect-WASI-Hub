@@ -670,7 +670,7 @@ async fn authorize_inner(
     {
         // Best-effort verification: extract the `sub` claim from the hint.
         // Per OIDC Core §3.1.2.1, the OP MAY verify the signature.
-        match state.token_service.verify_id_token(&hint).await {
+        match state.verify_id_token_any_issuer(&hint).await {
             Ok(subject) => Some(subject),
             Err(e) => {
                 tracing::warn!("id_token_hint verification failed (proceeding without hint): {e}");

@@ -1,5 +1,6 @@
 //! Token Exchange flow (RFC 8693).
 
+use base64::Engine;
 use oidc_core::OidcError;
 use oidc_core::models::Session;
 use oidc_core::traits::token_service::{IdTokenExtraClaims, TokenService};
@@ -196,9 +197,15 @@ impl TokenExchangeFlow {
     ) -> Result<(String, uuid::Uuid, Option<uuid::Uuid>), OidcError> {
         match token_type {
             TOKEN_TYPE_ACCESS_TOKEN => {
-                let token_svc = state.token_service.clone();
-                let claims = token_svc.verify_access_token_with_claims(token).await?;
-                let realm_id = Self::resolve_realm_id_from_issuer(state, &claims.iss).await?;
+                let claims = state
+                    .verify_access_token_with_claims_any_issuer(token)
+                    .await?;
+                let realm_id = Self::resolve_realm_id_from_issuer_or_audience(
+                    state,
+                    &claims.iss,
+                    Some(&claims.aud),
+                )
+                .await?;
                 Ok((claims.sub, realm_id, None))
             }
             TOKEN_TYPE_REFRESH_TOKEN => {
@@ -236,10 +243,15 @@ impl TokenExchangeFlow {
                 Ok((subject, session.realm_id, user_id))
             }
             TOKEN_TYPE_ID_TOKEN => {
-                let token_svc = state.token_service.clone();
-                let sub = token_svc.verify_id_token(token).await?;
-                let realm_id = Self::resolve_realm_id_from_issuer(state, &state.issuer).await?;
-                // Try to resolve user_id from the subject
+                let claims: crate::tokens::jwt_service::IdTokenClaims =
+                    Self::decode_jwt_payload_unverified(token)?;
+                let sub = state.verify_id_token_any_issuer(token).await?;
+                let realm_id = Self::resolve_realm_id_from_issuer_or_audience(
+                    state,
+                    &claims.iss,
+                    Some(&serde_json::Value::String(claims.aud.clone())),
+                )
+                .await?;
                 let user_id = uuid::Uuid::parse_str(&sub).ok();
                 Ok((sub, realm_id, user_id))
             }
@@ -257,15 +269,12 @@ impl TokenExchangeFlow {
     ) -> Result<String, OidcError> {
         match token_type {
             TOKEN_TYPE_ACCESS_TOKEN => {
-                let token_svc = state.token_service.clone();
-                let claims = token_svc.verify_access_token_with_claims(token).await?;
+                let claims = state
+                    .verify_access_token_with_claims_any_issuer(token)
+                    .await?;
                 Ok(claims.sub)
             }
-            TOKEN_TYPE_ID_TOKEN => {
-                let token_svc = state.token_service.clone();
-                let sub = token_svc.verify_id_token(token).await?;
-                Ok(sub)
-            }
+            TOKEN_TYPE_ID_TOKEN => state.verify_id_token_any_issuer(token).await,
             TOKEN_TYPE_REFRESH_TOKEN => {
                 let refresh_hash = sha2_256_hex(token);
                 let mut conn = state.connect().await?;
@@ -298,21 +307,69 @@ impl TokenExchangeFlow {
         }
     }
 
-    /// Resolve a realm_id from the issuer URL.
-    ///
-    /// Falls back to the "master" realm if no specific realm can be determined.
-    async fn resolve_realm_id_from_issuer(
+    /// Resolve a realm_id from token issuer and, when necessary, the client audience.
+    async fn resolve_realm_id_from_issuer_or_audience(
         state: &OidcState,
-        _issuer: &str,
+        issuer: &str,
+        audience: Option<&serde_json::Value>,
     ) -> Result<uuid::Uuid, OidcError> {
-        // For simplicity, we look up the master realm.
-        // In a multi-realm deployment, the issuer URL encodes the realm.
-        let mut conn = state.connect().await?;
-        use oidc_repository::repositories::realm_repo::RealmRepo;
-        match RealmRepo.find_by_name(&mut conn, "master").await? {
-            Some(r) => Ok(r.id),
-            None => Err(OidcError::Internal("master realm not found".to_string())),
+        let normalized_base = state.base_issuer.trim_end_matches('/');
+        let normalized_issuer = issuer.trim_end_matches('/');
+
+        if normalized_issuer != normalized_base {
+            let prefix = format!("{normalized_base}/realms/");
+            if let Some(realm_name) = normalized_issuer.strip_prefix(&prefix) {
+                if !realm_name.is_empty() && !realm_name.contains('/') {
+                    let mut conn = state.connect().await?;
+                    use oidc_repository::repositories::realm_repo::RealmRepo;
+                    if let Some(realm) = RealmRepo.find_by_name(&mut conn, realm_name).await? {
+                        return Ok(realm.id);
+                    }
+                }
+            }
         }
+
+        let client_id = audience
+            .and_then(Self::client_id_from_audience)
+            .ok_or_else(|| {
+                OidcError::InvalidSubjectToken("unable to resolve realm from token audience".into())
+            })?;
+
+        let mut conn = state.connect().await?;
+        let client = ClientRepo
+            .find_by_client_id(&mut conn, &client_id)
+            .await?
+            .ok_or_else(|| {
+                OidcError::InvalidSubjectToken(
+                    "unable to resolve realm from client audience".into(),
+                )
+            })?;
+        Ok(client.realm_id)
+    }
+
+    fn client_id_from_audience(audience: &serde_json::Value) -> Option<String> {
+        match audience {
+            serde_json::Value::String(value) => Some(value.clone()),
+            serde_json::Value::Array(values) => values
+                .first()
+                .and_then(|value| value.as_str())
+                .map(|value| value.to_string()),
+            _ => None,
+        }
+    }
+
+    fn decode_jwt_payload_unverified<T: serde::de::DeserializeOwned>(
+        token: &str,
+    ) -> Result<T, OidcError> {
+        let payload_segment = token
+            .split('.')
+            .nth(1)
+            .ok_or(OidcError::InvalidTokenSignature)?;
+        let payload_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(payload_segment)
+            .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(payload_segment))
+            .map_err(|_| OidcError::InvalidTokenSignature)?;
+        serde_json::from_slice(&payload_bytes).map_err(|_| OidcError::InvalidTokenSignature)
     }
 
     /// Issue an access token in response to a token exchange.

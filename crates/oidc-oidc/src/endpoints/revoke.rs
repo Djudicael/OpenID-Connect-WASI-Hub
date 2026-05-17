@@ -37,7 +37,7 @@ pub async fn revoke_handler(
 
     with_transaction!(conn, |e| OidcErrorResponse::from_internal(e), {
         // --- Client authentication ---
-        let endpoint_uri = format!("{}/oidc/revoke", state.issuer);
+        let endpoint_uri = state.revocation_endpoint_uri();
         let client = authenticate_client_for_endpoint(
             &state,
             &params,

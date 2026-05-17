@@ -118,9 +118,15 @@ pub fn router() -> Router<AppState> {
                 Err(e) => e.into_response(),
             }
         }))
-        // Per-realm login endpoint (Keycloak-compatible path)
+        // Per-realm OIDC endpoints (Keycloak-compatible paths)
         .route("/realms/{realm}/protocol/openid-connect/token", post(per_realm_token_handler))
         .route("/realms/{realm}/protocol/openid-connect/auth", get(per_realm_authorize_handler))
+        .route("/realms/{realm}/protocol/openid-connect/userinfo", get(per_realm_userinfo_handler))
+        .route("/realms/{realm}/protocol/openid-connect/introspect", post(per_realm_introspect_handler))
+        .route("/realms/{realm}/protocol/openid-connect/revoke", post(per_realm_revoke_handler))
+        .route("/realms/{realm}/protocol/openid-connect/par", post(per_realm_par_handler))
+        .route("/realms/{realm}/protocol/openid-connect/device/authorize", post(per_realm_device_authorization_handler))
+        .route("/realms/{realm}/protocol/openid-connect/logout", get(per_realm_logout_handler))
         .route("/realms/{realm}/.well-known/openid-configuration", get(per_realm_discovery_handler))
         .route("/realms/{realm}/protocol/openid-connect/certs", get(per_realm_certs_handler))
         .route("/realms/{realm}/login", get(per_realm_login_page_handler))
@@ -134,20 +140,21 @@ pub fn router() -> Router<AppState> {
 
 /// Per-realm token endpoint (Keycloak-compatible).
 ///
-/// Accepts `email` + `password` as JSON, uses the realm from the URL path.
+/// Accepts standard OAuth2 form-encoded token requests and uses the realm-scoped
+/// issuer context implied by the URL path.
 async fn per_realm_token_handler(
     State(state): State<AppState>,
     Path(realm): Path<String>,
-    Json(req): Json<oidc_oidc::endpoints::login::LoginRequest>,
+    headers: axum::http::HeaderMap,
+    Form(params): Form<HashMap<String, String>>,
 ) -> axum::response::Response {
-    // Override any realm field in the body with the URL path realm
-    let mut request = req;
-    request.realm = Some(realm);
+    let realm_state = state
+        .oidc_state()
+        .with_issuer(format!("{}/realms/{}", state.config.issuer, realm));
 
-    match oidc_oidc::endpoints::login::login_handler(State(state.oidc_state()), Json(request)).await
-    {
-        Ok(response) => response,
-        Err(err) => err.into_response(),
+    match oidc_oidc::endpoints::token::token_handler(realm_state, headers, params).await {
+        Ok(json) => (axum::http::StatusCode::OK, json).into_response(),
+        Err(err) => oidc_oidc::errors::from_oidc_error(&err).into_response(),
     }
 }
 
@@ -176,13 +183,115 @@ async fn per_realm_authorize_handler(
     headers: axum::http::HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> axum::response::Response {
+    let realm_state = state
+        .oidc_state()
+        .with_issuer(format!("{}/realms/{}", state.config.issuer, realm));
     oidc_oidc::endpoints::authorize::realm_authorize_handler(
-        state.oidc_state(),
+        realm_state,
         realm,
         headers,
         Query(params),
     )
     .await
+}
+
+/// Per-realm userinfo handler (Keycloak-compatible).
+async fn per_realm_userinfo_handler(
+    State(state): State<AppState>,
+    Path(realm): Path<String>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    let realm_state = state
+        .oidc_state()
+        .with_issuer(format!("{}/realms/{}", state.config.issuer, realm));
+    let auth = headers.get(axum::http::header::AUTHORIZATION).cloned();
+    let dpop = headers.get("DPoP").cloned();
+    oidc_oidc::endpoints::userinfo::userinfo_handler(State(realm_state), auth, dpop).await
+}
+
+/// Per-realm introspection handler (Keycloak-compatible).
+async fn per_realm_introspect_handler(
+    State(state): State<AppState>,
+    Path(realm): Path<String>,
+    headers: axum::http::HeaderMap,
+    form: Form<HashMap<String, String>>,
+) -> axum::response::Response {
+    let realm_state = state
+        .oidc_state()
+        .with_issuer(format!("{}/realms/{}", state.config.issuer, realm));
+    match oidc_oidc::endpoints::introspect::introspect_handler(State(realm_state), headers, form)
+        .await
+    {
+        Ok(json) => json.into_response(),
+        Err(err) => err.into_response(),
+    }
+}
+
+/// Per-realm revocation handler (Keycloak-compatible).
+async fn per_realm_revoke_handler(
+    State(state): State<AppState>,
+    Path(realm): Path<String>,
+    headers: axum::http::HeaderMap,
+    form: Form<HashMap<String, String>>,
+) -> axum::response::Response {
+    let realm_state = state
+        .oidc_state()
+        .with_issuer(format!("{}/realms/{}", state.config.issuer, realm));
+    match oidc_oidc::endpoints::revoke::revoke_handler(State(realm_state), headers, form).await {
+        Ok(json) => json.into_response(),
+        Err(err) => err.into_response(),
+    }
+}
+
+/// Per-realm PAR handler (Keycloak-compatible).
+async fn per_realm_par_handler(
+    State(state): State<AppState>,
+    Path(realm): Path<String>,
+    headers: axum::http::HeaderMap,
+    Form(params): Form<HashMap<String, String>>,
+) -> axum::response::Response {
+    let realm_state = state
+        .oidc_state()
+        .with_issuer(format!("{}/realms/{}", state.config.issuer, realm));
+    match oidc_oidc::endpoints::par::par_handler(realm_state, headers, params).await {
+        Ok(json) => (axum::http::StatusCode::CREATED, json).into_response(),
+        Err(err) => oidc_oidc::errors::from_oidc_error(&err).into_response(),
+    }
+}
+
+/// Per-realm device authorization handler (Keycloak-compatible).
+async fn per_realm_device_authorization_handler(
+    State(state): State<AppState>,
+    Path(realm): Path<String>,
+    headers: axum::http::HeaderMap,
+    Form(params): Form<HashMap<String, String>>,
+) -> axum::response::Response {
+    let realm_state = state
+        .oidc_state()
+        .with_issuer(format!("{}/realms/{}", state.config.issuer, realm));
+    match oidc_oidc::endpoints::device_authorization::device_authorization_handler(
+        realm_state,
+        headers,
+        params,
+    )
+    .await
+    {
+        Ok(json) => (axum::http::StatusCode::OK, json).into_response(),
+        Err(err) => oidc_oidc::errors::from_oidc_error(&err).into_response(),
+    }
+}
+
+/// Per-realm logout handler (Keycloak-compatible).
+async fn per_realm_logout_handler(
+    State(state): State<AppState>,
+    Path(realm): Path<String>,
+    headers: axum::http::HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
+) -> axum::response::Response {
+    let realm_state = state
+        .oidc_state()
+        .with_issuer(format!("{}/realms/{}", state.config.issuer, realm));
+    oidc_oidc::endpoints::logout::logout_handler(realm_state, headers, Query(params)).await
 }
 
 /// Per-realm discovery handler (Keycloak-compatible).
@@ -505,7 +614,7 @@ async fn per_realm_login_page_handler(
                 errorBox.style.display = 'none';
 
                 try {{
-                    const res = await fetch('/realms/{}/protocol/openid-connect/token', {{
+                    const res = await fetch('/realms/{}/login', {{
                         method: 'POST',
                         headers: {{ 'Content-Type': 'application/json' }},
                         body: JSON.stringify({{

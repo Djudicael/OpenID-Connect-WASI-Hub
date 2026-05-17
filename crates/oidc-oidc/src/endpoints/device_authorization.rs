@@ -87,7 +87,15 @@ pub async fn device_authorization_handler(
     let device_code_hash = sha2_256_hex(&device_code_value);
     let user_code = generate_user_code()?;
 
-    let verification_uri = format!("{}/oidc/device", state.issuer);
+    let verification_uri = if state.issuer == state.base_issuer {
+        format!("{}/oidc/device", state.issuer)
+    } else {
+        format!(
+            "{}/realms/{}/login",
+            state.base_issuer,
+            state.issuer.rsplit('/').next().unwrap_or_default()
+        )
+    };
     let verification_uri_complete = format!("{}?user_code={}", verification_uri, user_code);
 
     // Parse requested scopes
@@ -178,7 +186,7 @@ async fn authenticate_client_device(
                     OidcError::InvalidClientAssertion("client has no jwks".into())
                 })?;
 
-                let endpoint = format!("{}/oidc/device/authorize", state.issuer);
+                let endpoint = state.device_authorization_endpoint_uri();
                 let now = chrono::Utc::now().timestamp();
                 JwtTokenService::verify_client_assertion(
                     assertion, jwks, &endpoint, &client_id, now,
@@ -201,7 +209,7 @@ async fn authenticate_client_device(
                     OidcError::InvalidClientAssertion("invalid client secret encoding".into())
                 })?;
 
-                let endpoint = format!("{}/oidc/device/authorize", state.issuer);
+                let endpoint = state.device_authorization_endpoint_uri();
                 let now = chrono::Utc::now().timestamp();
                 crate::tokens::jwt_service::verify_client_secret_jwt(
                     assertion,

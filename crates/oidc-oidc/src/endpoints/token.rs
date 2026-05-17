@@ -38,7 +38,17 @@ enum PresentedClientAuthMethod {
 pub async fn token_handler(
     state: OidcState,
     headers: axum::http::HeaderMap,
+    params: HashMap<String, String>,
+) -> Result<Json<Value>, OidcError> {
+    let token_endpoint_uri = state.token_endpoint_uri();
+    token_handler_with_endpoint_uri(state, headers, params, &token_endpoint_uri).await
+}
+
+pub async fn token_handler_with_endpoint_uri(
+    state: OidcState,
+    headers: axum::http::HeaderMap,
     mut params: HashMap<String, String>,
+    token_endpoint_uri: &str,
 ) -> Result<Json<Value>, OidcError> {
     let has_basic_auth = headers
         .get(axum::http::header::AUTHORIZATION)
@@ -89,7 +99,8 @@ pub async fn token_handler(
         .as_str();
 
     // ── Client authentication ──────────────────────────────────────────
-    let (client, client_id) = authenticate_client(&state, &params, presented_auth_method).await?;
+    let (client, client_id) =
+        authenticate_client(&state, &params, presented_auth_method, token_endpoint_uri).await?;
 
     // Check grant type is allowed
     if !client.allowed_grant_types.contains(&grant_type.to_string()) {
@@ -102,11 +113,10 @@ pub async fn token_handler(
             .to_str()
             .map_err(|_| OidcError::InvalidDPoPProof("DPoP header is not valid UTF-8".into()))?;
 
-        let token_endpoint = format!("{}/oidc/token", state.issuer);
         let now = chrono::Utc::now().timestamp();
 
         // At the token endpoint, no access_token exists yet, so ath is NOT required
-        let proof = verify_dpop_proof(dpop_value, "POST", &token_endpoint, None, now)?;
+        let proof = verify_dpop_proof(dpop_value, "POST", token_endpoint_uri, None, now)?;
 
         Some(proof.jwk_thumbprint)
     } else {
@@ -205,6 +215,7 @@ async fn authenticate_client(
     state: &OidcState,
     params: &HashMap<String, String>,
     presented_auth_method: PresentedClientAuthMethod,
+    token_endpoint_uri: &str,
 ) -> Result<(oidc_core::models::Client, String), OidcError> {
     if let Some(assertion) = params.get("client_assertion") {
         if presented_auth_method != PresentedClientAuthMethod::ClientAssertion {
@@ -241,12 +252,11 @@ async fn authenticate_client(
                     OidcError::InvalidClientAssertion("client has no jwks".into())
                 })?;
 
-                let token_endpoint = format!("{}/oidc/token", state.issuer);
                 let now = chrono::Utc::now().timestamp();
                 JwtTokenService::verify_client_assertion(
                     assertion,
                     jwks,
-                    &token_endpoint,
+                    token_endpoint_uri,
                     &client_id,
                     now,
                 )?;
@@ -268,12 +278,11 @@ async fn authenticate_client(
                     OidcError::InvalidClientAssertion("invalid client secret encoding".into())
                 })?;
 
-                let token_endpoint = format!("{}/oidc/token", state.issuer);
                 let now = chrono::Utc::now().timestamp();
                 crate::tokens::jwt_service::verify_client_secret_jwt(
                     assertion,
                     &client_secret,
-                    &token_endpoint,
+                    token_endpoint_uri,
                     &client_id,
                     now,
                 )?;

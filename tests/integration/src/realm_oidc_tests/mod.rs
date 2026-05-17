@@ -3,62 +3,93 @@
 //! Tests per-realm login, discovery, authorization, and theming
 //! introduced in the multi-tenancy phases.
 
+use base64::Engine;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 
 use crate::helpers::app::TestApp;
 use crate::helpers::fixtures;
 
+fn decode_jwt_payload(token: &str) -> Value {
+    let payload_segment = token
+        .split('.')
+        .nth(1)
+        .expect("token must contain a JWT payload segment");
+    let payload_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload_segment)
+        .expect("failed to base64url-decode JWT payload");
+    serde_json::from_slice(&payload_bytes).expect("failed to parse JWT payload as JSON")
+}
+
 // ===================================================================
 // Phase 1 — Per-Realm Login
 // ===================================================================
 
 #[tokio::test]
-async fn test_per_realm_login_success() {
+async fn test_per_realm_token_endpoint_client_credentials_form_semantics() {
     let app = TestApp::new().await;
 
-    // The baseline TestApp already seeds a "master" realm.
-    // Use the Keycloak-compatible per-realm token endpoint.
+    let client_id = "realm-cc-client";
+    let client_secret = "RealmCCSecret123!";
+    let redirect_uri = "https://app.example.com/callback";
+
+    let _client_db_id = app
+        .seed_client_with_secret(client_id, client_secret, &[redirect_uri])
+        .await;
+
+    {
+        let mut conn = app.db_conn().await;
+        let grant_types =
+            serde_json::json!(["authorization_code", "refresh_token", "client_credentials"]);
+        conn.execute_params(
+            "UPDATE clients SET allowed_grant_types = $1 WHERE client_id = $2",
+            &[&grant_types, &client_id],
+        )
+        .await
+        .expect("failed to update grant types");
+        let _ = conn.close().await;
+    }
+
     let resp = app
         .client()
         .post(&format!(
             "{}/realms/master/protocol/openid-connect/token",
             app.url()
         ))
-        .json(&json!({
-            "email": fixtures::TEST_USER_EMAIL,
-            "password": fixtures::TEST_USER_PASSWORD,
-        }))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "grant_type=client_credentials&client_id={}&client_secret={}",
+            urlencoding::encode(client_id),
+            urlencoding::encode(client_secret),
+        ))
         .send()
         .await
-        .expect("per-realm login request failed");
+        .expect("per-realm token request failed");
 
     assert_eq!(resp.status(), StatusCode::OK);
     let body: Value = resp.json().await.expect("response should be JSON");
+    let access_token = body["access_token"]
+        .as_str()
+        .expect("access_token must be present");
+    let access_claims = decode_jwt_payload(access_token);
 
-    assert!(
-        body["access_token"].as_str().is_some_and(|t| !t.is_empty()),
-        "access_token must be present"
-    );
-    assert!(
-        body["id_token"].as_str().is_some_and(|t| !t.is_empty()),
-        "id_token must be present"
-    );
     assert_eq!(body["token_type"], "Bearer");
-    assert_eq!(body["user"]["email"], fixtures::TEST_USER_EMAIL);
+    let issuer = access_claims["iss"]
+        .as_str()
+        .expect("issuer must be present");
+    assert!(
+        issuer.ends_with("/realms/master"),
+        "realm-scoped access token issuer should end with /realms/master, got: {issuer}"
+    );
 }
 
 #[tokio::test]
 async fn test_per_realm_login_wrong_realm() {
     let app = TestApp::new().await;
 
-    // "nonexistent" realm should return authentication failed
     let resp = app
         .client()
-        .post(&format!(
-            "{}/realms/nonexistent/protocol/openid-connect/token",
-            app.url()
-        ))
+        .post(&format!("{}/realms/nonexistent/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -136,6 +167,28 @@ async fn test_realm_discovery_document() {
     assert!(
         token.contains("/realms/master/protocol/openid-connect/token"),
         "token_endpoint should be realm-scoped, got: {token}"
+    );
+
+    let jwks_uri = body["jwks_uri"].as_str().expect("jwks_uri must be present");
+    assert!(
+        jwks_uri.contains("/realms/master/protocol/openid-connect/certs"),
+        "jwks_uri should be realm-scoped, got: {jwks_uri}"
+    );
+
+    let introspection = body["introspection_endpoint"]
+        .as_str()
+        .expect("introspection_endpoint must be present");
+    assert!(
+        introspection.contains("/realms/master/protocol/openid-connect/introspect"),
+        "introspection_endpoint should be realm-scoped, got: {introspection}"
+    );
+
+    let revocation = body["revocation_endpoint"]
+        .as_str()
+        .expect("revocation_endpoint must be present");
+    assert!(
+        revocation.contains("/realms/master/protocol/openid-connect/revoke"),
+        "revocation_endpoint should be realm-scoped, got: {revocation}"
     );
 
     assert!(
@@ -248,6 +301,117 @@ async fn test_realm_authorize_with_login_hint_success() {
     );
 }
 
+#[tokio::test]
+async fn test_realm_authorization_code_flow_issues_realm_scoped_tokens_and_supports_userinfo() {
+    let app = TestApp::new().await;
+
+    let client_id = "realm-auth-code-client";
+    let client_secret = "RealmAuthCodeSecret123!";
+    let redirect_uri = "https://app.example.com/callback";
+    app.seed_client_with_secret(client_id, client_secret, &[redirect_uri])
+        .await;
+
+    let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let code_challenge = crate::oidc_tests::pkce_s256_challenge(code_verifier);
+    let authorize_url = format!(
+        "{}/realms/master/protocol/openid-connect/auth?client_id={}&redirect_uri={}&response_type=code&scope=openid+email&state=realm-flow&code_challenge={}&code_challenge_method=S256&login_hint={}",
+        app.url(),
+        urlencoding::encode(client_id),
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(&code_challenge),
+        urlencoding::encode(fixtures::TEST_USER_EMAIL),
+    );
+
+    let authorize_resp = app
+        .client()
+        .get(&authorize_url)
+        .send()
+        .await
+        .expect("realm authorize request failed");
+    assert_eq!(authorize_resp.status(), StatusCode::TEMPORARY_REDIRECT);
+    let location = authorize_resp
+        .headers()
+        .get("location")
+        .expect("authorize redirect should include a location")
+        .to_str()
+        .expect("location should be valid UTF-8")
+        .to_string();
+
+    let redirect = url::Url::parse(&location).expect("authorize location should be a valid URL");
+    let code = redirect
+        .query_pairs()
+        .find(|(key, _)| key == "code")
+        .map(|(_, value)| value.into_owned())
+        .expect("authorize redirect should include a code");
+
+    let token_resp = app
+        .client()
+        .post(&format!(
+            "{}/realms/master/protocol/openid-connect/token",
+            app.url()
+        ))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&client_secret={}&code_verifier={}",
+            urlencoding::encode(&code),
+            urlencoding::encode(redirect_uri),
+            urlencoding::encode(client_id),
+            urlencoding::encode(client_secret),
+            urlencoding::encode(code_verifier),
+        ))
+        .send()
+        .await
+        .expect("realm token request failed");
+    assert_eq!(token_resp.status(), StatusCode::OK);
+    let token_body: Value = token_resp
+        .json()
+        .await
+        .expect("token response should be JSON");
+
+    let access_token = token_body["access_token"]
+        .as_str()
+        .expect("access_token must be present");
+    let id_token = token_body["id_token"]
+        .as_str()
+        .expect("id_token must be present");
+    let access_issuer = decode_jwt_payload(access_token)["iss"]
+        .as_str()
+        .expect("access token issuer must be present")
+        .to_string();
+    let id_issuer = decode_jwt_payload(id_token)["iss"]
+        .as_str()
+        .expect("id token issuer must be present")
+        .to_string();
+    assert!(
+        access_issuer.ends_with("/realms/master"),
+        "realm-scoped access token issuer should end with /realms/master, got: {access_issuer}"
+    );
+    assert!(
+        id_issuer.ends_with("/realms/master"),
+        "realm-scoped ID token issuer should end with /realms/master, got: {id_issuer}"
+    );
+
+    let userinfo_resp = app
+        .client()
+        .get(&format!(
+            "{}/realms/master/protocol/openid-connect/userinfo",
+            app.url()
+        ))
+        .header("authorization", format!("Bearer {access_token}"))
+        .send()
+        .await
+        .expect("realm userinfo request failed");
+    assert_eq!(userinfo_resp.status(), StatusCode::OK);
+    let userinfo_body: Value = userinfo_resp
+        .json()
+        .await
+        .expect("userinfo response should be JSON");
+    assert_eq!(
+        userinfo_body["email"],
+        Value::String(fixtures::TEST_USER_EMAIL.to_string())
+    );
+}
+
 // ===================================================================
 // Phase 4 — Realm Branded Login Page
 // ===================================================================
@@ -273,8 +437,8 @@ async fn test_realm_login_page_html() {
     );
     assert!(body.contains("<form"), "should contain a login form");
     assert!(
-        body.contains("/realms/master/protocol/openid-connect/token"),
-        "form should POST to realm token endpoint"
+        body.contains("/realms/master/login"),
+        "login page script should post to the realm convenience login endpoint"
     );
 }
 

@@ -4,7 +4,6 @@ use axum::http::HeaderMap;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
-use oidc_core::traits::TokenService;
 use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 use oidc_repository::with_transaction;
@@ -43,7 +42,7 @@ pub async fn introspect_handler(
 
     let result = with_transaction!(conn, |e| OidcErrorResponse::from_internal(e), {
         // --- Client authentication ---
-        let endpoint_uri = format!("{}/oidc/introspect", state.issuer);
+        let endpoint_uri = state.introspection_endpoint_uri();
         let client = authenticate_client_for_endpoint(
             &state,
             &params,
@@ -55,8 +54,7 @@ pub async fn introspect_handler(
 
         // Verify the token signature, expiry, and extract full claims
         let claims = match state
-            .token_service
-            .verify_access_token_with_claims(token)
+            .verify_access_token_with_claims_any_issuer(token)
             .await
         {
             Ok(c) => c,

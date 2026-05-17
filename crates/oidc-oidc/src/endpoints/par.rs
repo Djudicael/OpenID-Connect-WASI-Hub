@@ -136,7 +136,7 @@ async fn authenticate_client_par(
                     OidcError::InvalidClientAssertion("client has no jwks".into())
                 })?;
 
-                let token_endpoint = format!("{}/oidc/par", state.issuer);
+                let token_endpoint = state.par_endpoint_uri();
                 let now = chrono::Utc::now().timestamp();
                 JwtTokenService::verify_client_assertion(
                     assertion,
@@ -163,7 +163,7 @@ async fn authenticate_client_par(
                     OidcError::InvalidClientAssertion("invalid client secret encoding".into())
                 })?;
 
-                let token_endpoint = format!("{}/oidc/par", state.issuer);
+                let token_endpoint = state.par_endpoint_uri();
                 let now = chrono::Utc::now().timestamp();
                 crate::tokens::jwt_service::verify_client_secret_jwt(
                     assertion,

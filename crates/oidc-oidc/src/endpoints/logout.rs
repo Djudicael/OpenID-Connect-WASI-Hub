@@ -6,7 +6,6 @@ use axum::http::header::SET_COOKIE;
 use axum::response::{IntoResponse, Response};
 use std::collections::HashMap;
 
-use oidc_core::traits::TokenService;
 use oidc_repository::repositories::client_repo::ClientRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 
@@ -45,7 +44,7 @@ pub async fn logout_handler(
         if let Ok(mut conn) = state.connect().await {
             // Best-effort transaction: begin, revoke, commit (ignore errors)
             if conn.begin().await.is_ok() {
-                if let Ok(subject) = state.token_service.verify_id_token(id_token_hint).await {
+                if let Ok(subject) = state.verify_id_token_any_issuer(id_token_hint).await {
                     if let Ok(user_id) = subject.parse::<uuid::Uuid>() {
                         user_id_opt = Some(user_id);
 
@@ -138,7 +137,13 @@ pub async fn logout_handler(
             let bc_refs: Vec<&oidc_core::models::Client> = backchannel_clients.iter().collect();
             // Fire-and-forget: log results but don't block the response
             let issuer = state.issuer.clone();
-            let token_svc = state.token_service.clone();
+            let token_svc = match backchannel_clients.first() {
+                Some(client) => match state.token_service_for_realm(client.realm_id).await {
+                    Ok(svc) => svc,
+                    Err(_) => state.token_service.clone(),
+                },
+                None => state.token_service.clone(),
+            };
             // We spawn the backchannel logout as a best-effort async operation
             // In WASI P2, we can't spawn threads, so we run it inline but don't
             // let failures block the response

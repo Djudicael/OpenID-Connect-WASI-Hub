@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex};
 
 use uuid::Uuid;
 
-type RealmTokenServiceCache = Arc<Mutex<HashMap<Uuid, Arc<oidc_oidc::tokens::JwtTokenService>>>>;
+type RealmTokenServiceCache =
+    Arc<Mutex<HashMap<(Uuid, String), Arc<oidc_oidc::tokens::JwtTokenService>>>>;
 
 /// Shared application state.
 #[derive(Clone)]
@@ -224,6 +225,7 @@ impl AppState {
     pub fn oidc_state(&self) -> oidc_oidc::state::OidcState {
         oidc_oidc::state::OidcState {
             issuer: self.config.issuer.clone(),
+            base_issuer: self.config.issuer.clone(),
             token_service: self.token_service.clone(),
             hasher: self.hasher.clone(),
             email_sender: self.email_sender.clone(),
@@ -268,18 +270,19 @@ mod tests {
         ));
 
         let realm_id = Uuid::new_v4();
+        let cache_key = (realm_id, oidc_state_a.issuer.clone());
         oidc_state_a
             .realm_token_services
             .lock()
             .expect("cache lock should succeed")
-            .insert(realm_id, state.token_service.clone());
+            .insert(cache_key.clone(), state.token_service.clone());
 
         assert!(
             oidc_state_b
                 .realm_token_services
                 .lock()
                 .expect("cache lock should succeed")
-                .contains_key(&realm_id)
+                .contains_key(&cache_key)
         );
     }
 

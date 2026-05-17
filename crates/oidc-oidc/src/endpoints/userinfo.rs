@@ -6,7 +6,6 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
 
-use oidc_core::traits::TokenService;
 use oidc_repository::repositories::group_repo::GroupRepo;
 use oidc_repository::repositories::role_repo::RoleRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
@@ -36,8 +35,7 @@ pub async fn userinfo_handler(
 
     // Verify the access token and extract full claims (including cnf for DPoP)
     let claims = match state
-        .token_service
-        .verify_access_token_with_claims(&token)
+        .verify_access_token_with_claims_any_issuer(&token)
         .await
     {
         Ok(c) => c,
@@ -61,7 +59,7 @@ pub async fn userinfo_handler(
             None => return unauthorized_response(Some("DPoP proof required for DPoP-bound token")),
         };
 
-        let userinfo_endpoint = format!("{}/oidc/userinfo", state.issuer);
+        let userinfo_endpoint = state.userinfo_endpoint_uri();
         let now = chrono::Utc::now().timestamp();
 
         let proof =

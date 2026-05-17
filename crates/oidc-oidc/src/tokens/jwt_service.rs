@@ -232,6 +232,20 @@ impl Clone for JwtTokenService {
 }
 
 impl JwtTokenService {
+    /// Clone this token service while overriding only the issuer.
+    pub fn clone_with_issuer(&self, issuer: impl Into<String>) -> Self {
+        Self {
+            issuer: issuer.into(),
+            rsa_private_key: self.rsa_private_key.clone(),
+            rsa_kid: self.rsa_kid.clone(),
+            ed_signing_key: self.ed_signing_key.clone(),
+            ed_kid: self.ed_kid.clone(),
+            access_token_ttl_secs: self.access_token_ttl_secs,
+            id_token_ttl_secs: self.id_token_ttl_secs,
+            clock: Arc::new(oidc_core::traits::clock::SystemClock),
+        }
+    }
+
     /// Create a new token service.
     ///
     /// **Production requirement:** Every WASM instance must load the same signing
