@@ -9,14 +9,15 @@
 //!   cargo run -p oidc-dev -- logs     # Tail all service logs
 //!   cargo run -p oidc-dev -- wasm     # Start DB + WASM component via wasmtime
 //!   cargo run -p oidc-dev -- test     # Run smoke tests against running server
+//!   cargo run -p oidc-dev -- e2e      # Run Playwright E2E against the running proxy
 //!
 //! Dev Credentials (seeded on first start):
-//!   Admin login:    admin@example.com / Admin123
+//!   Admin login:    DEFAULT_EMAIL / DEFAULT_PASSWORD
 //!   Client creds:   test-service / test-service-secret
 //!
 //! When the process exits (Ctrl-C), the PostgreSQL container is automatically dropped.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,6 +26,7 @@ use anyhow::{Context, Result};
 use oidc_core::traits::Hasher;
 use rustainers::ImageName;
 use rustainers::runner::Runner;
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
@@ -43,6 +45,9 @@ const FRONTEND_DIR: &str = "front/admin";
 const MIGRATIONS_DIR: &str = "migrations/postgresql";
 
 const BIND_ADDRESS: &str = "0.0.0.0";
+const DEFAULT_EMAIL_FALLBACK: &str = "admin@example.com";
+const DEFAULT_PASSWORD_FALLBACK: &str = "Admin123";
+const DEV_RUNTIME_STATE_FILE: &str = "oidc-hub-dev-runtime.json";
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
@@ -73,15 +78,84 @@ impl DevState {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DevRuntimeInfo {
+    db_url: String,
+    backend_port: u16,
+    frontend_port: u16,
+    proxy_port: u16,
+    playwright_base_url: String,
+    default_email: String,
+    default_password: String,
+}
+
+fn default_email() -> String {
+    std::env::var("DEFAULT_EMAIL").unwrap_or_else(|_| DEFAULT_EMAIL_FALLBACK.to_string())
+}
+
+fn default_password() -> String {
+    std::env::var("DEFAULT_PASSWORD").unwrap_or_else(|_| DEFAULT_PASSWORD_FALLBACK.to_string())
+}
+
+fn runtime_state_path() -> PathBuf {
+    std::env::temp_dir().join(DEV_RUNTIME_STATE_FILE)
+}
+
+async fn write_runtime_state(state: &Arc<Mutex<DevState>>) -> Result<()> {
+    let s = state.lock().await;
+    let runtime = DevRuntimeInfo {
+        db_url: s.db_url.clone(),
+        backend_port: s.backend_port,
+        frontend_port: s.frontend_port,
+        proxy_port: s.proxy_port,
+        playwright_base_url: format!("http://localhost:{}", s.proxy_port),
+        default_email: default_email(),
+        default_password: default_password(),
+    };
+    drop(s);
+
+    let bytes = serde_json::to_vec_pretty(&runtime)?;
+    tokio::fs::write(runtime_state_path(), bytes)
+        .await
+        .context("failed to write dev runtime state file")?;
+    Ok(())
+}
+
+fn read_runtime_state() -> Result<DevRuntimeInfo> {
+    let path = runtime_state_path();
+    let bytes = std::fs::read(&path).with_context(|| {
+        format!(
+            "failed to read dev runtime state file at {}",
+            path.display()
+        )
+    })?;
+    let runtime = serde_json::from_slice(&bytes).with_context(|| {
+        format!(
+            "failed to parse dev runtime state file at {}",
+            path.display()
+        )
+    })?;
+    Ok(runtime)
+}
+
+async fn remove_runtime_state_file() {
+    let _ = tokio::fs::remove_file(runtime_state_path()).await;
+}
+
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let _ = dotenvy::dotenv();
+
     tracing_subscriber::fmt()
         .with_env_filter("info,oidc_dev=debug,rustainers=warn")
         .init();
 
-    let cmd = std::env::args().nth(1).unwrap_or_else(|| "start".into());
+    let mut args = std::env::args();
+    let _bin = args.next();
+    let cmd = args.next().unwrap_or_else(|| "start".into());
+    let extra_args: Vec<String> = args.collect();
 
     match cmd.as_str() {
         "start" => cmd_start().await,
@@ -91,8 +165,9 @@ async fn main() -> Result<()> {
         "logs" => cmd_logs().await,
         "wasm" => cmd_wasm().await,
         "test" => cmd_test().await,
+        "e2e" => cmd_e2e(extra_args).await,
         _ => {
-            eprintln!("Usage: oidc-dev {{start|stop|status|db-only|logs|wasm|test}}");
+            eprintln!("Usage: oidc-dev {{start|stop|status|db-only|logs|wasm|test|e2e}}");
             std::process::exit(1);
         }
     }
@@ -116,16 +191,17 @@ async fn cmd_start() -> Result<()> {
         s.db_url = db_url.clone();
     }
 
-    let _proxy_port = {
+    let proxy_port = {
         let s = state.lock().await;
         s.proxy_port
     };
     run_migrations(&db_url).await?;
-    seed_data(&db_url, 3000).await?;
+    seed_data(&db_url, proxy_port).await?;
     build_frontend().await?;
     start_backend(&state, &db_url).await?;
     start_frontend_dev(&state).await?;
     start_proxy(&state).await?;
+    write_runtime_state(&state).await?;
 
     let s = state.lock().await;
     let proxy_port = s.proxy_port;
@@ -144,6 +220,10 @@ async fn cmd_start() -> Result<()> {
     info!("  Backend API:   http://localhost:{}", backend_port);
     info!("  Frontend dev:  http://localhost:{}", frontend_port);
     info!("  Database:      {}", s.db_url);
+    info!("  Playwright:    http://localhost:{}", proxy_port);
+    info!("  DEFAULT_EMAIL: {}", default_email());
+    info!("  DEFAULT_PASSWORD: {}", default_password());
+    info!("  Runtime file:  {}", runtime_state_path().display());
     info!("");
     info!("  Press Ctrl-C to stop everything (container auto-drops)");
     info!("═══════════════════════════════════════════════════════════════");
@@ -195,6 +275,7 @@ async fn cmd_stop() -> Result<()> {
 
     let proxy_path = std::env::temp_dir().join("oidc-hub-proxy.js");
     let _ = tokio::fs::remove_file(&proxy_path).await;
+    remove_runtime_state_file().await;
 
     info!("All services stopped.");
     Ok(())
@@ -203,18 +284,29 @@ async fn cmd_stop() -> Result<()> {
 // ─── Status Command ─────────────────────────────────────────────────────────
 
 async fn cmd_status() -> Result<()> {
-    let backend_port = std::env::var("OIDC_SERVER_PORT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(8080);
-    let frontend_port = std::env::var("OIDC_FRONTEND_PORT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(3008);
-    let proxy_port = std::env::var("OIDC_PROXY_PORT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(3000);
+    let runtime = read_runtime_state().ok();
+
+    let backend_port = runtime.as_ref().map(|r| r.backend_port).unwrap_or_else(|| {
+        std::env::var("OIDC_SERVER_PORT")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(8080)
+    });
+    let frontend_port = runtime
+        .as_ref()
+        .map(|r| r.frontend_port)
+        .unwrap_or_else(|| {
+            std::env::var("OIDC_FRONTEND_PORT")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(3008)
+        });
+    let proxy_port = runtime.as_ref().map(|r| r.proxy_port).unwrap_or_else(|| {
+        std::env::var("OIDC_PROXY_PORT")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(3000)
+    });
 
     let backend_running = is_port_open(backend_port).await;
     let frontend_running = is_port_open(frontend_port).await;
@@ -250,6 +342,14 @@ async fn cmd_status() -> Result<()> {
         }
     );
     println!();
+
+    if let Some(runtime) = runtime {
+        println!("Playwright base URL: {}", runtime.playwright_base_url);
+        println!("DEFAULT_EMAIL:      {}", runtime.default_email);
+        println!("DEFAULT_PASSWORD:   {}", runtime.default_password);
+        println!("Runtime file:       {}", runtime_state_path().display());
+        println!();
+    }
 
     Ok(())
 }
@@ -411,6 +511,8 @@ async fn cmd_test() -> Result<()> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(8080);
     let base_url = format!("http://localhost:{}", port);
+    let admin_email = default_email();
+    let admin_password = default_password();
 
     info!("Running smoke tests against {}...", base_url);
 
@@ -556,8 +658,8 @@ async fn cmd_test() -> Result<()> {
     match client
         .post(format!("{base_url}/oidc/login"))
         .json(&serde_json::json!({
-            "email": "admin@example.com",
-            "password": "Admin123",
+            "email": admin_email,
+            "password": admin_password,
             "client_id": "admin-ui"
         }))
         .send()
@@ -599,6 +701,47 @@ async fn cmd_test() -> Result<()> {
     if failed > 0 {
         std::process::exit(1);
     }
+    Ok(())
+}
+
+async fn cmd_e2e(extra_args: Vec<String>) -> Result<()> {
+    check_tools().await?;
+
+    let runtime = read_runtime_state().context(
+        "No running oidc-dev runtime state found. Start the stack first with `cargo run -p oidc-dev -- start`.",
+    )?;
+
+    info!(
+        "Running Playwright E2E against {} with DEFAULT_EMAIL={}...",
+        runtime.playwright_base_url, runtime.default_email
+    );
+
+    let mut cmd = Command::new("npm");
+    cmd.arg("exec")
+        .arg("--")
+        .arg("playwright")
+        .arg("test")
+        .arg("--config=playwright.config.js")
+        .current_dir(Path::new(FRONTEND_DIR))
+        .env("PLAYWRIGHT_BASE_URL", &runtime.playwright_base_url)
+        .env("DEFAULT_EMAIL", &runtime.default_email)
+        .env("DEFAULT_PASSWORD", &runtime.default_password)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+
+    for arg in extra_args.into_iter().filter(|arg| arg != "--") {
+        if let Some(stripped) = arg.strip_prefix("front/admin/") {
+            cmd.arg(stripped);
+        } else {
+            cmd.arg(arg);
+        }
+    }
+
+    let status = cmd.status().await.context("failed to run Playwright E2E")?;
+    if !status.success() {
+        anyhow::bail!("Playwright E2E failed with exit code {:?}", status.code());
+    }
+
     Ok(())
 }
 
@@ -832,6 +975,8 @@ async fn seed_data(db_url: &str, proxy_port: u16) -> Result<()> {
 
     // 2. Admin user
     info!("Step 2/5: admin user...");
+    let seeded_admin_email = default_email();
+    let seeded_admin_password = default_password();
     let user_id = {
         let pg_conn = wasi_pg_client::Connection::connect(&config)
             .await
@@ -839,19 +984,36 @@ async fn seed_data(db_url: &str, proxy_port: u16) -> Result<()> {
         let mut conn = oidc_repository::Connection::from_pg_client(pg_conn);
         let repo = oidc_repository::repositories::user_repo::UserRepo;
         match repo
-            .find_by_email(&mut conn, realm_id, "admin@example.com")
+            .find_by_email(&mut conn, realm_id, &seeded_admin_email)
             .await
         {
-            Ok(Some(user)) => user.id,
+            Ok(Some(mut user)) => {
+                user.password_hash = Some(
+                    hasher
+                        .hash(&seeded_admin_password)
+                        .map_err(|e| anyhow::anyhow!("hash failed: {e}"))?,
+                );
+                user.email_verified = true;
+                user.enabled = true;
+                user.updated_at = chrono::Utc::now();
+                repo.update(&mut conn, &user)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("user update: {e}"))?;
+                info!(
+                    "Updated admin user ({} / {})",
+                    seeded_admin_email, seeded_admin_password
+                );
+                user.id
+            }
             Ok(None) => {
                 let id = oidc_core::utils::generate_uuid_v7();
                 let password_hash = hasher
-                    .hash("Admin123")
+                    .hash(&seeded_admin_password)
                     .map_err(|e| anyhow::anyhow!("hash failed: {e}"))?;
                 let user = oidc_core::models::User {
                     id,
                     realm_id,
-                    email: "admin@example.com".into(),
+                    email: seeded_admin_email.clone(),
                     email_verified: true,
                     username: Some("admin".into()),
                     password_hash: Some(password_hash),
@@ -882,7 +1044,10 @@ async fn seed_data(db_url: &str, proxy_port: u16) -> Result<()> {
                 repo.create(&mut conn, &user)
                     .await
                     .map_err(|e| anyhow::anyhow!("user create: {e}"))?;
-                info!("Created admin user (admin@example.com / Admin123)");
+                info!(
+                    "Created admin user ({} / {})",
+                    seeded_admin_email, seeded_admin_password
+                );
                 id
             }
             Err(e) => return Err(anyhow::anyhow!("user lookup: {e}")),
@@ -1067,8 +1232,8 @@ async fn seed_data(db_url: &str, proxy_port: u16) -> Result<()> {
     info!("  Dev Credentials:");
     info!("");
     info!("  Admin login:");
-    info!("    Email:    admin@example.com");
-    info!("    Password: Admin123");
+    info!("    Email:    {}", default_email());
+    info!("    Password: {}", default_password());
     info!("");
     info!("  Confidential client (client_credentials):");
     info!("    Client ID:     test-service");
@@ -1404,6 +1569,7 @@ async fn shutdown_all(state: &Arc<Mutex<DevState>>) {
 
     let proxy_path = std::env::temp_dir().join("oidc-hub-proxy.js");
     let _ = tokio::fs::remove_file(&proxy_path).await;
+    remove_runtime_state_file().await;
 
     info!("Shutdown complete.");
 }

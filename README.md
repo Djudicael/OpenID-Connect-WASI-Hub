@@ -13,6 +13,22 @@ A multi-tenant OpenID Connect / OAuth2 identity provider built in Rust with firs
 
 ## Quick Start
 
+### `.env` setup for dev / E2E
+
+The repository now includes:
+
+- `.env.template` — tracked template you can copy/share
+- `.env` — ignored local file for your machine
+
+Both `oidc-dev` and `oidc-wasm-dev` load `.env` automatically via `dotenv`, so you do not need to export the variables manually every time.
+
+Typical setup:
+
+```bash
+cp .env.template .env
+# edit .env if needed
+```
+
 ### Prerequisites
 
 - Rust 1.85+ with `wasm32-wasip2` target
@@ -34,8 +50,8 @@ curl https://wasmtime.dev/install.sh -sSf | bash
 # Start everything: PostgreSQL + native backend + frontend + proxy
 cargo run -p oidc-dev -- start
 
-# Open http://localhost:8080 (proxy port)
-# Admin login: admin@example.com / Admin123
+# Open the proxy URL printed by oidc-dev
+# Admin login defaults to DEFAULT_EMAIL / DEFAULT_PASSWORD from .env
 ```
 
 ### 2. WASM Development
@@ -44,7 +60,9 @@ cargo run -p oidc-dev -- start
 # Start everything: PostgreSQL + WASM build + wasmtime serve
 cargo run -p oidc-wasm-dev -- start
 
-# Open http://localhost:<port> (auto-assigned)
+# Open the proxy URL printed by oidc-wasm-dev
+# Admin login defaults to DEFAULT_EMAIL / DEFAULT_PASSWORD from .env
+
 # Run smoke tests against the already running WASM server
 cargo run -p oidc-wasm-dev -- test
 
@@ -78,6 +96,8 @@ cargo build --release -p openid-connect-wasi --target wasm32-wasip2
 
 ## Environment Variables
 
+### Runtime
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OIDC_DATABASE_URL` | `postgresql://localhost/oidc_hub` | PostgreSQL connection string |
@@ -94,6 +114,14 @@ cargo build --release -p openid-connect-wasi --target wasm32-wasip2
 | `OIDC_SIGNING_KID` | `key-1` | Key ID for the global RSA signing key |
 | `OIDC_ED25519_KEY` | *(auto-generated)* | Ed25519 private key in PKCS#8 PEM format (global fallback; per-realm keys preferred in production) |
 | `OIDC_ED25519_KID` | `ed-key-1` | Key ID for the global Ed25519 signing key |
+
+### Dev / E2E
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DEFAULT_EMAIL` | `admin@example.com` | Seeded admin email used by `oidc-dev`, `oidc-wasm-dev`, and Playwright E2E helpers |
+| `DEFAULT_PASSWORD` | `Admin123` | Seeded admin password used by `oidc-dev`, `oidc-wasm-dev`, and Playwright E2E helpers |
+| `PLAYWRIGHT_BASE_URL` | `http://localhost:3000` | Base URL used by Playwright when you run tests directly; `oidc-dev e2e` and `oidc-wasm-dev e2e` set this automatically from the running proxy |
 
 ## API Overview
 
@@ -193,6 +221,77 @@ cargo test -p integration-tests -- --test-threads=1
 # WASM build check
 cargo build -p openid-connect-wasi --target wasm32-wasip2 --release
 ```
+
+### Browser E2E via the dev orchestrators
+
+You can run Playwright against either the native proxy (`oidc-dev`) or the WASM proxy (`oidc-wasm-dev`).
+
+#### Native stack
+
+Start the native dev stack in one terminal:
+
+```bash
+cargo run -p oidc-dev -- start
+```
+
+Then run Playwright in another terminal:
+
+```bash
+# Run the whole Playwright suite using the proxy URL discovered by oidc-dev
+cargo run -p oidc-dev -- e2e
+
+# Chromium only
+cargo run -p oidc-dev -- e2e --project=chromium
+
+# Single spec file
+cargo run -p oidc-dev -- e2e front/admin/e2e/login.spec.js --project=chromium
+```
+
+#### WASM stack
+
+Start the WASM dev stack in one terminal:
+
+```bash
+cargo run -p oidc-wasm-dev -- start
+```
+
+Then run Playwright in another terminal:
+
+```bash
+# Run the whole Playwright suite using the proxy URL discovered by oidc-wasm-dev
+cargo run -p oidc-wasm-dev -- e2e
+
+# Chromium only
+cargo run -p oidc-wasm-dev -- e2e --project=chromium
+
+# Single spec file
+cargo run -p oidc-wasm-dev -- e2e front/admin/e2e/login.spec.js --project=chromium
+```
+
+Both orchestrators automatically inject:
+
+- `PLAYWRIGHT_BASE_URL`
+- `DEFAULT_EMAIL`
+- `DEFAULT_PASSWORD`
+
+from their running runtime state file.
+
+### Direct Playwright commands
+
+If you want to run Playwright directly instead of through `oidc-dev`:
+
+```bash
+# One-time browser install
+npm --prefix front/admin run e2e:install
+
+# Run directly against a chosen base URL
+PLAYWRIGHT_BASE_URL=http://localhost:3000 \
+DEFAULT_EMAIL=admin@example.com \
+DEFAULT_PASSWORD=Admin123 \
+npm --prefix front/admin run e2e:chromium
+```
+
+This is especially useful when running against a manually started proxy or any custom target where you want to bypass the orchestrator-level `e2e` command and set `PLAYWRIGHT_BASE_URL` yourself.
 
 ## Production Deployment
 

@@ -17,7 +17,7 @@ export default defineConfig({
     { name: 'mobile', use: { browserName: 'chromium', viewport: { width: 375, height: 667 } } },
   ],
   webServer: {
-    command: 'echo "Make sure oidc-dev is running: cargo run -p oidc-dev -- start"',
+    command: 'echo "Make sure oidc-dev is running: cargo run -p oidc-dev -- start (or set PLAYWRIGHT_BASE_URL explicitly)"',
     reuseExistingServer: true,
     timeout: 5000,
   },

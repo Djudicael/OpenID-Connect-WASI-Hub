@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { DEFAULT_EMAIL, DEFAULT_PASSWORD } from './helpers.js';
 
 test.describe('Login page', () => {
   test.beforeEach(async ({ page }) => {
@@ -20,7 +21,7 @@ test.describe('Login page', () => {
   });
 
   test('displays error on wrong credentials', async ({ page }) => {
-    await page.locator('#email').fill('admin@example.com');
+    await page.locator('#email').fill(DEFAULT_EMAIL);
     await page.locator('#password').fill('wrong');
     await page.locator('button[type="submit"]').click();
 
@@ -30,8 +31,8 @@ test.describe('Login page', () => {
   });
 
   test('redirects to dashboard on successful login', async ({ page }) => {
-    await page.locator('#email').fill('admin@example.com');
-    await page.locator('#password').fill('Admin123');
+    await page.locator('#email').fill(DEFAULT_EMAIL);
+    await page.locator('#password').fill(DEFAULT_PASSWORD);
     await page.locator('button[type="submit"]').click();
 
     // Should redirect to /

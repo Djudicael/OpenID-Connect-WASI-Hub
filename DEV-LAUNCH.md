@@ -7,7 +7,24 @@ The project provides **two** development orchestrators:
 | `oidc-dev` | Native (`cargo run`) | Full stack with frontend dev server + proxy |
 | `oidc-wasm-dev` | WASM (`wasmtime serve`) | Test the closest local approximation of the recommended same-origin proxy deployment |
 
-Both handle PostgreSQL container lifecycle, migrations, and seed data automatically.
+Both handle PostgreSQL container lifecycle, migrations, seed data, and dev/E2E runtime metadata automatically.
+
+## `.env` Setup
+
+The project now includes:
+
+- `.env.template` — tracked template for dev/E2E configuration
+- `.env` — ignored local file for your machine
+
+Both `oidc-dev` and `oidc-wasm-dev` load `.env` automatically via `dotenv`, so you can keep your dev login/E2E defaults in one place.
+
+Typical setup:
+
+```bash
+cd openid_connect_wasi
+cp .env.template .env
+# edit .env if needed
+```
 
 ## Prerequisites (WSL)
 
@@ -41,6 +58,9 @@ cargo run -p oidc-dev -- start
 
 # Check status
 cargo run -p oidc-dev -- status
+
+# Run Playwright E2E against the running proxy
+cargo run -p oidc-dev -- e2e --project=chromium
 
 # Start only the database (for running tests manually)
 cargo run -p oidc-dev -- db-only
@@ -87,6 +107,9 @@ cargo run -p oidc-wasm-dev -- smoke
 
 # Check status
 cargo run -p oidc-wasm-dev -- status
+
+# Run Playwright E2E against the running WASM proxy
+cargo run -p oidc-wasm-dev -- e2e --project=chromium
 
 # Stop everything
 cargo run -p oidc-wasm-dev -- stop
@@ -157,6 +180,7 @@ Important posture note:
 | `logs` | Print accumulated service logs from temp directory |
 | `wasm` | Start DB + build WASM + run via `wasmtime run` (legacy CLI mode) |
 | `test` | Run smoke tests against a running native server |
+| `e2e` | Run Playwright E2E against the running native proxy, automatically injecting `PLAYWRIGHT_BASE_URL`, `DEFAULT_EMAIL`, and `DEFAULT_PASSWORD` |
 
 ### `oidc-wasm-dev`
 
@@ -167,6 +191,7 @@ Important posture note:
 | `status` | Show DB URL, WASM port, and process status |
 | `test` | Run smoke tests against an already running WASM server |
 | `smoke` | One-shot WASI validation: start stack → run smoke tests → shutdown |
+| `e2e` | Run Playwright E2E against the running WASM proxy, automatically injecting `PLAYWRIGHT_BASE_URL`, `DEFAULT_EMAIL`, and `DEFAULT_PASSWORD` |
 
 ---
 
@@ -176,7 +201,7 @@ Important posture note:
 
 Both dev tools automatically seed:
 - `master` realm
-- `admin@example.com` / `Admin123` user
+- `DEFAULT_EMAIL` / `DEFAULT_PASSWORD` admin user (defaults: `admin@example.com` / `Admin123`)
 - `admin-ui` OIDC client (public, PKCE required)
 - Admin API key with `admin` scope
 
@@ -201,12 +226,12 @@ For **password grant** (direct API login):
 # Native
 curl -X POST http://localhost:8080/oidc/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"admin@example.com","password":"Admin123"}'
+  -d '{"email":"'$DEFAULT_EMAIL'","password":"'$DEFAULT_PASSWORD'"}'
 
 # WASM
 curl -X POST http://localhost:<port>/oidc/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"admin@example.com","password":"Admin123"}'
+  -d '{"email":"'$DEFAULT_EMAIL'","password":"'$DEFAULT_PASSWORD'"}'
 ```
 
 ---
@@ -313,6 +338,14 @@ wsl --shutdown
 
 ## Environment Variables
 
+### Shared dev / E2E variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DEFAULT_EMAIL` | `admin@example.com` | Seeded admin email used by both dev orchestrators and their Playwright `e2e` command |
+| `DEFAULT_PASSWORD` | `Admin123` | Seeded admin password used by both dev orchestrators and their Playwright `e2e` command |
+| `PLAYWRIGHT_BASE_URL` | `http://localhost:3000` | Mainly for direct/manual Playwright runs; the orchestrator `e2e` commands inject the correct proxy URL automatically |
+
 ### `oidc-dev`
 
 | Variable | Default | Description |
@@ -328,6 +361,7 @@ wsl --shutdown
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OIDC_SERVER_PORT` | auto | WASM server port (auto-detected if unset) |
+| `OIDC_PROXY_PORT` | auto | Proxy port (auto-detected if unset) |
 | `OIDC_DATABASE_URL` | — | Direct DB URL (skip container start) |
 
 ---
@@ -338,18 +372,20 @@ wsl --shutdown
 
 1. **Container lifecycle** — Uses `rustainers` (Rust testcontainers library) to start a Podman PostgreSQL container. The container is automatically dropped when the process exits (Ctrl-C).
 2. **Migrations** — Runs SQL files from `migrations/postgresql/` in order, tracking applied files in `_migrations` table.
-3. **Seed data** — Idempotent: creates realm, user, client, and API key only if they don't exist.
+3. **Seed data** — Idempotent: creates realm, user, client, and API key only if they don't exist. The admin user email/password come from `DEFAULT_EMAIL` / `DEFAULT_PASSWORD`.
 4. **Frontend build** — Runs `npm install` + `node buildJs.js` in `front/admin/`.
 5. **Backend** — Starts `cargo run -p openid-connect-wasi` with `OIDC_ISSUER` set to the proxy port.
 6. **Proxy** — Writes a temporary Node.js proxy script that routes `/api/*`, `/oidc/*`, `/.well-known/*`, `/health` to the backend and everything else to the frontend. `http-proxy` is installed locally into a temp directory (no global npm install).
+7. **Runtime metadata** — Writes a temp runtime-state file containing the proxy URL plus `DEFAULT_EMAIL` / `DEFAULT_PASSWORD`, which the `e2e` command reuses to launch Playwright against the correct running stack.
 
 ### `oidc-wasm-dev`
 
 1. **Container lifecycle** — Same as `oidc-dev`.
 2. **Migrations** — Same as `oidc-dev`.
-3. **Seed data** — Same as `oidc-dev`.
+3. **Seed data** — Same as `oidc-dev`, including `DEFAULT_EMAIL` / `DEFAULT_PASSWORD` for the admin user.
 4. **WASM build** — Runs `cargo build -p openid-connect-wasi --target wasm32-wasip2 --release`.
 5. **Serve** — Starts `wasmtime serve` with the built `.wasm` component, passing all required environment variables (`OIDC_DATABASE_URL`, `OIDC_ENCRYPTION_KEY`, etc.) via `--env` flags.
+6. **Runtime metadata** — Writes a temp runtime-state file containing the proxy URL plus `DEFAULT_EMAIL` / `DEFAULT_PASSWORD`, which the `e2e` command reuses to launch Playwright against the correct running WASM stack.
 
 ---
 

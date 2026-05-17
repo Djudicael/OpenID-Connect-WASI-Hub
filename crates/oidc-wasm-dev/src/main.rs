@@ -9,12 +9,14 @@
 //!   cargo run -p oidc-wasm-dev -- status   # Show status
 //!   cargo run -p oidc-wasm-dev -- test     # Run smoke tests against a running WASM server
 //!   cargo run -p oidc-wasm-dev -- smoke    # One-shot start → smoke tests → shutdown
+//!   cargo run -p oidc-wasm-dev -- e2e      # Run Playwright E2E against the running WASM proxy
 //!
 //! Dev Credentials (seeded on first start):
-//!   Admin login:    admin@example.com / Admin123
+//!   Admin login:    DEFAULT_EMAIL / DEFAULT_PASSWORD
 //!
 //! When the process exits (Ctrl-C), the PostgreSQL container is automatically dropped.
 
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,6 +25,7 @@ use anyhow::{Context, Result};
 use oidc_core::traits::Hasher;
 use rustainers::ImageName;
 use rustainers::runner::Runner;
+use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
@@ -41,6 +44,9 @@ const FRONTEND_DIR: &str = "front/admin";
 const MIGRATIONS_DIR: &str = "migrations/postgresql";
 
 const BIND_ADDRESS: &str = "0.0.0.0";
+const DEFAULT_EMAIL_FALLBACK: &str = "admin@example.com";
+const DEFAULT_PASSWORD_FALLBACK: &str = "Admin123";
+const WASM_DEV_RUNTIME_STATE_FILE: &str = "oidc-hub-wasm-dev-runtime.json";
 
 // ─── State ──────────────────────────────────────────────────────────────────
 
@@ -67,10 +73,74 @@ impl WasmDevState {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct WasmDevRuntimeInfo {
+    db_url: String,
+    wasm_port: u16,
+    proxy_port: u16,
+    playwright_base_url: String,
+    default_email: String,
+    default_password: String,
+}
+
+fn default_email() -> String {
+    std::env::var("DEFAULT_EMAIL").unwrap_or_else(|_| DEFAULT_EMAIL_FALLBACK.to_string())
+}
+
+fn default_password() -> String {
+    std::env::var("DEFAULT_PASSWORD").unwrap_or_else(|_| DEFAULT_PASSWORD_FALLBACK.to_string())
+}
+
+fn runtime_state_path() -> PathBuf {
+    std::env::temp_dir().join(WASM_DEV_RUNTIME_STATE_FILE)
+}
+
+async fn write_runtime_state(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
+    let s = state.lock().await;
+    let runtime = WasmDevRuntimeInfo {
+        db_url: s.db_url.clone(),
+        wasm_port: s.wasm_port,
+        proxy_port: s.proxy_port,
+        playwright_base_url: format!("http://localhost:{}", s.proxy_port),
+        default_email: default_email(),
+        default_password: default_password(),
+    };
+    drop(s);
+
+    let bytes = serde_json::to_vec_pretty(&runtime)?;
+    tokio::fs::write(runtime_state_path(), bytes)
+        .await
+        .context("failed to write wasm dev runtime state file")?;
+    Ok(())
+}
+
+fn read_runtime_state() -> Result<WasmDevRuntimeInfo> {
+    let path = runtime_state_path();
+    let bytes = std::fs::read(&path).with_context(|| {
+        format!(
+            "failed to read wasm dev runtime state file at {}",
+            path.display()
+        )
+    })?;
+    let runtime = serde_json::from_slice(&bytes).with_context(|| {
+        format!(
+            "failed to parse wasm dev runtime state file at {}",
+            path.display()
+        )
+    })?;
+    Ok(runtime)
+}
+
+async fn remove_runtime_state_file() {
+    let _ = tokio::fs::remove_file(runtime_state_path()).await;
+}
+
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let _ = dotenvy::dotenv();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -78,8 +148,10 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let args: Vec<String> = std::env::args().collect();
-    let cmd = args.get(1).map(|s| s.as_str()).unwrap_or("start");
+    let mut args = std::env::args();
+    let _bin = args.next();
+    let cmd = args.next().unwrap_or_else(|| "start".into());
+    let extra_args: Vec<String> = args.collect();
 
     let state = Arc::new(Mutex::new(WasmDevState::new(
         String::new(),
@@ -87,14 +159,15 @@ async fn main() -> Result<()> {
         pick_port(3000),
     )));
 
-    match cmd {
+    match cmd.as_str() {
         "start" => cmd_start(&state).await,
         "stop" => cmd_stop(&state).await,
         "status" => cmd_status(&state).await,
         "test" => cmd_test(&state).await,
         "smoke" => cmd_smoke(&state).await,
+        "e2e" => cmd_e2e(extra_args).await,
         _ => {
-            eprintln!("Usage: cargo run -p oidc-wasm-dev -- [start|stop|status|test|smoke]");
+            eprintln!("Usage: cargo run -p oidc-wasm-dev -- [start|stop|status|test|smoke|e2e]");
             std::process::exit(1);
         }
     }
@@ -123,6 +196,10 @@ async fn cmd_start(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
         proxy_port
     );
     info!("  Database:          {}", db_url);
+    info!("  Playwright:        http://localhost:{}", proxy_port);
+    info!("  DEFAULT_EMAIL:     {}", default_email());
+    info!("  DEFAULT_PASSWORD:  {}", default_password());
+    info!("  Runtime file:      {}", runtime_state_path().display());
     info!("");
     info!("  Press Ctrl-C to stop (container auto-drops)");
     info!("═══════════════════════════════════════════════════════════════");
@@ -141,30 +218,24 @@ async fn cmd_stop(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
 }
 
 async fn cmd_status(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
+    if let Ok(runtime) = read_runtime_state() {
+        info!("DB URL:     {}", runtime.db_url);
+        info!("WASM Port:  {}", runtime.wasm_port);
+        info!("Proxy Port: {}", runtime.proxy_port);
+        info!("Playwright: {}", runtime.playwright_base_url);
+        info!("DEFAULT_EMAIL: {}", runtime.default_email);
+        info!("DEFAULT_PASSWORD: {}", runtime.default_password);
+        info!("Runtime file: {}", runtime_state_path().display());
+        return Ok(());
+    }
+
     let s = state.lock().await;
     info!("DB URL:     {}", s.db_url);
     info!("WASM Port:  {}", s.wasm_port);
     info!("Proxy Port: {}", s.proxy_port);
-    info!(
-        "Container:  {}",
-        if s.db_container.is_some() {
-            "running"
-        } else {
-            "none"
-        }
-    );
-    info!(
-        "Wasmtime:   {}",
-        if s.wasmtime.is_some() {
-            "running"
-        } else {
-            "none"
-        }
-    );
-    info!(
-        "Proxy:      {}",
-        if s.proxy.is_some() { "running" } else { "none" }
-    );
+    info!("Container:  none");
+    info!("Wasmtime:   none");
+    info!("Proxy:      none");
     Ok(())
 }
 
@@ -203,6 +274,7 @@ async fn prepare_environment(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
     build_wasm().await?;
     start_wasmtime(state).await?;
     start_proxy(state).await?;
+    write_runtime_state(state).await?;
 
     Ok(())
 }
@@ -224,6 +296,8 @@ async fn run_smoke_tests(base_url: &str) -> Result<()> {
     info!("Running smoke tests against {}...", base_url);
 
     let client = reqwest::Client::new();
+    let admin_email = default_email();
+    let admin_password = default_password();
     let mut passed = 0u32;
     let mut failed = 0u32;
 
@@ -308,8 +382,8 @@ async fn run_smoke_tests(base_url: &str) -> Result<()> {
     match client
         .post(format!("{}/oidc/login", base_url))
         .json(&serde_json::json!({
-            "email": "admin@example.com",
-            "password": "Admin123",
+            "email": admin_email,
+            "password": admin_password,
             "client_id": "admin-ui"
         }))
         .send()
@@ -450,6 +524,47 @@ async fn run_smoke_tests(base_url: &str) -> Result<()> {
 
     if failed > 0 {
         anyhow::bail!("WASI smoke tests failed: {failed} check(s) failed");
+    }
+
+    Ok(())
+}
+
+async fn cmd_e2e(extra_args: Vec<String>) -> Result<()> {
+    check_tools().await?;
+
+    let runtime = read_runtime_state().context(
+        "No running oidc-wasm-dev runtime state found. Start the stack first with `cargo run -p oidc-wasm-dev -- start`.",
+    )?;
+
+    info!(
+        "Running Playwright E2E against {} with DEFAULT_EMAIL={}...",
+        runtime.playwright_base_url, runtime.default_email
+    );
+
+    let mut cmd = Command::new("npm");
+    cmd.arg("exec")
+        .arg("--")
+        .arg("playwright")
+        .arg("test")
+        .arg("--config=playwright.config.js")
+        .current_dir(std::path::Path::new(FRONTEND_DIR))
+        .env("PLAYWRIGHT_BASE_URL", &runtime.playwright_base_url)
+        .env("DEFAULT_EMAIL", &runtime.default_email)
+        .env("DEFAULT_PASSWORD", &runtime.default_password)
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+
+    for arg in extra_args.into_iter().filter(|arg| arg != "--") {
+        if let Some(stripped) = arg.strip_prefix("front/admin/") {
+            cmd.arg(stripped);
+        } else {
+            cmd.arg(arg);
+        }
+    }
+
+    let status = cmd.status().await.context("failed to run Playwright E2E")?;
+    if !status.success() {
+        anyhow::bail!("Playwright E2E failed with exit code {:?}", status.code());
     }
 
     Ok(())
@@ -642,6 +757,8 @@ async fn seed_data(db_url: &str, _proxy_port: u16) -> Result<()> {
 
     let config = wasi_pg_client::Config::from_uri(db_url).context("invalid database URL")?;
     let hasher = oidc_core::traits::hasher::Argon2idHasher::new();
+    let seeded_admin_email = default_email();
+    let seeded_admin_password = default_password();
 
     // 1. Realm
     info!("Step 1/5: realm...");
@@ -682,19 +799,36 @@ async fn seed_data(db_url: &str, _proxy_port: u16) -> Result<()> {
         let mut conn = oidc_repository::Connection::from_pg_client(pg_conn);
         let repo = oidc_repository::repositories::user_repo::UserRepo;
         match repo
-            .find_by_email(&mut conn, realm_id, "admin@example.com")
+            .find_by_email(&mut conn, realm_id, &seeded_admin_email)
             .await
         {
-            Ok(Some(user)) => user.id,
+            Ok(Some(mut user)) => {
+                user.password_hash = Some(
+                    hasher
+                        .hash(&seeded_admin_password)
+                        .map_err(|e| anyhow::anyhow!("hash failed: {e}"))?,
+                );
+                user.email_verified = true;
+                user.enabled = true;
+                user.updated_at = chrono::Utc::now();
+                repo.update(&mut conn, &user)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("user update: {e}"))?;
+                info!(
+                    "Updated admin user ({} / {})",
+                    seeded_admin_email, seeded_admin_password
+                );
+                user.id
+            }
             Ok(None) => {
                 let id = oidc_core::utils::generate_uuid_v7();
                 let password_hash = hasher
-                    .hash("Admin123")
+                    .hash(&seeded_admin_password)
                     .map_err(|e| anyhow::anyhow!("hash failed: {e}"))?;
                 let user = oidc_core::models::User {
                     id,
                     realm_id,
-                    email: "admin@example.com".into(),
+                    email: seeded_admin_email.clone().into(),
                     email_verified: true,
                     username: Some("admin".into()),
                     password_hash: Some(password_hash),
@@ -725,7 +859,10 @@ async fn seed_data(db_url: &str, _proxy_port: u16) -> Result<()> {
                 repo.create(&mut conn, &user)
                     .await
                     .map_err(|e| anyhow::anyhow!("user create: {e}"))?;
-                info!("Created admin user (admin@example.com / Admin123)");
+                info!(
+                    "Created admin user ({} / {})",
+                    seeded_admin_email, seeded_admin_password
+                );
                 id
             }
             Err(e) => return Err(anyhow::anyhow!("user lookup: {e}")),
@@ -908,8 +1045,8 @@ async fn seed_data(db_url: &str, _proxy_port: u16) -> Result<()> {
     info!("  Dev Credentials:");
     info!("");
     info!("  Admin login:");
-    info!("    Email:    admin@example.com");
-    info!("    Password: Admin123");
+    info!("    Email:    {}", default_email());
+    info!("    Password: {}", default_password());
     info!("");
     info!("  Confidential client (client_credentials):");
     info!("    Client ID:     test-service");
@@ -1318,6 +1455,7 @@ async fn shutdown_all(state: &Arc<Mutex<WasmDevState>>) {
 
     let proxy_path = std::env::temp_dir().join("oidc-wasm-proxy.js");
     let _ = tokio::fs::remove_file(&proxy_path).await;
+    remove_runtime_state_file().await;
 
     info!("Shutdown complete.");
 }

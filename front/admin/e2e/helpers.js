@@ -3,8 +3,8 @@
  * The admin UI uses Shadow DOM, but Playwright's locator() pierces shadow DOM by default.
  */
 
-const DEFAULT_EMAIL = 'admin@example.com';
-const DEFAULT_PASSWORD = 'Admin123';
+export const DEFAULT_EMAIL = process.env.DEFAULT_EMAIL || 'admin@example.com';
+export const DEFAULT_PASSWORD = process.env.DEFAULT_PASSWORD || 'Admin123';
 
 /**
  * Perform login via the password form on /login.
