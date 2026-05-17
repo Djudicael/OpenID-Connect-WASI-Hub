@@ -1208,6 +1208,72 @@ async fn test_logout_redirect_to_home() {
 }
 
 #[tokio::test]
+async fn test_logout_frontchannel_page_allows_rp_iframes_and_preserves_redirect_target() {
+    let app = TestApp::new().await;
+    let login_body = login(&app).await;
+    let id_token = login_body["id_token"]
+        .as_str()
+        .expect("id_token must be present")
+        .to_string();
+
+    let frontchannel_uri = "https://rp.example.com/frontchannel/logout";
+    let post_logout_uri = "https://app.example.com/logged-out";
+    let state = "frontchannel-state-123";
+
+    {
+        let mut conn = app.db_conn().await;
+        conn.execute_params(
+            "UPDATE clients SET frontchannel_logout_uri = $1, frontchannel_logout_session_required = TRUE, post_logout_redirect_uris = $2 WHERE client_id = $3",
+            &[
+                &frontchannel_uri,
+                &serde_json::json!([post_logout_uri]),
+                &fixtures::TEST_CLIENT_ID,
+            ],
+        )
+        .await
+        .expect("failed to update client logout settings");
+        let _ = conn.close().await;
+    }
+
+    let resp = app
+        .client()
+        .get(&format!(
+            "{}/oidc/logout?id_token_hint={}&client_id={}&post_logout_redirect_uri={}&state={}",
+            app.url(),
+            urlencoding::encode(&id_token),
+            urlencoding::encode(fixtures::TEST_CLIENT_ID),
+            urlencoding::encode(post_logout_uri),
+            urlencoding::encode(state),
+        ))
+        .send()
+        .await
+        .expect("logout request failed");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let csp = resp
+        .headers()
+        .get("content-security-policy")
+        .expect("frontchannel logout response should set CSP")
+        .to_str()
+        .expect("CSP header must be valid UTF-8")
+        .to_string();
+    assert!(
+        csp.contains("frame-src 'self' https://rp.example.com"),
+        "CSP must allow the RP logout iframe origin, got: {csp}"
+    );
+    assert!(
+        csp.contains("script-src 'self' 'unsafe-inline'"),
+        "CSP must allow the inline redirect script, got: {csp}"
+    );
+
+    let body = resp.text().await.expect("response body should be readable");
+    assert!(body.contains(frontchannel_uri));
+    assert!(body.contains("sid="));
+    assert!(body.contains(post_logout_uri));
+    assert!(body.contains(state));
+}
+
+#[tokio::test]
 async fn test_logout_with_post_logout_redirect() {
     let app = TestApp::new().await;
     let post_logout_uri = "https://app.example.com/logged-out";

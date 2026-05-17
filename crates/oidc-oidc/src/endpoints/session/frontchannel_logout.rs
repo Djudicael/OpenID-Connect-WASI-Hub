@@ -8,6 +8,10 @@
 //! The logout iframe URL may include a `iss` (issuer) and `sid` (session ID)
 //! query parameter when the client has `frontchannel_logout_session_required=true`.
 
+use std::collections::BTreeSet;
+
+use axum::http::HeaderValue;
+use axum::http::header::CONTENT_SECURITY_POLICY;
 use axum::response::{Html, IntoResponse, Response};
 
 use oidc_core::models::Client;
@@ -23,8 +27,15 @@ use oidc_core::models::Client;
 /// 1. Validate the `iss` parameter matches the expected OP
 /// 2. Validate the `sid` parameter matches the expected session (if present)
 /// 3. Log the user out of the RP
-pub fn build_frontchannel_logout_html(issuer: &str, sid: &str, clients: &[&Client]) -> Response {
+pub fn build_frontchannel_logout_html(
+    issuer: &str,
+    sid: &str,
+    clients: &[&Client],
+    post_logout_redirect_uri: Option<&str>,
+    state: Option<&str>,
+) -> Response {
     let mut iframes = String::new();
+    let mut frame_origins = BTreeSet::new();
 
     for client in clients {
         if let Some(ref uri) = client.frontchannel_logout_uri {
@@ -42,9 +53,14 @@ pub fn build_frontchannel_logout_html(issuer: &str, sid: &str, clients: &[&Clien
                 r#"<iframe src="{}" style="display:none;width:0;height:0;border:none;"></iframe>"#,
                 iframe_url
             ));
+            if let Ok(parsed) = url::Url::parse(uri) {
+                frame_origins.insert(parsed.origin().unicode_serialization());
+            }
         }
     }
 
+    let redirect_target = post_logout_redirect_uri.unwrap_or("/");
+    let redirect_state = state.unwrap_or("");
     let html = format!(
         r#"<!DOCTYPE html>
 <html>
@@ -52,25 +68,39 @@ pub fn build_frontchannel_logout_html(issuer: &str, sid: &str, clients: &[&Clien
 <body>
 {iframes}
 <script>
-// Auto-close after iframes have had time to load (5 seconds max)
+const redirectTarget = {redirect_target:?};
+const redirectState = {redirect_state:?};
 setTimeout(function() {{
-    // If we have a post_logout_redirect_uri, redirect there
-    var params = new URLSearchParams(window.location.search);
-    var redirect = params.get('post_logout_redirect_uri');
-    if (redirect) {{
-        var state = params.get('state');
-        if (state) {{
-            redirect += (redirect.indexOf('?') === -1 ? '?' : '&') + 'state=' + encodeURIComponent(state);
-        }}
-        window.location.href = redirect;
+    var redirect = redirectTarget;
+    if (redirectState) {{
+        redirect += (redirect.indexOf('?') === -1 ? '?' : '&') + 'state=' + encodeURIComponent(redirectState);
     }}
+    window.location.href = redirect;
 }}, 5000);
 </script>
 </body>
 </html>"#
     );
 
-    Html(html).into_response()
+    let mut response = Html(html).into_response();
+    let frame_src = if frame_origins.is_empty() {
+        "frame-src 'none'".to_string()
+    } else {
+        format!(
+            "frame-src 'self' {}",
+            frame_origins.into_iter().collect::<Vec<_>>().join(" ")
+        )
+    };
+    let csp = format!(
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; {frame_src}; frame-ancestors 'none'"
+    );
+    if let Ok(value) = HeaderValue::from_str(&csp) {
+        response
+            .headers_mut()
+            .insert(CONTENT_SECURITY_POLICY, value);
+    }
+
+    response
 }
 
 #[cfg(test)]
@@ -127,19 +157,37 @@ mod tests {
             false,
         );
         let clients: Vec<&Client> = vec![&client];
-        let response = build_frontchannel_logout_html("https://op.example.com", "sid123", &clients);
+        let response = build_frontchannel_logout_html(
+            "https://op.example.com",
+            "sid123",
+            &clients,
+            Some("https://app.example.com/logged-out"),
+            Some("logout-state"),
+        );
+
+        let csp = response
+            .headers()
+            .get(CONTENT_SECURITY_POLICY)
+            .expect("frontchannel response should set a CSP override")
+            .to_str()
+            .expect("CSP should be valid ASCII")
+            .to_string();
 
         // Convert to string for assertion
-        let (parts, body) = response.into_parts();
+        let (_parts, body) = response.into_parts();
         let body_bytes = axum::body::to_bytes(body, 1024 * 1024).await.unwrap();
         let html = String::from_utf8(body_bytes.to_vec()).unwrap();
 
         assert!(html.contains("https://rp.example.com/frontchannel_logout"));
         assert!(html.contains("iss="));
+        assert!(html.contains("https://app.example.com/logged-out"));
+        assert!(html.contains("logout-state"));
         assert!(
             !html.contains("sid="),
             "sid should NOT be included when session_required is false"
         );
+        assert!(csp.contains("frame-src 'self' https://rp.example.com"));
+        assert!(csp.contains("script-src 'self' 'unsafe-inline'"));
     }
 
     #[tokio::test]
@@ -147,9 +195,15 @@ mod tests {
         let client =
             test_client_with_frontchannel(Some("https://rp.example.com/frontchannel_logout"), true);
         let clients: Vec<&Client> = vec![&client];
-        let response = build_frontchannel_logout_html("https://op.example.com", "sid123", &clients);
+        let response = build_frontchannel_logout_html(
+            "https://op.example.com",
+            "sid123",
+            &clients,
+            None,
+            None,
+        );
 
-        let (parts, body) = response.into_parts();
+        let (_parts, body) = response.into_parts();
         let body_bytes = axum::body::to_bytes(body, 1024 * 1024).await.unwrap();
         let html = String::from_utf8(body_bytes.to_vec()).unwrap();
 
@@ -165,9 +219,15 @@ mod tests {
     async fn test_frontchannel_html_skips_clients_without_uri() {
         let client = test_client_with_frontchannel(None, false);
         let clients: Vec<&Client> = vec![&client];
-        let response = build_frontchannel_logout_html("https://op.example.com", "sid123", &clients);
+        let response = build_frontchannel_logout_html(
+            "https://op.example.com",
+            "sid123",
+            &clients,
+            None,
+            None,
+        );
 
-        let (parts, body) = response.into_parts();
+        let (_parts, body) = response.into_parts();
         let body_bytes = axum::body::to_bytes(body, 1024 * 1024).await.unwrap();
         let html = String::from_utf8(body_bytes.to_vec()).unwrap();
 
@@ -188,9 +248,15 @@ mod tests {
             true,
         );
         let clients: Vec<&Client> = vec![&client1, &client2];
-        let response = build_frontchannel_logout_html("https://op.example.com", "sid123", &clients);
+        let response = build_frontchannel_logout_html(
+            "https://op.example.com",
+            "sid123",
+            &clients,
+            None,
+            None,
+        );
 
-        let (parts, body) = response.into_parts();
+        let (_parts, body) = response.into_parts();
         let body_bytes = axum::body::to_bytes(body, 1024 * 1024).await.unwrap();
         let html = String::from_utf8(body_bytes.to_vec()).unwrap();
 

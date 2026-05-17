@@ -2,9 +2,20 @@
 //! Adds standard security headers to all responses.
 
 use axum::body::Body;
-use axum::http::{HeaderValue, Request};
+use axum::http::{HeaderName, HeaderValue, Request};
 use axum::middleware::Next;
 use axum::response::Response;
+
+fn insert_header_if_absent(
+    headers: &mut axum::http::HeaderMap,
+    name: &'static str,
+    value: &'static str,
+) {
+    let header_name = HeaderName::from_static(name);
+    if !headers.contains_key(&header_name) {
+        headers.insert(header_name, HeaderValue::from_static(value));
+    }
+}
 
 /// Security headers middleware.
 /// Adds headers recommended for production OIDC providers:
@@ -19,25 +30,25 @@ pub async fn security_headers_middleware(request: Request<Body>, next: Next) -> 
     let mut response = next.run(request).await;
 
     let headers = response.headers_mut();
-    headers.insert(
-        "x-content-type-options",
-        HeaderValue::from_static("nosniff"),
-    );
-    headers.insert("x-frame-options", HeaderValue::from_static("DENY"));
-    headers.insert("x-xss-protection", HeaderValue::from_static("0"));
-    headers.insert(
+    insert_header_if_absent(headers, "x-content-type-options", "nosniff");
+    insert_header_if_absent(headers, "x-frame-options", "DENY");
+    insert_header_if_absent(headers, "x-xss-protection", "0");
+    insert_header_if_absent(
+        headers,
         "referrer-policy",
-        HeaderValue::from_static("strict-origin-when-cross-origin"),
+        "strict-origin-when-cross-origin",
     );
-    headers.insert(
+    insert_header_if_absent(
+        headers,
         "content-security-policy",
-        HeaderValue::from_static("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'"),
+        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'",
     );
-    headers.insert(
+    insert_header_if_absent(
+        headers,
         "strict-transport-security",
-        HeaderValue::from_static("max-age=63072000; includeSubDomains; preload"),
+        "max-age=63072000; includeSubDomains; preload",
     );
-    headers.insert("cache-control", HeaderValue::from_static("no-store"));
+    insert_header_if_absent(headers, "cache-control", "no-store");
 
     response
 }

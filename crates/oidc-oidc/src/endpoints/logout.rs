@@ -163,12 +163,25 @@ pub async fn logout_handler(
         }
     }
 
+    let validated_uri = validate_redirect_uri(
+        &state,
+        post_logout_redirect_uri.as_deref(),
+        client_id_param.as_deref(),
+    )
+    .await;
+
     // --- Front-Channel Logout ---
     // If any clients have frontchannel_logout_uri, return the HTML page with iframes
     if !frontchannel_clients.is_empty() {
         if let (Some(_user_id), Some(sid)) = (&user_id_opt, &sid_opt) {
             let fc_refs: Vec<&oidc_core::models::Client> = frontchannel_clients.iter().collect();
-            let mut response = build_frontchannel_logout_html(&state.issuer, sid, &fc_refs);
+            let mut response = build_frontchannel_logout_html(
+                &state.issuer,
+                sid,
+                &fc_refs,
+                validated_uri.as_deref(),
+                state_param.as_deref(),
+            );
 
             // Clear the session cookie
             let clear_header = session_cookie::clear_session_cookie_header();
@@ -181,12 +194,6 @@ pub async fn logout_handler(
     }
 
     // --- Standard redirect-based logout (no front-channel clients) ---
-    let validated_uri = validate_redirect_uri(
-        &state,
-        post_logout_redirect_uri.as_deref(),
-        client_id_param.as_deref(),
-    )
-    .await;
 
     let redirect = build_redirect(validated_uri, state_param);
     let mut response = redirect.into_response();
