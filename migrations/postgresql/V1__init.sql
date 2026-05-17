@@ -1,5 +1,7 @@
 -- V1__init.sql
--- Initial schema: create realms and users tables.
+-- Finalized baseline schema for realms and users.
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS realms (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -8,8 +10,13 @@ CREATE TABLE IF NOT EXISTS realms (
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     config JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMPTZ
 );
+
+CREATE INDEX IF NOT EXISTS idx_realms_deleted_at
+    ON realms(deleted_at)
+    WHERE deleted_at IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -20,8 +27,23 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT,
     given_name TEXT,
     family_name TEXT,
+    middle_name TEXT,
+    nickname TEXT,
+    preferred_username TEXT,
+    profile TEXT,
+    picture TEXT,
+    website TEXT,
+    gender TEXT,
+    birthdate TEXT,
+    zoneinfo TEXT,
     phone_number TEXT,
-    locale TEXT DEFAULT 'en',
+    phone_number_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    street_address TEXT,
+    locality TEXT,
+    region TEXT,
+    postal_code TEXT,
+    country TEXT,
+    locale TEXT NOT NULL DEFAULT 'en',
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     attributes JSONB NOT NULL DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -29,3 +51,10 @@ CREATE TABLE IF NOT EXISTS users (
     deleted_at TIMESTAMPTZ,
     UNIQUE(realm_id, email)
 );
+
+CREATE INDEX IF NOT EXISTS idx_users_realm_email
+    ON users(realm_id, email)
+    WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_users_created_at
+    ON users(created_at);

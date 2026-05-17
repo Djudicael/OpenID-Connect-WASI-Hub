@@ -343,11 +343,9 @@ async fn test_webfinger_missing_resource() {
 // ===================================================================
 
 #[tokio::test]
-async fn test_check_session_unchanged() {
+async fn test_check_session_not_supported_for_legacy_query_variant() {
     let app = TestApp::new().await;
 
-    // The check_session endpoint returns an HTML page with an iframe script
-    // that handles postMessage communication with the RP.
     let resp = app
         .client()
         .get(&format!(
@@ -358,30 +356,9 @@ async fn test_check_session_unchanged() {
         .await
         .expect("check session failed");
 
-    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(resp.status(), StatusCode::NOT_IMPLEMENTED);
     let body = resp.text().await.unwrap();
-    assert!(body.contains("OIDC Check Session"));
-    assert!(body.contains("postMessage"));
-}
-
-#[tokio::test]
-async fn test_check_session_changed() {
-    let app = TestApp::new().await;
-
-    let resp = app
-        .client()
-        .get(&format!(
-            "{}/oidc/session/check?session_state=changed",
-            app.url()
-        ))
-        .send()
-        .await
-        .expect("check session failed");
-
-    assert_eq!(resp.status(), StatusCode::OK);
-    let body = resp.text().await.unwrap();
-    // Same HTML page regardless of session_state value
-    assert!(body.contains("OIDC Check Session"));
+    assert!(body.contains("not currently supported"));
 }
 
 // ===================================================================

@@ -3,6 +3,7 @@
 //! Reads SQL files from `migrations/postgresql/` and applies them in order.
 //! Usage: OIDC_DATABASE_URL=postgresql://... cargo run -p oidc-migrate
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
@@ -45,14 +46,39 @@ async fn main() -> anyhow::Result<()> {
         })
         .collect();
 
-    // Sort by the numeric prefix (V1, V2, ..., V10, ...) not alphabetically
-    // (alphabetical would put V10 before V2).
-    entries.sort_by_key(|e| {
-        let name = e.file_name().to_string_lossy().to_string();
-        name.split_once('_')
+    let mut versions: BTreeMap<u32, Vec<String>> = BTreeMap::new();
+    for entry in &entries {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let version = name
+            .split_once('_')
             .and_then(|(prefix, _)| prefix.strip_prefix('V'))
             .and_then(|num| num.parse::<u32>().ok())
-            .unwrap_or(0)
+            .ok_or_else(|| anyhow::anyhow!("invalid migration filename format: {name}"))?;
+        versions.entry(version).or_default().push(name);
+    }
+
+    let duplicate_versions: Vec<String> = versions
+        .iter()
+        .filter(|(_, files)| files.len() > 1)
+        .map(|(version, files)| format!("V{version}: {}", files.join(", ")))
+        .collect();
+    if !duplicate_versions.is_empty() {
+        anyhow::bail!(
+            "duplicate migration versions detected; each V<number> prefix must be unique:\n{}",
+            duplicate_versions.join("\n")
+        );
+    }
+
+    // Sort by the numeric prefix (V1, V2, ..., V10, ...) and then by filename
+    // to keep the ordering deterministic.
+    entries.sort_by_key(|e| {
+        let name = e.file_name().to_string_lossy().to_string();
+        let version = name
+            .split_once('_')
+            .and_then(|(prefix, _)| prefix.strip_prefix('V'))
+            .and_then(|num| num.parse::<u32>().ok())
+            .unwrap_or(0);
+        (version, name)
     });
 
     for entry in entries {

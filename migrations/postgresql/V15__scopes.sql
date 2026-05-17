@@ -1,5 +1,5 @@
 -- V15__scopes.sql
--- Realm-scoped scopes with client-scope mapping.
+-- Finalized scopes and realm signing keys schema.
 
 CREATE TABLE IF NOT EXISTS scopes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -20,3 +20,16 @@ CREATE TABLE IF NOT EXISTS client_scopes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_client_scopes_scope ON client_scopes(scope_id);
+
+CREATE TABLE IF NOT EXISTS realm_signing_keys (
+    realm_id UUID PRIMARY KEY REFERENCES realms(id) ON DELETE CASCADE,
+    rsa_private_pem TEXT NOT NULL,
+    rsa_kid VARCHAR(64) NOT NULL DEFAULT 'key-1',
+    rsa_public_n TEXT NOT NULL,
+    rsa_public_e TEXT NOT NULL,
+    ed25519_private_pem TEXT NOT NULL,
+    ed25519_kid VARCHAR(64) NOT NULL DEFAULT 'ed-key-1',
+    ed25519_public_x TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
