@@ -105,7 +105,7 @@ $env:OIDC_SERVER_BIND_ADDRESS = "0.0.0.0"
 $env:OIDC_SERVER_PORT = "8080"
 
 # Security
-$env:OIDC_ENCRYPTION_KEY = "base64-encoded-32-bytes"
+$env:OIDC_ENCRYPTION_KEY = "64-hex-characters"
 $env:OIDC_SIGNING_KEY_PEM = "-----BEGIN PRIVATE KEY-----..."
 
 # Features

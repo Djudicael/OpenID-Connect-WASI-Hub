@@ -146,7 +146,7 @@ Key settings:
 - `OIDC_SERVER_BIND_ADDRESS`
 - `OIDC_SERVER_PORT`
 - `OIDC_REALM_DEFAULT_NAME`
-- `OIDC_ENCRYPTION_KEY` (32-byte base64 for cookie/JWE)
+- `OIDC_ENCRYPTION_KEY` (64 hex chars / 32 bytes for cookie/JWE)
 - `OIDC_SIGNING_KEY` (RS256 or Ed25519 private key PEM)
 
 

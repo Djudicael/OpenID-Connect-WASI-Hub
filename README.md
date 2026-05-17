@@ -81,7 +81,7 @@ cargo build --release -p openid-connect-wasi --target wasm32-wasip2
 | `OIDC_SERVER_BIND_ADDRESS` | `0.0.0.0` | HTTP bind address |
 | `OIDC_SERVER_PORT` | `8080` | HTTP server port |
 | `OIDC_ISSUER` | `http://localhost:8080` | Base URL for OIDC issuer |
-| `OIDC_ENCRYPTION_KEY` | *(required)* | 32-byte hex key for session cookie HMAC |
+| `OIDC_ENCRYPTION_KEY` | *(required)* | 64 hex chars / 32-byte key for session cookie HMAC and JWE encryption |
 | `OIDC_CORS_ORIGINS` | *(none)* | Comma-separated allowed CORS origins |
 | `OIDC_SIGNING_KEY` | *(auto-generated)* | RSA private key in PKCS#1 PEM format (global fallback; per-realm keys preferred in production) |
 | `OIDC_SIGNING_KID` | `key-1` | Key ID for the global RSA signing key |

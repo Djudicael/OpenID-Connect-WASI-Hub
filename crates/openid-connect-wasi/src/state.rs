@@ -24,6 +24,24 @@ pub struct AppState {
     pub oidc_realm_token_services: RealmTokenServiceCache,
 }
 
+fn validate_encryption_key_hex(value: &str) {
+    if value.len() != 64 {
+        panic!(
+            "invalid OIDC_ENCRYPTION_KEY: expected 64 hex characters (32 bytes), got {} characters",
+            value.len()
+        );
+    }
+
+    for pair in value.as_bytes().chunks_exact(2) {
+        let pair_str = std::str::from_utf8(pair).expect("hex input should remain valid UTF-8");
+        u8::from_str_radix(pair_str, 16).unwrap_or_else(|e| {
+            panic!(
+                "invalid OIDC_ENCRYPTION_KEY: expected 64 hex characters (32 bytes), got decode error at '{pair_str}': {e}"
+            )
+        });
+    }
+}
+
 /// Runtime configuration.
 #[derive(Debug, Clone)]
 pub struct AppConfig {
@@ -35,7 +53,7 @@ pub struct AppConfig {
     pub port: u16,
     /// Base URL for the issuer.
     pub issuer: String,
-    /// Encryption key for cookies/JWE (base64, 32 bytes).
+    /// Encryption key for cookies/JWE (64 hex chars / 32 bytes).
     pub encryption_key: String,
     /// Salt for pairwise subject identifier computation.
     pub pairwise_salt: String,
@@ -54,6 +72,8 @@ impl oidc_apikey::ApiKeyVerifierState for AppState {
 impl AppState {
     /// Build state directly from a config struct (no env vars).
     pub fn from_config(config: AppConfig) -> Self {
+        validate_encryption_key_hex(&config.encryption_key);
+
         let token_service = Arc::new(
             oidc_oidc::tokens::JwtTokenService::with_keys(
                 &config.issuer,
@@ -111,7 +131,7 @@ impl AppState {
                 .unwrap_or(8080),
             issuer,
             encryption_key: std::env::var("OIDC_ENCRYPTION_KEY").expect(
-                "OIDC_ENCRYPTION_KEY environment variable must be set (32-byte base64 key)",
+                "OIDC_ENCRYPTION_KEY environment variable must be set (64 hex chars / 32 bytes)",
             ),
             pairwise_salt: std::env::var("OIDC_PAIRWISE_SALT").expect(
                 "OIDC_PAIRWISE_SALT environment variable must be set — a predictable salt breaks pairwise subject identifier privacy guarantees",
@@ -141,11 +161,10 @@ impl AppState {
 mod tests {
     use super::*;
 
-    #[test]
-    fn oidc_state_reuses_realm_token_service_cache_across_requests() {
+    fn test_config() -> AppConfig {
         let realm_keys = oidc_oidc::tokens::keygen::generate_realm_keys(Uuid::new_v4())
             .expect("test signing key generation should succeed");
-        let state = AppState::from_config(AppConfig {
+        AppConfig {
             database_url: "postgresql://localhost/oidc_hub?sslmode=prefer".to_string(),
             bind_address: "127.0.0.1".to_string(),
             port: 8080,
@@ -155,7 +174,12 @@ mod tests {
             pairwise_salt: "test-pairwise-salt".to_string(),
             signing_key: Some(realm_keys.rsa_private_pem.clone()),
             ed25519_key: Some(realm_keys.ed25519_private_pem.clone()),
-        });
+        }
+    }
+
+    #[test]
+    fn oidc_state_reuses_realm_token_service_cache_across_requests() {
+        let state = AppState::from_config(test_config());
 
         let oidc_state_a = state.oidc_state();
         let oidc_state_b = state.oidc_state();
@@ -179,5 +203,21 @@ mod tests {
                 .expect("cache lock should succeed")
                 .contains_key(&realm_id)
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid OIDC_ENCRYPTION_KEY")]
+    fn from_config_rejects_non_hex_encryption_key() {
+        let mut config = test_config();
+        config.encryption_key = "not-hex".to_string();
+        let _ = AppState::from_config(config);
+    }
+
+    #[test]
+    #[should_panic(expected = "expected 64 hex characters")]
+    fn from_config_rejects_wrong_length_encryption_key() {
+        let mut config = test_config();
+        config.encryption_key = "00112233".to_string();
+        let _ = AppState::from_config(config);
     }
 }
