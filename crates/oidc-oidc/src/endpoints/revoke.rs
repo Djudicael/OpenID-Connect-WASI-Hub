@@ -1,5 +1,6 @@
 use axum::Json;
 use axum::extract::State;
+use axum::http::HeaderMap;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
@@ -11,25 +12,62 @@ use crate::errors::OidcErrorResponse;
 use crate::state::OidcState;
 use crate::tokens::JwtTokenService;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PresentedClientAuthMethod {
+    ClientSecretBasic,
+    ClientSecretPost,
+    ClientAssertion,
+}
+
 /// Token revocation endpoint handler.
 /// Requires client authentication. Supports both access tokens and refresh tokens.
 pub async fn revoke_handler(
     State(state): State<OidcState>,
+    headers: HeaderMap,
     axum::extract::Form(mut params): axum::extract::Form<HashMap<String, String>>,
 ) -> Result<Json<Value>, OidcErrorResponse> {
+    let has_basic_auth = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|auth| auth.starts_with("Basic "));
+    let has_client_assertion = params.contains_key("client_assertion");
+    let has_client_secret_post = params.contains_key("client_secret");
+
+    let presented_auth_method = match (has_basic_auth, has_client_assertion, has_client_secret_post)
+    {
+        (true, false, false) => PresentedClientAuthMethod::ClientSecretBasic,
+        (false, true, false) => PresentedClientAuthMethod::ClientAssertion,
+        (false, false, true) => PresentedClientAuthMethod::ClientSecretPost,
+        _ => {
+            return Err(OidcErrorResponse::invalid_client(
+                "Invalid client authentication",
+            ));
+        }
+    };
+
     // --- Extract client_secret_basic from Authorization header if present ---
-    if let Some(auth_header) = params.get("Authorization") {
-        if let Some(credentials) = auth_header.strip_prefix("Basic ") {
-            use base64::{Engine, engine::general_purpose::STANDARD};
-            if let Ok(decoded) = STANDARD.decode(credentials) {
-                if let Ok(cred_str) = String::from_utf8(decoded) {
-                    if let Some((client_id, client_secret)) = cred_str.split_once(':') {
-                        params
-                            .entry("client_id".to_string())
-                            .or_insert_with(|| client_id.to_string());
-                        params
-                            .entry("client_secret".to_string())
-                            .or_insert_with(|| client_secret.to_string());
+    if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION) {
+        if let Ok(auth_str) = auth_header.to_str() {
+            if let Some(credentials) = auth_str.strip_prefix("Basic ") {
+                use base64::{Engine, engine::general_purpose::STANDARD};
+                if let Ok(decoded) = STANDARD.decode(credentials) {
+                    if let Ok(cred_str) = String::from_utf8(decoded) {
+                        if let Some((client_id, client_secret)) = cred_str.split_once(':') {
+                            if params
+                                .get("client_id")
+                                .is_some_and(|provided| provided != client_id)
+                            {
+                                return Err(OidcErrorResponse::invalid_client(
+                                    "Mismatched client_id",
+                                ));
+                            }
+                            params
+                                .entry("client_id".to_string())
+                                .or_insert_with(|| client_id.to_string());
+                            params
+                                .entry("client_secret".to_string())
+                                .or_insert_with(|| client_secret.to_string());
+                        }
                     }
                 }
             }
@@ -49,7 +87,8 @@ pub async fn revoke_handler(
 
     with_transaction!(conn, |e| OidcErrorResponse::from_internal(e), {
         // --- Client authentication ---
-        let _client = authenticate_client_revoke(&state, &params, &mut conn).await?;
+        let client =
+            authenticate_client_revoke(&state, &params, &mut conn, presented_auth_method).await?;
 
         let token_hash = oidc_core::utils::sha2_256_hex(token);
 
@@ -59,7 +98,9 @@ pub async fn revoke_handler(
                 .find_by_refresh_token_hash(&mut conn, &token_hash)
                 .await
             {
-                let _ = SessionRepo.revoke(&mut conn, session.id).await;
+                if session.client_id == client.id {
+                    let _ = SessionRepo.revoke(&mut conn, session.id).await;
+                }
                 return Ok(Json(json!({})));
             }
         }
@@ -69,7 +110,9 @@ pub async fn revoke_handler(
             .find_by_access_token_hash(&mut conn, &token_hash)
             .await
         {
-            let _ = SessionRepo.revoke(&mut conn, session.id).await;
+            if session.client_id == client.id {
+                let _ = SessionRepo.revoke(&mut conn, session.id).await;
+            }
             return Ok(Json(json!({})));
         }
 
@@ -79,7 +122,9 @@ pub async fn revoke_handler(
                 .find_by_refresh_token_hash(&mut conn, &token_hash)
                 .await
             {
-                let _ = SessionRepo.revoke(&mut conn, session.id).await;
+                if session.client_id == client.id {
+                    let _ = SessionRepo.revoke(&mut conn, session.id).await;
+                }
                 return Ok(Json(json!({})));
             }
         }
@@ -94,8 +139,14 @@ async fn authenticate_client_revoke(
     state: &OidcState,
     params: &HashMap<String, String>,
     conn: &mut oidc_repository::Connection,
+    presented_auth_method: PresentedClientAuthMethod,
 ) -> Result<oidc_core::models::Client, OidcErrorResponse> {
     if let Some(assertion) = params.get("client_assertion") {
+        if presented_auth_method != PresentedClientAuthMethod::ClientAssertion {
+            return Err(OidcErrorResponse::invalid_client(
+                "Invalid client authentication",
+            ));
+        }
         let assertion_type = params
             .get("client_assertion_type")
             .ok_or_else(|| OidcErrorResponse::invalid_client("Missing client_assertion_type"))?;
@@ -109,6 +160,11 @@ async fn authenticate_client_revoke(
             .map_err(|e| {
                 OidcErrorResponse::invalid_client(format!("Invalid client assertion: {e}"))
             })?;
+        if let Some(provided_client_id) = params.get("client_id") {
+            if provided_client_id != &claims.iss {
+                return Err(OidcErrorResponse::invalid_client("Mismatched client_id"));
+            }
+        }
         let client_id = claims.iss;
 
         let client = match ClientRepo.find_by_client_id(conn, &client_id).await {
@@ -184,7 +240,7 @@ async fn authenticate_client_revoke(
         .get("client_id")
         .ok_or_else(|| OidcErrorResponse::invalid_client("Missing client_id"))?;
 
-    let _client_secret = params
+    let client_secret = params
         .get("client_secret")
         .ok_or_else(|| OidcErrorResponse::invalid_client("Missing client_secret"))?;
 
@@ -197,8 +253,30 @@ async fn authenticate_client_revoke(
         Err(e) => return Err(OidcErrorResponse::from_internal(e)),
     };
 
+    match client.token_endpoint_auth_method.as_str() {
+        "client_secret_basic" => {
+            if presented_auth_method != PresentedClientAuthMethod::ClientSecretBasic {
+                return Err(OidcErrorResponse::invalid_client(
+                    "Invalid client authentication",
+                ));
+            }
+        }
+        "client_secret_post" => {
+            if presented_auth_method != PresentedClientAuthMethod::ClientSecretPost {
+                return Err(OidcErrorResponse::invalid_client(
+                    "Invalid client authentication",
+                ));
+            }
+        }
+        _ => {
+            return Err(OidcErrorResponse::invalid_client(
+                "Client not configured for secret authentication",
+            ));
+        }
+    }
+
     if let Some(ref hash) = client.client_secret_hash {
-        if !state.hasher.verify(_client_secret, hash).unwrap_or(false) {
+        if !state.hasher.verify(client_secret, hash).unwrap_or(false) {
             return Err(OidcErrorResponse::invalid_client(
                 "Invalid client credentials",
             ));

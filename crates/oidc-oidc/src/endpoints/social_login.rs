@@ -5,15 +5,16 @@
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::header::SET_COOKIE;
-use axum::response::{IntoResponse, Response};
+use axum::http::HeaderMap;
+use axum::response::{Html, IntoResponse, Response};
 use base64::Engine;
 use serde::Deserialize;
 use serde_json::json;
 
 use oidc_core::models::{FederatedIdentity, IdentityProvider, User};
 use oidc_core::traits::token_service::TokenService;
-use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, sha2_256_hex};
+use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, html_escape, sha2_256_hex};
+use oidc_repository::repositories::client_repo::ClientRepo;
 use oidc_repository::repositories::federated_identity_repo::FederatedIdentityRepo;
 use oidc_repository::repositories::identity_provider_repo::IdentityProviderRepo;
 use oidc_repository::repositories::realm_repo::RealmRepo;
@@ -43,6 +44,62 @@ pub struct SocialLoginCallbackParams {
     pub code: String,
     /// State parameter (contains our internal state).
     pub state: String,
+}
+
+const SOCIAL_STATE_COOKIE_NAME: &str = "oidc_social_state";
+
+fn social_state_cookie_header(value: &str) -> String {
+    format!(
+        "{}={}; HttpOnly; Secure; SameSite=Lax; Max-Age=600; Path=/",
+        SOCIAL_STATE_COOKIE_NAME, value
+    )
+}
+
+fn clear_social_state_cookie_header() -> String {
+    format!(
+        "{}=; HttpOnly; Secure; SameSite=Lax; Max-Age=0; Path=/",
+        SOCIAL_STATE_COOKIE_NAME
+    )
+}
+
+fn extract_social_state_from_headers(headers: &HeaderMap) -> Option<String> {
+    let cookie_header = headers.get(axum::http::header::COOKIE)?.to_str().ok()?;
+    for cookie_pair in cookie_header.split(';') {
+        let cookie_pair = cookie_pair.trim();
+        if let Some(value) = cookie_pair.strip_prefix(&format!("{}=", SOCIAL_STATE_COOKIE_NAME)) {
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+
+fn render_form_post_redirect(redirect_uri: &str, fields: &[(String, String)]) -> String {
+    let inputs = fields
+        .iter()
+        .map(|(k, v)| {
+            format!(
+                r#"<input type="hidden" name="{}" value="{}" />"#,
+                html_escape(k),
+                html_escape(v)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        r#"<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>Redirecting…</title></head>
+<body onload="document.forms[0].submit()">
+<form method="post" action="{}">
+{}
+<noscript><button type="submit">Continue</button></noscript>
+</form>
+</body>
+</html>"#,
+        html_escape(redirect_uri),
+        inputs
+    )
 }
 
 /// Initiate social login with an upstream identity provider.
@@ -84,10 +141,44 @@ pub async fn social_login_initiate_handler(
         }
     };
 
+    if let Some(client_id) = params.client_id.as_deref() {
+        let client = match ClientRepo
+            .find_by_client_id_in_realm(&mut conn, client_id, realm.id)
+            .await
+        {
+            Ok(Some(c)) if c.enabled => c,
+            _ => {
+                return (axum::http::StatusCode::BAD_REQUEST, "Invalid client_id").into_response();
+            }
+        };
+
+        let redirect_uri = match params.redirect_uri.as_deref() {
+            Some(uri) if !uri.is_empty() => uri,
+            _ => {
+                return (axum::http::StatusCode::BAD_REQUEST, "Missing redirect_uri")
+                    .into_response();
+            }
+        };
+
+        if !client.redirect_uris.contains(&redirect_uri.to_string()) {
+            return (axum::http::StatusCode::BAD_REQUEST, "Invalid redirect_uri").into_response();
+        }
+    }
+
     // Generate a state token that encodes our internal state.
     // We encode the internal state as:
     // base64url_no_pad(json({state_hash, client_id, redirect_uri, realm_id, provider_id, nonce}))
-    let internal_state = generate_opaque_token().unwrap_or_default();
+    let internal_state = match generate_opaque_token() {
+        Ok(state) => state,
+        Err(e) => {
+            tracing::error!("Failed to generate social login state: {e}");
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal error",
+            )
+                .into_response();
+        }
+    };
     let state_hash = sha2_256_hex(&internal_state);
 
     let state_data = json!({
@@ -100,8 +191,17 @@ pub async fn social_login_initiate_handler(
         "s": params.state,
     });
 
-    let encoded_state = base64::engine::general_purpose::URL_SAFE_NO_PAD
-        .encode(serde_json::to_vec(&state_data).unwrap_or_default());
+    let encoded_state = match serde_json::to_vec(&state_data) {
+        Ok(bytes) => base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes),
+        Err(e) => {
+            tracing::error!("Failed to encode social login state: {e}");
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Internal error",
+            )
+                .into_response();
+        }
+    };
 
     // Build the upstream authorization URL
     let redirect_uri_for_upstream = format!(
@@ -119,7 +219,12 @@ pub async fn social_login_initiate_handler(
         urlencoding::encode(&encoded_state),
     );
 
-    axum::response::Redirect::temporary(&upstream_auth_url).into_response()
+    let mut response = axum::response::Redirect::temporary(&upstream_auth_url).into_response();
+    session_cookie::append_set_cookie(
+        response.headers_mut(),
+        social_state_cookie_header(&internal_state),
+    );
+    response
 }
 
 /// Callback handler for social login.
@@ -129,6 +234,7 @@ pub async fn social_login_initiate_handler(
 pub async fn social_login_callback_handler(
     State(state): State<OidcState>,
     Path((realm_name, provider_alias)): Path<(String, String)>,
+    headers: HeaderMap,
     Query(params): Query<SocialLoginCallbackParams>,
 ) -> Response {
     // Decode the state parameter
@@ -148,6 +254,19 @@ pub async fn social_login_callback_handler(
                     .into_response();
             }
         };
+
+    let expected_state = match extract_social_state_from_headers(&headers) {
+        Some(state) => state,
+        None => {
+            return (axum::http::StatusCode::BAD_REQUEST, "Missing state cookie").into_response();
+        }
+    };
+    let expected_hash = sha2_256_hex(&expected_state);
+    let provided_hash = match state_data.get("sh").and_then(|v| v.as_str()) {
+        Some(hash) if hash == expected_hash => hash,
+        _ => return (axum::http::StatusCode::BAD_REQUEST, "Invalid state").into_response(),
+    };
+    let _ = provided_hash;
 
     let realm_id: uuid::Uuid = match state_data
         .get("rid")
@@ -209,18 +328,43 @@ pub async fn social_login_callback_handler(
         }
     };
 
+    let realm = match RealmRepo.find_by_name(&mut conn, &realm_name).await {
+        Ok(Some(r)) if r.enabled && r.id == realm_id => r,
+        _ => return (axum::http::StatusCode::BAD_REQUEST, "Invalid realm").into_response(),
+    };
+
     let provider = match IdentityProviderRepo
-        .find_by_id(&mut conn, provider_id)
+        .find_by_alias(&mut conn, realm.id, &provider_alias)
         .await
     {
-        Ok(Some(p)) if p.enabled => p,
+        Ok(Some(p)) if p.enabled && p.id == provider_id => p,
         _ => {
             return (
-                axum::http::StatusCode::NOT_FOUND,
-                "Identity provider not found",
+                axum::http::StatusCode::BAD_REQUEST,
+                "Invalid identity provider",
             )
                 .into_response();
         }
+    };
+
+    let local_client = if let Some(client_id) = client_id.as_deref() {
+        let client = match ClientRepo
+            .find_by_client_id_in_realm(&mut conn, client_id, realm.id)
+            .await
+        {
+            Ok(Some(c)) if c.enabled => c,
+            _ => {
+                return (axum::http::StatusCode::BAD_REQUEST, "Invalid client_id").into_response();
+            }
+        };
+
+        if !client.redirect_uris.contains(&redirect_uri) {
+            return (axum::http::StatusCode::BAD_REQUEST, "Invalid redirect_uri").into_response();
+        }
+
+        Some(client)
+    } else {
+        None
     };
 
     // Exchange the upstream authorization code for tokens
@@ -306,7 +450,11 @@ pub async fn social_login_callback_handler(
 
     // Issue local OIDC tokens
     let subject = user.id.to_string();
-    let audience = client_id.unwrap_or_else(|| "admin-ui".to_string());
+    let audience = local_client
+        .as_ref()
+        .map(|c| c.client_id.clone())
+        .or(client_id.clone())
+        .unwrap_or_else(|| "admin-ui".to_string());
     let scopes = vec![
         "openid".to_string(),
         "profile".to_string(),
@@ -375,14 +523,24 @@ pub async fn social_login_callback_handler(
     };
 
     // Store session
-    let refresh_token = generate_opaque_token().unwrap_or_default();
+    let refresh_token = match generate_opaque_token() {
+        Ok(token) => token,
+        Err(e) => {
+            tracing::error!("Failed to generate refresh token: {e}");
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Token issuance failed",
+            )
+                .into_response();
+        }
+    };
     let now = chrono::Utc::now();
     let session = oidc_core::models::Session {
         id: generate_uuid_v7(),
         sid,
         user_id: Some(user.id),
         realm_id,
-        client_id: provider.id,
+        client_id: local_client.as_ref().map(|c| c.id).unwrap_or(provider.id),
         grant_type: "social_login".to_string(),
         access_token_hash: sha2_256_hex(&access_token),
         refresh_token_hash: Some(sha2_256_hex(&refresh_token)),
@@ -404,6 +562,11 @@ pub async fn social_login_callback_handler(
 
     if let Err(e) = SessionRepo.create(&mut conn, &session).await {
         tracing::error!("Failed to create session: {e}");
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "Session creation failed",
+        )
+            .into_response();
     }
 
     // Set session cookie
@@ -417,25 +580,24 @@ pub async fn social_login_callback_handler(
                 .into_response();
         }
     };
-    let cookie_header =
-        session_cookie::session_cookie_header(&session.id.to_string(), &encryption_key);
 
-    // Build redirect URL with tokens
-    let mut redirect_url = redirect_uri.clone();
-    redirect_url.push_str(&format!(
-        "?access_token={}&token_type=Bearer&expires_in=900&id_token={}&refresh_token={}",
-        urlencoding::encode(&access_token),
-        urlencoding::encode(&id_token),
-        urlencoding::encode(&refresh_token),
-    ));
+    let mut fields = vec![
+        ("access_token".to_string(), access_token),
+        ("token_type".to_string(), "Bearer".to_string()),
+        ("expires_in".to_string(), "900".to_string()),
+        ("id_token".to_string(), id_token),
+        ("refresh_token".to_string(), refresh_token),
+    ];
     if let Some(s) = original_state {
-        redirect_url.push_str(&format!("&state={}", urlencoding::encode(&s)));
+        fields.push(("state".to_string(), s));
     }
 
-    let mut response = axum::response::Redirect::temporary(&redirect_url).into_response();
-    if let Ok(value) = cookie_header.parse() {
-        response.headers_mut().insert(SET_COOKIE, value);
-    }
+    let mut response = Html(render_form_post_redirect(&redirect_uri, &fields)).into_response();
+    session_cookie::append_set_cookie(
+        response.headers_mut(),
+        session_cookie::session_cookie_header(&session.id.to_string(), &encryption_key),
+    );
+    session_cookie::append_set_cookie(response.headers_mut(), clear_social_state_cookie_header());
 
     response
 }

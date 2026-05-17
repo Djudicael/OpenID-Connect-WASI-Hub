@@ -417,6 +417,9 @@ async fn seed_baseline_data(conn: &mut oidc_repository::Connection) -> (Uuid, St
         "admin-ui",
         vec!["http://localhost:3000/callback".to_string()],
     );
+    if !client.allowed_scopes.iter().any(|scope| scope == "admin") {
+        client.allowed_scopes.push("admin".to_string());
+    }
     client.allowed_grant_types = vec![
         "authorization_code".to_string(),
         "refresh_token".to_string(),

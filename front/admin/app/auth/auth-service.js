@@ -15,7 +15,7 @@ class AuthService {
       client_id: 'admin-ui',
       redirect_uri: `${typeof window !== 'undefined' ? window.location.origin : ''}/callback`,
       response_type: 'code',
-      scope: 'openid profile email',
+      scope: 'openid profile email admin',
     };
     this._memoryTokens = null;
     this._loadTokens();
@@ -53,6 +53,74 @@ class AuthService {
     return this.tokens && this.tokens.expires_at > Date.now();
   }
 
+  clearSession() {
+    this.tokens = null;
+    this._memoryTokens = null;
+    sessionStorage.removeItem(STORAGE_KEY);
+    sessionStorage.removeItem(STATE_KEY);
+    sessionStorage.removeItem(VERIFIER_KEY);
+  }
+
+  _decodeBase64Url(value) {
+    const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+    const paddingLength = (4 - (normalized.length % 4)) % 4;
+    const padded = normalized + '='.repeat(paddingLength);
+    const binary = atob(padded);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  }
+
+  _parseJwtClaims(token) {
+    if (!token) return null;
+    const parts = token.split('.');
+    if (parts.length !== 3 || !parts[1]) return null;
+    try {
+      return JSON.parse(this._decodeBase64Url(parts[1]));
+    } catch {
+      return null;
+    }
+  }
+
+  getIdTokenClaims() {
+    return this._parseJwtClaims(this.tokens?.id_token);
+  }
+
+  getAccessTokenClaims() {
+    return this._parseJwtClaims(this.tokens?.access_token);
+  }
+
+  hasValidSession() {
+    if (!this.isAuthenticated()) return false;
+    const idClaims = this.getIdTokenClaims();
+    if (!idClaims) return false;
+    if (idClaims.exp && idClaims.exp * 1000 < Date.now()) return false;
+    if (idClaims.nbf && idClaims.nbf * 1000 > Date.now()) return false;
+    return true;
+  }
+
+  hasAdminAccess() {
+    const accessClaims = this.getAccessTokenClaims();
+    const idClaims = this.getIdTokenClaims();
+
+    const scopes = new Set(
+      String(accessClaims?.scope || '')
+        .split(/\s+/)
+        .filter(Boolean)
+    );
+    if (scopes.has('admin')) {
+      return true;
+    }
+
+    const roleLists = [
+      Array.isArray(accessClaims?.roles) ? accessClaims.roles : [],
+      Array.isArray(idClaims?.roles) ? idClaims.roles : [],
+      Array.isArray(accessClaims?.realm_access?.roles) ? accessClaims.realm_access.roles : [],
+      Array.isArray(idClaims?.realm_access?.roles) ? idClaims.realm_access.roles : [],
+    ];
+
+    return roleLists.some((roles) => roles.includes('admin'));
+  }
+
   async getAccessToken() {
     if (!this.tokens) return null;
     if (this.tokens.expires_at - Date.now() < 60000) {
@@ -86,6 +154,12 @@ class AuthService {
       expires_at: Date.now() + data.expires_in * 1000,
     };
     this._saveTokens();
+
+    if (!this.hasAdminAccess()) {
+      this.clearSession();
+      throw new Error('Account does not have admin access');
+    }
+
     return data;
   }
 
@@ -152,6 +226,11 @@ class AuthService {
     this.tokens.expires_at = Date.now() + this.tokens.expires_in * 1000;
     this._saveTokens();
 
+    if (!this.hasAdminAccess()) {
+      this.clearSession();
+      throw new Error('OIDC login did not grant admin access');
+    }
+
     sessionStorage.removeItem(STATE_KEY);
     sessionStorage.removeItem(VERIFIER_KEY);
 
@@ -179,14 +258,15 @@ class AuthService {
     this.tokens = await response.json();
     this.tokens.expires_at = Date.now() + this.tokens.expires_in * 1000;
     this._saveTokens();
+
+    if (!this.hasAdminAccess()) {
+      this.clearSession();
+      throw new Error('Refreshed session no longer has admin access');
+    }
   }
 
   logout() {
-    this.tokens = null;
-    this._memoryTokens = null;
-    sessionStorage.removeItem(STORAGE_KEY);
-    sessionStorage.removeItem(STATE_KEY);
-    sessionStorage.removeItem(VERIFIER_KEY);
+    this.clearSession();
     const redirect = encodeURIComponent(window.location.origin);
     window.location.href = `${this.config.authority}/logout?post_logout_redirect_uri=${redirect}`;
   }

@@ -42,11 +42,11 @@ pub fn router() -> Router<AppState> {
             let dpop = headers.get("DPoP").cloned();
             oidc_oidc::endpoints::userinfo::userinfo_handler(State(state.oidc_state()), auth, dpop).await
         }))
-        .route("/oidc/introspect", post(|State(state): State<AppState>, form: Form<HashMap<String, String>>| async move {
-            oidc_oidc::endpoints::introspect::introspect_handler(State(state.oidc_state()), form).await
+        .route("/oidc/introspect", post(|State(state): State<AppState>, headers: axum::http::HeaderMap, form: Form<HashMap<String, String>>| async move {
+            oidc_oidc::endpoints::introspect::introspect_handler(State(state.oidc_state()), headers, form).await
         }))
-        .route("/oidc/revoke", post(|State(state): State<AppState>, form: Form<HashMap<String, String>>| async move {
-            oidc_oidc::endpoints::revoke::revoke_handler(State(state.oidc_state()), form).await
+        .route("/oidc/revoke", post(|State(state): State<AppState>, headers: axum::http::HeaderMap, form: Form<HashMap<String, String>>| async move {
+            oidc_oidc::endpoints::revoke::revoke_handler(State(state.oidc_state()), headers, form).await
         }))
         .route("/oidc/par", post(|State(state): State<AppState>, headers: axum::http::HeaderMap, Form(params): Form<HashMap<String, String>>| async move {
             let oidc_state = state.oidc_state();
@@ -241,11 +241,13 @@ async fn per_realm_social_login_initiate_handler(
 async fn per_realm_social_login_callback_handler(
     State(state): State<AppState>,
     Path((realm, provider)): Path<(String, String)>,
+    headers: axum::http::HeaderMap,
     Query(params): Query<oidc_oidc::endpoints::social_login::SocialLoginCallbackParams>,
 ) -> axum::response::Response {
     oidc_oidc::endpoints::social_login::social_login_callback_handler(
         State(state.oidc_state()),
         Path((realm, provider)),
+        headers,
         Query(params),
     )
     .await

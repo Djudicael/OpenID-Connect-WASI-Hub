@@ -60,6 +60,18 @@ fn parse_redirect_query(location: &str, key: &str) -> Option<String> {
     None
 }
 
+fn decode_jwt_payload(token: &str) -> Value {
+    let payload_segment = token
+        .split('.')
+        .nth(1)
+        .unwrap_or_else(|| panic!("token must contain a JWT payload segment: {token}"));
+    let payload_bytes = URL_SAFE_NO_PAD
+        .decode(payload_segment)
+        .unwrap_or_else(|e| panic!("failed to base64url-decode JWT payload: {e}"));
+    serde_json::from_slice(&payload_bytes)
+        .unwrap_or_else(|e| panic!("failed to parse JWT payload as JSON: {e}"))
+}
+
 /// Login via the direct password grant and return the full response body.
 async fn login(app: &TestApp) -> Value {
     let resp = app
@@ -537,6 +549,79 @@ async fn test_authorization_code_flow_with_pkce() {
     assert_eq!(introspect_body2["active"], false);
 }
 
+#[tokio::test]
+async fn test_admin_ui_authorization_code_flow_includes_admin_scope() {
+    let app = TestApp::new().await;
+
+    let client_id = fixtures::TEST_CLIENT_ID;
+    let redirect_uri = "http://localhost:3000/callback";
+    let state = "admin-ui-admin-scope";
+    let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let code_challenge = pkce_s256_challenge(code_verifier);
+
+    let authorize_url = format!(
+        "{}/oidc/authorize?client_id={}&redirect_uri={}&response_type=code&scope=openid+profile+email+admin&state={}&code_challenge={}&code_challenge_method=S256&login_hint={}",
+        app.url(),
+        urlencoding::encode(client_id),
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(state),
+        urlencoding::encode(&code_challenge),
+        urlencoding::encode(fixtures::TEST_USER_EMAIL),
+    );
+
+    let authorize_resp = app
+        .client()
+        .get(&authorize_url)
+        .send()
+        .await
+        .expect("authorize request failed");
+
+    assert_eq!(authorize_resp.status(), StatusCode::TEMPORARY_REDIRECT);
+    let location = authorize_resp
+        .headers()
+        .get("location")
+        .expect("redirect must have Location header")
+        .to_str()
+        .expect("Location header must be valid UTF-8");
+
+    let (code, returned_state) = parse_redirect_params(location);
+    assert!(!code.is_empty(), "authorization code must be present");
+    assert_eq!(returned_state.as_deref(), Some(state));
+
+    let token_resp = app
+        .client()
+        .post(&format!("{}/oidc/token", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&code_verifier={}",
+            urlencoding::encode(&code),
+            urlencoding::encode(redirect_uri),
+            urlencoding::encode(client_id),
+            urlencoding::encode(code_verifier),
+        ))
+        .send()
+        .await
+        .expect("token request failed");
+
+    assert_eq!(token_resp.status(), StatusCode::OK);
+    let token_body: Value = token_resp
+        .json()
+        .await
+        .expect("token response should be JSON");
+    let access_token = token_body["access_token"]
+        .as_str()
+        .expect("access_token must be present");
+
+    let access_claims = decode_jwt_payload(access_token);
+    let scopes = access_claims["scope"]
+        .as_str()
+        .expect("access token scope claim must be present");
+    assert!(
+        scopes.split_whitespace().any(|scope| scope == "admin"),
+        "access token must include the admin scope, got: {scopes}"
+    );
+}
+
 // ===================================================================
 // Group 4: Refresh Token Rotation
 // ===================================================================
@@ -801,6 +886,149 @@ async fn test_introspect_revoked_token() {
     assert_eq!(intro_resp2.status(), StatusCode::OK);
     let intro_body2: Value = intro_resp2.json().await.expect("introspect should be JSON");
     assert_eq!(intro_body2["active"], false);
+}
+
+#[tokio::test]
+async fn test_introspect_with_basic_auth_header() {
+    let app = TestApp::new().await;
+
+    let conf_client_id = "basic-auth-introspect-client";
+    let conf_client_secret = "BasicIntrospectSecret1!";
+    app.seed_client_with_secret(conf_client_id, conf_client_secret, &[])
+        .await;
+    {
+        let mut conn = app.db_conn().await;
+        conn.execute_params(
+            "UPDATE clients SET token_endpoint_auth_method = $1 WHERE client_id = $2",
+            &[&"client_secret_basic", &conf_client_id],
+        )
+        .await
+        .expect("failed to update client auth method");
+        let _ = conn.close().await;
+    }
+
+    let login_resp = app
+        .client()
+        .post(&format!("{}/oidc/login", app.url()))
+        .json(&json!({
+            "email": fixtures::TEST_USER_EMAIL,
+            "password": fixtures::TEST_USER_PASSWORD,
+            "client_id": conf_client_id,
+        }))
+        .send()
+        .await
+        .expect("login request failed");
+
+    assert_eq!(login_resp.status(), StatusCode::OK);
+    let login_body: Value = login_resp.json().await.expect("response should be JSON");
+    let access_token = login_body["access_token"]
+        .as_str()
+        .expect("access_token must be present")
+        .to_string();
+
+    let intro_resp = app
+        .client()
+        .post(&format!("{}/oidc/introspect", app.url()))
+        .basic_auth(conf_client_id, Some(conf_client_secret))
+        .form(&[("token", access_token.as_str())])
+        .send()
+        .await
+        .expect("introspect request failed");
+
+    assert_eq!(intro_resp.status(), StatusCode::OK);
+    let intro_body: Value = intro_resp.json().await.expect("response should be JSON");
+    assert_eq!(intro_body["active"], true);
+}
+
+#[tokio::test]
+async fn test_introspect_and_revoke_restricted_to_own_client() {
+    let app = TestApp::new().await;
+
+    let client_a_id = "owner-client-a";
+    let client_a_secret = "OwnerClientASecret1!";
+    let client_b_id = "owner-client-b";
+    let client_b_secret = "OwnerClientBSecret1!";
+    app.seed_client_with_secret(client_a_id, client_a_secret, &[])
+        .await;
+    app.seed_client_with_secret(client_b_id, client_b_secret, &[])
+        .await;
+
+    let login_resp = app
+        .client()
+        .post(&format!("{}/oidc/login", app.url()))
+        .json(&json!({
+            "email": fixtures::TEST_USER_EMAIL,
+            "password": fixtures::TEST_USER_PASSWORD,
+            "client_id": client_a_id,
+        }))
+        .send()
+        .await
+        .expect("login request failed");
+
+    assert_eq!(login_resp.status(), StatusCode::OK);
+    let login_body: Value = login_resp.json().await.expect("response should be JSON");
+    let access_token = login_body["access_token"]
+        .as_str()
+        .expect("access_token must be present")
+        .to_string();
+
+    let intro_with_other_client = app
+        .client()
+        .post(&format!("{}/oidc/introspect", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "token={}&client_id={}&client_secret={}",
+            urlencoding::encode(&access_token),
+            urlencoding::encode(client_b_id),
+            urlencoding::encode(client_b_secret),
+        ))
+        .send()
+        .await
+        .expect("introspect request failed");
+
+    assert_eq!(intro_with_other_client.status(), StatusCode::OK);
+    let intro_body: Value = intro_with_other_client
+        .json()
+        .await
+        .expect("response should be JSON");
+    assert_eq!(intro_body["active"], false);
+
+    let revoke_with_other_client = app
+        .client()
+        .post(&format!("{}/oidc/revoke", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "token={}&client_id={}&client_secret={}",
+            urlencoding::encode(&access_token),
+            urlencoding::encode(client_b_id),
+            urlencoding::encode(client_b_secret),
+        ))
+        .send()
+        .await
+        .expect("revoke request failed");
+
+    assert_eq!(revoke_with_other_client.status(), StatusCode::OK);
+
+    let intro_with_owner = app
+        .client()
+        .post(&format!("{}/oidc/introspect", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "token={}&client_id={}&client_secret={}",
+            urlencoding::encode(&access_token),
+            urlencoding::encode(client_a_id),
+            urlencoding::encode(client_a_secret),
+        ))
+        .send()
+        .await
+        .expect("introspect request failed");
+
+    assert_eq!(intro_with_owner.status(), StatusCode::OK);
+    let owner_body: Value = intro_with_owner
+        .json()
+        .await
+        .expect("response should be JSON");
+    assert_eq!(owner_body["active"], true);
 }
 
 #[tokio::test]

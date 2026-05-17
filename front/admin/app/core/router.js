@@ -72,47 +72,26 @@ class RouterOutlet extends HTMLElement {
       return;
     }
 
-    if (!route.public && !authService.isAuthenticated()) {
-      this._navigate('/login');
-      return;
-    }
+    if (!route.public) {
+      if (!authService.isAuthenticated()) {
+        this._navigate('/login');
+        return;
+      }
 
-    // Check admin role for protected routes
-    if (!route.public && authService.isAuthenticated()) {
-      const token = authService.tokens;
-      if (token && token.id_token) {
-        try {
-          const payload = JSON.parse(atob(token.id_token.split('.')[1]));
-          if (payload.exp && payload.exp * 1000 < Date.now()) {
-            this._navigate('/login');
-            return;
-          }
-          if (payload.nbf && payload.nbf * 1000 > Date.now()) {
-            this._navigate('/login');
-            return;
-          }
-          // Check for admin scope in the access token
-          const accessToken = token.access_token;
-          if (accessToken) {
-            const accessPayload = JSON.parse(atob(accessToken.split('.')[1]));
-            // Scope check: allow access if user has 'admin' scope OR if no admin scope is configured
-            // The backend enforces actual authorization per-endpoint
-            const scopes = (accessPayload.scope || '').split(' ');
-            // Only block if we can determine the user definitely lacks admin access
-            // and the token has scopes (meaning scopes are being enforced)
-            if (scopes.length > 0 && scopes[0] !== '' && !scopes.includes('admin')) {
-              // Still allow access — backend enforces authorization
-              // Just log a warning for observability
-              console.warn('User lacks admin scope but is being allowed through; backend enforces authorization');
-            }
-          }
-        } catch {
-          // If we can't parse the token, let it through — the backend will enforce
-        }
+      if (!authService.hasValidSession() || !authService.hasAdminAccess()) {
+        authService.clearSession();
+        this._navigate('/login');
+        return;
       }
     }
 
-    if (route.public && authService.isAuthenticated() && route.path === '/login') {
+    if (
+      route.public
+      && route.path === '/login'
+      && authService.isAuthenticated()
+      && authService.hasValidSession()
+      && authService.hasAdminAccess()
+    ) {
       this._navigate('/');
       return;
     }

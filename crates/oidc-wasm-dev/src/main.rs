@@ -737,11 +737,19 @@ async fn seed_data(db_url: &str, _proxy_port: u16) -> Result<()> {
         let repo = oidc_repository::repositories::client_repo::ClientRepo;
 
         // Public client (admin-ui)
-        if repo
-            .find_by_client_id(&mut conn, "admin-ui")
-            .await?
-            .is_none()
-        {
+        if let Some(mut existing_client) = repo.find_by_client_id(&mut conn, "admin-ui").await? {
+            if !existing_client
+                .allowed_scopes
+                .iter()
+                .any(|scope| scope == "admin")
+            {
+                existing_client.allowed_scopes.push("admin".into());
+                repo.update(&mut conn, &existing_client)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("client update: {e}"))?;
+                info!("Updated 'admin-ui' public OIDC client to include the admin scope");
+            }
+        } else {
             let id = oidc_core::utils::generate_uuid_v7();
             let client = oidc_core::models::Client {
                 id,
@@ -754,7 +762,12 @@ async fn seed_data(db_url: &str, _proxy_port: u16) -> Result<()> {
                     "http://localhost:3000/callback".to_string(),
                     "http://localhost:3000/admin/callback".to_string(),
                 ],
-                allowed_scopes: vec!["openid".into(), "profile".into(), "email".into()],
+                allowed_scopes: vec![
+                    "openid".into(),
+                    "profile".into(),
+                    "email".into(),
+                    "admin".into(),
+                ],
                 allowed_grant_types: vec!["authorization_code".into(), "refresh_token".into()],
                 pkce_required: true,
                 enabled: true,

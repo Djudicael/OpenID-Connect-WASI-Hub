@@ -15,25 +15,13 @@ class Header extends BaseComponent {
   }
 
   _updateUser() {
-    const token = authService.tokens;
-    if (token && token.id_token) {
-      try {
-        const parts = token.id_token.split('.');
-        if (parts.length !== 3) {
-          this.setState({ user: null });
-          return;
-        }
-        const payload = JSON.parse(atob(parts[1]));
-        // Validate expiration claim
-        if (payload.exp && payload.exp * 1000 < Date.now()) {
-          this.setState({ user: null });
-          return;
-        }
-        this.setState({ user: payload });
-      } catch {
-        this.setState({ user: null });
-      }
+    if (!authService.hasValidSession()) {
+      this.setState({ user: null });
+      return;
     }
+
+    const payload = authService.getIdTokenClaims();
+    this.setState({ user: payload || null });
   }
 
   template() {
