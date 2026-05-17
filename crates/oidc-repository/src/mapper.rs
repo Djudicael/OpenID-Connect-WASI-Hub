@@ -109,3 +109,30 @@ pub fn bytes(row: &Row, idx: usize) -> Result<Vec<u8>, OidcError> {
 pub fn opt_bytes(row: &Row, idx: usize) -> Result<Option<Vec<u8>>, OidcError> {
     row.get::<Option<Vec<u8>>>(idx).map_err(pg_err)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn to_json_value_vec_preserves_string_order() {
+        let values = vec![
+            "openid".to_string(),
+            "profile".to_string(),
+            "email".to_string(),
+        ];
+
+        let json = to_json_value_vec(&values);
+
+        assert_eq!(json, serde_json::json!(["openid", "profile", "email"]),);
+    }
+
+    #[test]
+    fn to_json_value_vec_handles_empty_input() {
+        let values: Vec<String> = Vec::new();
+
+        let json = to_json_value_vec(&values);
+
+        assert_eq!(json, serde_json::json!([]));
+    }
+}

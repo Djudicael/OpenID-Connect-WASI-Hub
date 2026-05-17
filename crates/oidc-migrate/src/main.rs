@@ -7,6 +7,41 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
+fn parse_migration_version(name: &str) -> anyhow::Result<u32> {
+    name.split_once('_')
+        .and_then(|(prefix, _)| prefix.strip_prefix('V'))
+        .and_then(|num| num.parse::<u32>().ok())
+        .ok_or_else(|| anyhow::anyhow!("invalid migration filename format: {name}"))
+}
+
+fn ensure_unique_migration_versions<'a>(
+    filenames: impl IntoIterator<Item = &'a str>,
+) -> anyhow::Result<()> {
+    let mut versions: BTreeMap<u32, Vec<String>> = BTreeMap::new();
+    for name in filenames {
+        let version = parse_migration_version(name)?;
+        versions.entry(version).or_default().push(name.to_string());
+    }
+
+    let duplicate_versions: Vec<String> = versions
+        .iter()
+        .filter(|(_, files)| files.len() > 1)
+        .map(|(version, files)| format!("V{version}: {}", files.join(", ")))
+        .collect();
+    if !duplicate_versions.is_empty() {
+        anyhow::bail!(
+            "duplicate migration versions detected; each V<number> prefix must be unique:\n{}",
+            duplicate_versions.join("\n")
+        );
+    }
+
+    Ok(())
+}
+
+fn migration_sort_key(name: &str) -> anyhow::Result<(u32, String)> {
+    Ok((parse_migration_version(name)?, name.to_string()))
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
@@ -46,39 +81,17 @@ async fn main() -> anyhow::Result<()> {
         })
         .collect();
 
-    let mut versions: BTreeMap<u32, Vec<String>> = BTreeMap::new();
-    for entry in &entries {
-        let name = entry.file_name().to_string_lossy().to_string();
-        let version = name
-            .split_once('_')
-            .and_then(|(prefix, _)| prefix.strip_prefix('V'))
-            .and_then(|num| num.parse::<u32>().ok())
-            .ok_or_else(|| anyhow::anyhow!("invalid migration filename format: {name}"))?;
-        versions.entry(version).or_default().push(name);
-    }
-
-    let duplicate_versions: Vec<String> = versions
+    let migration_names: Vec<String> = entries
         .iter()
-        .filter(|(_, files)| files.len() > 1)
-        .map(|(version, files)| format!("V{version}: {}", files.join(", ")))
+        .map(|entry| entry.file_name().to_string_lossy().to_string())
         .collect();
-    if !duplicate_versions.is_empty() {
-        anyhow::bail!(
-            "duplicate migration versions detected; each V<number> prefix must be unique:\n{}",
-            duplicate_versions.join("\n")
-        );
-    }
+    ensure_unique_migration_versions(migration_names.iter().map(String::as_str))?;
 
     // Sort by the numeric prefix (V1, V2, ..., V10, ...) and then by filename
     // to keep the ordering deterministic.
     entries.sort_by_key(|e| {
         let name = e.file_name().to_string_lossy().to_string();
-        let version = name
-            .split_once('_')
-            .and_then(|(prefix, _)| prefix.strip_prefix('V'))
-            .and_then(|num| num.parse::<u32>().ok())
-            .unwrap_or(0);
-        (version, name)
+        migration_sort_key(&name).unwrap_or((0, name))
     });
 
     for entry in entries {
@@ -115,4 +128,58 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("migrations complete");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_migration_version_accepts_valid_names() {
+        assert_eq!(parse_migration_version("V1__init.sql").unwrap(), 1);
+        assert_eq!(
+            parse_migration_version("V27__social_login_federation.sql").unwrap(),
+            27
+        );
+    }
+
+    #[test]
+    fn parse_migration_version_rejects_invalid_names() {
+        assert!(parse_migration_version("init.sql").is_err());
+        assert!(parse_migration_version("Vx__bad.sql").is_err());
+    }
+
+    #[test]
+    fn ensure_unique_migration_versions_rejects_duplicates() {
+        let err = ensure_unique_migration_versions([
+            "V1__init.sql",
+            "V2__oidc_tables.sql",
+            "V2__duplicate.sql",
+        ])
+        .expect_err("duplicate versions must be rejected");
+
+        let message = err.to_string();
+        assert!(message.contains("duplicate migration versions detected"));
+        assert!(message.contains("V2: V2__oidc_tables.sql, V2__duplicate.sql"));
+    }
+
+    #[test]
+    fn migration_sort_key_uses_numeric_version_order() {
+        let mut names = vec![
+            "V10__later.sql".to_string(),
+            "V2__second.sql".to_string(),
+            "V1__first.sql".to_string(),
+        ];
+
+        names.sort_by_key(|name| migration_sort_key(name).unwrap());
+
+        assert_eq!(
+            names,
+            vec![
+                "V1__first.sql".to_string(),
+                "V2__second.sql".to_string(),
+                "V10__later.sql".to_string(),
+            ]
+        );
+    }
 }

@@ -40,8 +40,8 @@ fn craft_jwt(header: &serde_json::Value, claims: &serde_json::Value) -> String {
     format!("{header_b64}.{claims_b64}.")
 }
 
-/// Login via the direct password grant and return the full response body.
-async fn login(app: &TestApp) -> Value {
+/// Login via the direct password grant and return the raw HTTP response.
+async fn login_response(app: &TestApp) -> reqwest::Response {
     let resp = app
         .client()
         .post(&format!("{}/oidc/login", app.url()))
@@ -54,7 +54,16 @@ async fn login(app: &TestApp) -> Value {
         .expect("login request failed");
 
     assert_eq!(resp.status(), StatusCode::OK, "login should succeed");
-    resp.json().await.expect("login response should be JSON")
+    resp
+}
+
+/// Login via the direct password grant and return the full response body.
+async fn login(app: &TestApp) -> Value {
+    login_response(app)
+        .await
+        .json()
+        .await
+        .expect("login response should be JSON")
 }
 
 // ===================================================================
@@ -664,6 +673,135 @@ async fn test_register_missing_fields() {
 // ===================================================================
 // Group 7: Rate Limiting
 // ===================================================================
+
+#[tokio::test]
+async fn test_security_headers_present_on_health_response() {
+    let app = TestApp::new().await;
+
+    let resp = app
+        .client()
+        .get(&format!("{}/health", app.url()))
+        .send()
+        .await
+        .expect("health request failed");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+    let headers = resp.headers();
+    assert_eq!(
+        headers
+            .get("x-content-type-options")
+            .and_then(|v| v.to_str().ok()),
+        Some("nosniff")
+    );
+    assert_eq!(
+        headers.get("x-frame-options").and_then(|v| v.to_str().ok()),
+        Some("DENY")
+    );
+    assert_eq!(
+        headers.get("referrer-policy").and_then(|v| v.to_str().ok()),
+        Some("strict-origin-when-cross-origin")
+    );
+    assert_eq!(
+        headers.get("cache-control").and_then(|v| v.to_str().ok()),
+        Some("no-store")
+    );
+
+    let csp = headers
+        .get("content-security-policy")
+        .and_then(|v| v.to_str().ok())
+        .expect("content-security-policy must be present");
+    assert!(csp.contains("default-src 'self'"));
+    assert!(csp.contains("frame-ancestors 'none'"));
+
+    let hsts = headers
+        .get("strict-transport-security")
+        .and_then(|v| v.to_str().ok())
+        .expect("strict-transport-security must be present");
+    assert!(hsts.contains("max-age=63072000"));
+}
+
+#[tokio::test]
+async fn test_login_sets_session_cookie_with_secure_flags() {
+    let app = TestApp::new().await;
+
+    let resp = login_response(&app).await;
+    let set_cookie = resp
+        .headers()
+        .get("set-cookie")
+        .and_then(|v| v.to_str().ok())
+        .expect("login response must set a session cookie")
+        .to_string();
+
+    assert!(set_cookie.starts_with("oidc_session="));
+    assert!(set_cookie.contains("HttpOnly"));
+    assert!(set_cookie.contains("Secure"));
+    assert!(set_cookie.contains("SameSite=Lax"));
+    assert!(set_cookie.contains("Max-Age=86400"));
+    assert!(set_cookie.contains("Path=/"));
+}
+
+#[tokio::test]
+async fn test_logout_clears_session_cookie_with_zero_max_age() {
+    let app = TestApp::new().await;
+
+    let login_resp = login_response(&app).await;
+    let session_cookie = login_resp
+        .headers()
+        .get("set-cookie")
+        .and_then(|v| v.to_str().ok())
+        .expect("login response must set a session cookie")
+        .split(';')
+        .next()
+        .expect("set-cookie should include a cookie pair")
+        .to_string();
+
+    let logout_resp = app
+        .client()
+        .get(&format!("{}/oidc/logout", app.url()))
+        .header("cookie", session_cookie)
+        .send()
+        .await
+        .expect("logout request failed");
+
+    assert!(logout_resp.status().is_redirection() || logout_resp.status() == StatusCode::OK);
+    let clear_cookie = logout_resp
+        .headers()
+        .get("set-cookie")
+        .and_then(|v| v.to_str().ok())
+        .expect("logout response must clear the session cookie")
+        .to_string();
+
+    assert!(clear_cookie.starts_with("oidc_session="));
+    assert!(clear_cookie.contains("Max-Age=0"));
+    assert!(clear_cookie.contains("HttpOnly"));
+    assert!(clear_cookie.contains("Secure"));
+    assert!(clear_cookie.contains("SameSite=Lax"));
+    assert!(clear_cookie.contains("Path=/"));
+}
+
+#[tokio::test]
+async fn test_cors_preflight_is_restrictive_by_default() {
+    let app = TestApp::new().await;
+
+    let resp = app
+        .client()
+        .request(reqwest::Method::OPTIONS, &format!("{}/health", app.url()))
+        .header("origin", "https://evil.example")
+        .header("access-control-request-method", "GET")
+        .send()
+        .await
+        .expect("preflight request failed");
+
+    assert!(
+        resp.status().is_success() || resp.status() == StatusCode::METHOD_NOT_ALLOWED,
+        "preflight request should complete without allowing cross-origin access, got {}",
+        resp.status()
+    );
+    assert!(
+        resp.headers().get("access-control-allow-origin").is_none(),
+        "same-origin default CORS policy must not allow arbitrary origins"
+    );
+}
 
 #[tokio::test]
 async fn test_rate_limiting_on_login() {

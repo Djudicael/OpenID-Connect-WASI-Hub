@@ -24,3 +24,37 @@ pub fn verify_secret(secret: &str, hash: &str) -> Result<bool, OidcError> {
         .verify_password(secret.as_bytes(), &parsed_hash)
         .is_ok())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hash_secret_roundtrip_verifies_successfully() {
+        let hash = hash_secret("test-secret").expect("hashing should succeed");
+
+        let verified = verify_secret("test-secret", &hash).expect("verification should succeed");
+
+        assert!(
+            verified,
+            "the original secret should verify against its hash"
+        );
+    }
+
+    #[test]
+    fn verify_secret_rejects_wrong_secret() {
+        let hash = hash_secret("test-secret").expect("hashing should succeed");
+
+        let verified = verify_secret("wrong-secret", &hash).expect("verification should succeed");
+
+        assert!(!verified, "a different secret must not verify");
+    }
+
+    #[test]
+    fn verify_secret_rejects_malformed_hash() {
+        let err = verify_secret("test-secret", "not-a-password-hash")
+            .expect_err("malformed hashes should be rejected");
+
+        assert!(matches!(err, OidcError::Internal(_)));
+    }
+}

@@ -160,3 +160,33 @@ fn parse_key(raw_key: &str) -> Option<(String, String, String)> {
 fn env_segment() -> String {
     std::env::var("OIDC_KEY_ENV").unwrap_or_else(|_| "prod".into())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_key_extracts_prefix_environment_and_secret() {
+        let parsed = parse_key("oidc_prod.abcd1234.secret-value").expect("valid keys should parse");
+
+        assert_eq!(parsed.0, "abcd1234");
+        assert_eq!(parsed.1, "prod");
+        assert_eq!(parsed.2, "secret-value");
+    }
+
+    #[test]
+    fn parse_key_rejects_invalid_prefix_length() {
+        let parsed = parse_key("oidc_prod.short.secret-value");
+
+        assert!(
+            parsed.is_none(),
+            "prefixes must be exactly eight characters"
+        );
+    }
+
+    #[test]
+    fn parse_key_rejects_missing_segments() {
+        assert!(parse_key("oidc_prod.abcd1234").is_none());
+        assert!(parse_key("wrongprefix.abcd1234.secret").is_none());
+    }
+}

@@ -287,6 +287,38 @@ mod tests {
     }
 
     #[test]
+    fn oidc_state_cache_keys_distinguish_realm_issuer_contexts() {
+        let state = AppState::from_config(test_config());
+        let base_state = state.oidc_state();
+        let realm_state = base_state.with_issuer("http://localhost:8080/realms/master");
+        let realm_id = Uuid::new_v4();
+
+        {
+            let mut cache = base_state
+                .realm_token_services
+                .lock()
+                .expect("cache lock should succeed");
+            cache.insert(
+                (realm_id, base_state.issuer.clone()),
+                state.token_service.clone(),
+            );
+            cache.insert(
+                (realm_id, realm_state.issuer.clone()),
+                state.token_service.clone(),
+            );
+        }
+
+        let cache = base_state
+            .realm_token_services
+            .lock()
+            .expect("cache lock should succeed");
+        assert!(cache.contains_key(&(realm_id, "http://localhost:8080".to_string())));
+        assert!(cache.contains_key(&(realm_id, "http://localhost:8080/realms/master".to_string())));
+        assert_eq!(base_state.base_issuer, "http://localhost:8080");
+        assert_eq!(realm_state.base_issuer, "http://localhost:8080");
+    }
+
+    #[test]
     #[should_panic(expected = "invalid OIDC_ENCRYPTION_KEY")]
     fn from_config_rejects_non_hex_encryption_key() {
         let mut config = test_config();

@@ -141,17 +141,120 @@ impl Connection {
 #[macro_export]
 macro_rules! with_transaction {
     ($conn:expr, $map_err:expr, $body:block) => {{
-        $conn.begin().await.map_err(&$map_err)?;
-        let result = async $body.await;
-        match result {
-            Ok(value) => {
-                $conn.commit().await.map_err($map_err)?;
-                Ok(value)
-            }
-            Err(user_err) => {
-                let _ = $conn.rollback().await;
-                Err(user_err)
+        async {
+            $conn.begin().await.map_err(&$map_err)?;
+            let result = async $body.await;
+            match result {
+                Ok(value) => {
+                    $conn.commit().await.map_err($map_err)?;
+                    Ok(value)
+                }
+                Err(user_err) => {
+                    let _ = $conn.rollback().await;
+                    Err(user_err)
+                }
             }
         }
+        .await
     }};
+}
+
+#[cfg(test)]
+mod tests {
+    #[derive(Default)]
+    struct FakeConnection {
+        began: u8,
+        committed: u8,
+        rolled_back: u8,
+        fail_begin: bool,
+        fail_commit: bool,
+        fail_rollback: bool,
+    }
+
+    impl FakeConnection {
+        async fn begin(&mut self) -> Result<(), &'static str> {
+            self.began += 1;
+            if self.fail_begin {
+                Err("begin failed")
+            } else {
+                Ok(())
+            }
+        }
+
+        async fn commit(&mut self) -> Result<(), &'static str> {
+            self.committed += 1;
+            if self.fail_commit {
+                Err("commit failed")
+            } else {
+                Ok(())
+            }
+        }
+
+        async fn rollback(&mut self) -> Result<(), &'static str> {
+            self.rolled_back += 1;
+            if self.fail_rollback {
+                Err("rollback failed")
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn with_transaction_commits_on_success() {
+        let mut conn = FakeConnection::default();
+
+        let result: Result<i32, &'static str> =
+            crate::with_transaction!(conn, |e| e, { Ok::<_, &'static str>(42) });
+
+        assert_eq!(result, Ok(42));
+        assert_eq!(conn.began, 1);
+        assert_eq!(conn.committed, 1);
+        assert_eq!(conn.rolled_back, 0);
+    }
+
+    #[tokio::test]
+    async fn with_transaction_rolls_back_on_user_error() {
+        let mut conn = FakeConnection::default();
+
+        let result: Result<(), &'static str> =
+            crate::with_transaction!(conn, |e| e, { Err::<(), &'static str>("user error") });
+
+        assert_eq!(result, Err("user error"));
+        assert_eq!(conn.began, 1);
+        assert_eq!(conn.committed, 0);
+        assert_eq!(conn.rolled_back, 1);
+    }
+
+    #[tokio::test]
+    async fn with_transaction_maps_begin_failures() {
+        let mut conn = FakeConnection {
+            fail_begin: true,
+            ..Default::default()
+        };
+
+        let result: Result<(), String> =
+            crate::with_transaction!(conn, |e| format!("mapped: {e}"), { Ok::<(), String>(()) });
+
+        assert_eq!(result, Err("mapped: begin failed".to_string()));
+        assert_eq!(conn.began, 1);
+        assert_eq!(conn.committed, 0);
+        assert_eq!(conn.rolled_back, 0);
+    }
+
+    #[tokio::test]
+    async fn with_transaction_maps_commit_failures() {
+        let mut conn = FakeConnection {
+            fail_commit: true,
+            ..Default::default()
+        };
+
+        let result: Result<(), String> =
+            crate::with_transaction!(conn, |e| format!("mapped: {e}"), { Ok::<(), String>(()) });
+
+        assert_eq!(result, Err("mapped: commit failed".to_string()));
+        assert_eq!(conn.began, 1);
+        assert_eq!(conn.committed, 1);
+        assert_eq!(conn.rolled_back, 0);
+    }
 }

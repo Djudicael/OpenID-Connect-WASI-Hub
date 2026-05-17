@@ -263,3 +263,123 @@ pub fn require_scope(api_key: &ApiKey, scope: &str) -> Result<(), ApiKeyError> {
         Err(ApiKeyError::InsufficientScope)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{HeaderValue, Request};
+    use axum::response::IntoResponse;
+    use chrono::Utc;
+    use uuid::Uuid;
+
+    fn sample_api_key(scopes: Vec<&str>) -> ApiKey {
+        ApiKey {
+            id: Uuid::new_v4(),
+            realm_id: Uuid::new_v4(),
+            name: "test-key".to_string(),
+            prefix: "abcd1234".to_string(),
+            hashed_secret: "hash".to_string(),
+            scopes: scopes.into_iter().map(|scope| scope.to_string()).collect(),
+            revoked: false,
+            request_count: 0,
+            expires_at: None,
+            last_used_at: None,
+            created_at: Utc::now(),
+            created_by: None,
+            rotated_at: None,
+        }
+    }
+
+    #[test]
+    fn extract_raw_key_from_headers_prefers_x_api_key() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            "X-API-Key",
+            HeaderValue::from_static("oidc_prod.prefix.secret"),
+        );
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer ignored-token"),
+        );
+
+        let key = extract_raw_key_from_headers(&headers);
+
+        assert_eq!(key.as_deref(), Some("oidc_prod.prefix.secret"));
+    }
+
+    #[test]
+    fn extract_raw_key_from_headers_ignores_jwt_like_bearer_tokens() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer header.payload.signature"),
+        );
+
+        let key = extract_raw_key_from_headers(&headers);
+
+        assert_eq!(
+            key, None,
+            "JWT-like bearer tokens should stay on the JWT path"
+        );
+    }
+
+    #[test]
+    fn extract_raw_key_accepts_bearer_tokens_without_jwt_dots() {
+        let (parts, _) = Request::builder()
+            .header(
+                axum::http::header::AUTHORIZATION,
+                "Bearer oidc_prod.abcd1234.secretvalue",
+            )
+            .body(Body::empty())
+            .expect("request should build")
+            .into_parts();
+
+        let key = extract_raw_key(&parts);
+
+        assert_eq!(key.as_deref(), Some("oidc_prod.abcd1234.secretvalue"));
+    }
+
+    #[test]
+    fn wildcard_scope_satisfies_scope_checks() {
+        let api_key = sample_api_key(vec!["*"]);
+
+        assert!(has_scope(&api_key, "admin"));
+        assert!(require_scope(&api_key, "users:write").is_ok());
+    }
+
+    #[test]
+    fn missing_scope_returns_insufficient_scope() {
+        let api_key = sample_api_key(vec!["users:read"]);
+
+        assert!(matches!(
+            require_scope(&api_key, "users:write"),
+            Err(ApiKeyError::InsufficientScope)
+        ));
+    }
+
+    #[test]
+    fn missing_api_key_response_sets_bearer_challenge() {
+        let response = ApiKeyError::Missing.into_response();
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response.headers().get(axum::http::header::WWW_AUTHENTICATE),
+            Some(&HeaderValue::from_static("Bearer")),
+        );
+    }
+
+    #[test]
+    fn insufficient_scope_response_omits_bearer_challenge() {
+        let response = ApiKeyError::InsufficientScope.into_response();
+
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        assert!(
+            response
+                .headers()
+                .get(axum::http::header::WWW_AUTHENTICATE)
+                .is_none(),
+            "forbidden scope responses should not include a bearer challenge"
+        );
+    }
+}
