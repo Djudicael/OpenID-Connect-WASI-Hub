@@ -1044,6 +1044,177 @@ async fn test_introspect_with_basic_auth_header() {
 }
 
 #[tokio::test]
+async fn test_revoke_with_basic_auth_header() {
+    let app = TestApp::new().await;
+
+    let conf_client_id = "basic-auth-revoke-client";
+    let conf_client_secret = "BasicRevokeSecret1!";
+    app.seed_client_with_secret(conf_client_id, conf_client_secret, &[])
+        .await;
+    {
+        let mut conn = app.db_conn().await;
+        conn.execute_params(
+            "UPDATE clients SET token_endpoint_auth_method = $1 WHERE client_id = $2",
+            &[&"client_secret_basic", &conf_client_id],
+        )
+        .await
+        .expect("failed to update client auth method");
+        let _ = conn.close().await;
+    }
+
+    let login_resp = app
+        .client()
+        .post(&format!("{}/oidc/login", app.url()))
+        .json(&json!({
+            "email": fixtures::TEST_USER_EMAIL,
+            "password": fixtures::TEST_USER_PASSWORD,
+            "client_id": conf_client_id,
+        }))
+        .send()
+        .await
+        .expect("login request failed");
+
+    assert_eq!(login_resp.status(), StatusCode::OK);
+    let login_body: Value = login_resp.json().await.expect("response should be JSON");
+    let access_token = login_body["access_token"]
+        .as_str()
+        .expect("access_token must be present")
+        .to_string();
+
+    let revoke_resp = app
+        .client()
+        .post(&format!("{}/oidc/revoke", app.url()))
+        .basic_auth(conf_client_id, Some(conf_client_secret))
+        .form(&[("token", access_token.as_str())])
+        .send()
+        .await
+        .expect("revoke request failed");
+
+    assert_eq!(revoke_resp.status(), StatusCode::OK);
+
+    let intro_resp = app
+        .client()
+        .post(&format!("{}/oidc/introspect", app.url()))
+        .basic_auth(conf_client_id, Some(conf_client_secret))
+        .form(&[("token", access_token.as_str())])
+        .send()
+        .await
+        .expect("introspect request failed");
+
+    assert_eq!(intro_resp.status(), StatusCode::OK);
+    let intro_body: Value = intro_resp.json().await.expect("response should be JSON");
+    assert_eq!(intro_body["active"], false);
+}
+
+#[tokio::test]
+async fn test_introspect_client_secret_basic_rejects_client_secret_post() {
+    let app = TestApp::new().await;
+
+    let conf_client_id = "basic-only-introspect-client";
+    let conf_client_secret = "BasicOnlyIntrospect1!";
+    app.seed_client_with_secret(conf_client_id, conf_client_secret, &[])
+        .await;
+    {
+        let mut conn = app.db_conn().await;
+        conn.execute_params(
+            "UPDATE clients SET token_endpoint_auth_method = $1 WHERE client_id = $2",
+            &[&"client_secret_basic", &conf_client_id],
+        )
+        .await
+        .expect("failed to update client auth method");
+        let _ = conn.close().await;
+    }
+
+    let login_resp = app
+        .client()
+        .post(&format!("{}/oidc/login", app.url()))
+        .json(&json!({
+            "email": fixtures::TEST_USER_EMAIL,
+            "password": fixtures::TEST_USER_PASSWORD,
+            "client_id": conf_client_id,
+        }))
+        .send()
+        .await
+        .expect("login request failed");
+
+    assert_eq!(login_resp.status(), StatusCode::OK);
+    let login_body: Value = login_resp.json().await.expect("response should be JSON");
+    let access_token = login_body["access_token"]
+        .as_str()
+        .expect("access_token must be present")
+        .to_string();
+
+    let intro_resp = app
+        .client()
+        .post(&format!("{}/oidc/introspect", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "token={}&client_id={}&client_secret={}",
+            urlencoding::encode(&access_token),
+            urlencoding::encode(conf_client_id),
+            urlencoding::encode(conf_client_secret),
+        ))
+        .send()
+        .await
+        .expect("introspect request failed");
+
+    let status = intro_resp.status();
+    let body: Value = intro_resp.json().await.expect("response should be JSON");
+    assert!(
+        status == StatusCode::UNAUTHORIZED || status == StatusCode::BAD_REQUEST,
+        "introspect with client_secret_post should be rejected for a client_secret_basic client, got {status}"
+    );
+    assert_eq!(body["error"].as_str(), Some("invalid_client"));
+}
+
+#[tokio::test]
+async fn test_revoke_client_secret_post_rejects_client_secret_basic() {
+    let app = TestApp::new().await;
+
+    let conf_client_id = "post-only-revoke-client";
+    let conf_client_secret = "PostOnlyRevoke1!";
+    app.seed_client_with_secret(conf_client_id, conf_client_secret, &[])
+        .await;
+
+    let login_resp = app
+        .client()
+        .post(&format!("{}/oidc/login", app.url()))
+        .json(&json!({
+            "email": fixtures::TEST_USER_EMAIL,
+            "password": fixtures::TEST_USER_PASSWORD,
+            "client_id": conf_client_id,
+        }))
+        .send()
+        .await
+        .expect("login request failed");
+
+    assert_eq!(login_resp.status(), StatusCode::OK);
+    let login_body: Value = login_resp.json().await.expect("response should be JSON");
+    let access_token = login_body["access_token"]
+        .as_str()
+        .expect("access_token must be present")
+        .to_string();
+
+    let revoke_resp = app
+        .client()
+        .post(&format!("{}/oidc/revoke", app.url()))
+        .basic_auth(conf_client_id, Some(conf_client_secret))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!("token={}", urlencoding::encode(&access_token)))
+        .send()
+        .await
+        .expect("revoke request failed");
+
+    let status = revoke_resp.status();
+    let body: Value = revoke_resp.json().await.expect("response should be JSON");
+    assert!(
+        status == StatusCode::UNAUTHORIZED || status == StatusCode::BAD_REQUEST,
+        "revoke with client_secret_basic should be rejected for a client_secret_post client, got {status}"
+    );
+    assert_eq!(body["error"].as_str(), Some("invalid_client"));
+}
+
+#[tokio::test]
 async fn test_introspect_and_revoke_restricted_to_own_client() {
     let app = TestApp::new().await;
 

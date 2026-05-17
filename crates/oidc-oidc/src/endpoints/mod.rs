@@ -2,6 +2,7 @@
 
 pub mod account_recovery;
 pub mod authorize;
+pub mod client_auth;
 pub mod device_authorization;
 pub mod discovery;
 pub mod email_verification;
