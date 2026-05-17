@@ -5,6 +5,7 @@
 mod policy_tests;
 mod rbac_tests;
 
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 
@@ -48,7 +49,7 @@ async fn admin_login(app: &TestApp) -> String {
         .to_string()
 }
 
-fn admin_client(app: &TestApp, token: &str) -> reqwest::Client {
+fn admin_client(_app: &TestApp, _token: &str) -> reqwest::Client {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .build()
@@ -83,6 +84,26 @@ async fn test_stats_endpoint() {
 async fn test_admin_routes_set_server_issued_csrf_cookie_and_reject_mismatched_header() {
     let app = TestApp::new().await;
     let token = admin_login(&app).await;
+
+    let browser_post_without_csrf = admin_client(&app, &token)
+        .post(&format!("{}/api/realms", app.url()))
+        .bearer_auth(&token)
+        .header(reqwest::header::ORIGIN, "https://app.example.com")
+        .json(&json!({
+            "name": "csrf-browser-without-cookie",
+            "display_name": "CSRF Browser Without Cookie",
+            "enabled": true,
+        }))
+        .send()
+        .await
+        .expect("browser-like realm create request failed");
+
+    assert_eq!(browser_post_without_csrf.status(), StatusCode::FORBIDDEN);
+    let browser_body: Value = browser_post_without_csrf
+        .json()
+        .await
+        .expect("response should be JSON");
+    assert_eq!(browser_body["error"], "csrf_validation_failed");
 
     let get_resp = admin_client(&app, &token)
         .get(&format!("{}/api/realms?limit=1", app.url()))
@@ -134,6 +155,162 @@ async fn test_admin_routes_set_server_issued_csrf_cookie_and_reject_mismatched_h
         .expect("realm create request failed");
 
     assert_eq!(ok_post.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn test_reencrypt_legacy_secrets_maintenance_endpoint() {
+    let app = TestApp::new().await;
+    let token = admin_login(&app).await;
+
+    let csrf_get = admin_client(&app, &token)
+        .get(&format!("{}/api/realms?limit=1", app.url()))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .expect("csrf bootstrap request failed");
+    assert_eq!(csrf_get.status(), StatusCode::OK);
+    let csrf_cookie = extract_cookie_value(csrf_get.headers(), "oidc_csrf_token")
+        .expect("server should issue a CSRF cookie");
+
+    let legacy_realm_resp = admin_client(&app, &token)
+        .post(&format!("{}/api/realms", app.url()))
+        .bearer_auth(&token)
+        .header(
+            reqwest::header::COOKIE,
+            format!("oidc_csrf_token={csrf_cookie}"),
+        )
+        .header("X-CSRF-Token", csrf_cookie.clone())
+        .json(&json!({
+            "name": "legacy-secret-realm",
+            "display_name": "Legacy Secret Realm",
+            "enabled": true,
+        }))
+        .send()
+        .await
+        .expect("create realm failed");
+    assert_eq!(legacy_realm_resp.status(), StatusCode::OK);
+    let realm_body: Value = legacy_realm_resp.json().await.unwrap();
+    let realm_id = realm_body["id"].as_str().expect("realm id must be present");
+    let realm_id = uuid::Uuid::parse_str(realm_id).expect("realm id should parse");
+
+    let realm_keys = {
+        use pkcs8::EncodePrivateKey;
+        use rand::RngCore;
+        use rand::rngs::OsRng;
+        use rsa::pkcs1::EncodeRsaPrivateKey;
+        use rsa::traits::PublicKeyParts;
+        use rsa::{RsaPrivateKey, RsaPublicKey};
+
+        let rsa_private = RsaPrivateKey::new(&mut OsRng, 2048).expect("failed to generate RSA key");
+        let rsa_public = RsaPublicKey::from(&rsa_private);
+        let rsa_private_pem = rsa_private
+            .to_pkcs1_pem(rsa::pkcs8::LineEnding::LF)
+            .expect("failed to encode RSA PEM")
+            .to_string();
+
+        let mut ed_secret = [0u8; 32];
+        OsRng.fill_bytes(&mut ed_secret);
+        let ed_signing = ed25519_dalek::SigningKey::from_bytes(&ed_secret);
+        let ed_verifying = ed_signing.verifying_key();
+        let ed_private_pem = ed_signing
+            .to_pkcs8_pem(pkcs8::LineEnding::LF)
+            .expect("failed to encode Ed25519 PEM")
+            .to_string();
+
+        oidc_core::models::RealmSigningKeys {
+            realm_id,
+            rsa_private_pem,
+            rsa_kid: "key-1".to_string(),
+            rsa_public_n: URL_SAFE_NO_PAD.encode(rsa_public.n().to_bytes_be()),
+            rsa_public_e: URL_SAFE_NO_PAD.encode(rsa_public.e().to_bytes_be()),
+            ed25519_private_pem: ed_private_pem,
+            ed25519_kid: "ed-key-1".to_string(),
+            ed25519_public_x: URL_SAFE_NO_PAD.encode(ed_verifying.to_bytes()),
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+        }
+    };
+
+    let mut conn = app.db_conn().await;
+    conn.execute_params(
+        "UPDATE realm_signing_keys SET rsa_private_pem = $1, ed25519_private_pem = $2 WHERE realm_id = $3",
+        &[&realm_keys.rsa_private_pem, &realm_keys.ed25519_private_pem, &realm_id],
+    )
+    .await
+    .expect("failed to downgrade realm signing keys to plaintext");
+
+    let idp_id = uuid::Uuid::new_v4();
+    conn.execute_params(
+        "INSERT INTO identity_providers (id, realm_id, alias, display_name, provider_type, enabled, issuer, authorization_url, token_url, userinfo_url, jwks_url, client_id, client_secret, scopes, auto_create_users, link_users_by_email, created_at) VALUES ($1, $2, $3, $4, $5, TRUE, $6, $7, $8, $9, $10, $11, $12, $13, TRUE, TRUE, NOW())",
+        &[
+            &idp_id,
+            &realm_id,
+            &"legacy-plaintext-idp",
+            &"Legacy Plaintext IdP",
+            &"oidc",
+            &"https://example.com",
+            &"https://example.com/auth",
+            &"https://example.com/token",
+            &"https://example.com/userinfo",
+            &"https://example.com/jwks",
+            &"legacy-client",
+            &"legacy-plaintext-secret",
+            &serde_json::json!(["openid", "profile", "email"]),
+        ],
+    )
+    .await
+    .expect("failed to insert legacy plaintext identity provider");
+    let _ = conn.close().await;
+
+    let reencrypt_resp = admin_client(&app, &token)
+        .post(&format!("{}/api/maintenance/reencrypt-secrets", app.url()))
+        .bearer_auth(&token)
+        .header(
+            reqwest::header::COOKIE,
+            format!("oidc_csrf_token={csrf_cookie}"),
+        )
+        .header("X-CSRF-Token", csrf_cookie)
+        .send()
+        .await
+        .expect("reencrypt maintenance request failed");
+
+    assert_eq!(reencrypt_resp.status(), StatusCode::OK);
+    let maintenance_body: Value = reencrypt_resp.json().await.unwrap();
+    assert_eq!(maintenance_body["identity_providers_reencrypted"], 1);
+    assert_eq!(maintenance_body["realm_signing_keys_reencrypted"], 1);
+
+    let mut conn = app.db_conn().await;
+    let idp_row = conn
+        .query_one_params(
+            "SELECT client_secret FROM identity_providers WHERE id = $1",
+            &[&idp_id],
+        )
+        .await
+        .expect("identity provider lookup should succeed")
+        .expect("identity provider should exist");
+    let stored_secret = idp_row
+        .get::<String>(0)
+        .expect("client_secret should be readable");
+    assert_ne!(stored_secret, "legacy-plaintext-secret");
+    assert!(!stored_secret.contains("legacy-plaintext-secret"));
+
+    let key_row = conn
+        .query_one_params(
+            "SELECT rsa_private_pem, ed25519_private_pem FROM realm_signing_keys WHERE realm_id = $1",
+            &[&realm_id],
+        )
+        .await
+        .expect("realm signing key lookup should succeed")
+        .expect("realm signing keys should exist");
+    let stored_rsa = key_row
+        .get::<String>(0)
+        .expect("rsa_private_pem should be readable");
+    let stored_ed = key_row
+        .get::<String>(1)
+        .expect("ed25519_private_pem should be readable");
+    assert!(!stored_rsa.contains("BEGIN RSA PRIVATE KEY"));
+    assert!(!stored_ed.contains("BEGIN PRIVATE KEY"));
+    let _ = conn.close().await;
 }
 
 #[tokio::test]
@@ -712,7 +889,7 @@ async fn test_revoke_session() {
         .send()
         .await
         .unwrap();
-    let login_body: Value = login_resp.json().await.unwrap();
+    let _login_body: Value = login_resp.json().await.unwrap();
 
     // List sessions to find the one we just created
     let list_resp = admin_client(&app, &token)

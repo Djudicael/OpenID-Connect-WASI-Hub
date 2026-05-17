@@ -696,7 +696,7 @@ async fn exchange_code_for_tokens(
         state.issuer, realm_name, provider_alias
     );
 
-    let client_secret = state.decrypt_sensitive_string_or_plaintext(&provider.client_secret)?;
+    let client_secret = state.decrypt_sensitive_string(&provider.client_secret)?;
 
     let body = serde_urlencoded::to_string(&[
         ("grant_type", "authorization_code"),

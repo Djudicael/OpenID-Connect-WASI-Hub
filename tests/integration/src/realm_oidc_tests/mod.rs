@@ -142,6 +142,10 @@ async fn test_realm_discovery_document() {
         body.get("check_session_iframe").is_none(),
         "realm discovery must not advertise check_session_iframe until it is supported"
     );
+    assert_eq!(body["frontchannel_logout_supported"], true);
+    assert_eq!(body["frontchannel_logout_session_supported"], true);
+    assert_eq!(body["backchannel_logout_supported"], true);
+    assert_eq!(body["backchannel_logout_session_supported"], true);
 
     // Standard arrays still present
     assert!(body["scopes_supported"].as_array().is_some());

@@ -41,24 +41,6 @@ async fn admin_login(app: &TestApp) -> String {
         .to_string()
 }
 
-fn parse_redirect_fragment(location: &str, key: &str) -> Option<String> {
-    let url =
-        url::Url::parse(location).unwrap_or_else(|_| panic!("invalid redirect URL: {location}"));
-    if let Some(fragment) = url.fragment() {
-        for pair in fragment.split('&') {
-            if let Some((k, v)) = pair.split_once('=') {
-                if k == key {
-                    return Some(urlencoding::decode(v).ok()?.to_string());
-                }
-            }
-        }
-    }
-    if let Some((_, v)) = url.query_pairs().find(|(k, _)| k == key) {
-        return Some(v.to_string());
-    }
-    None
-}
-
 // ===================================================================
 // Pushed Authorization Requests (RFC 9101)
 // ===================================================================

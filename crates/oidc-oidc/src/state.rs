@@ -81,10 +81,9 @@ impl OidcState {
             .await
         {
             Ok(Some(keys)) => {
-                let rsa_private_pem =
-                    self.decrypt_sensitive_string_or_plaintext(&keys.rsa_private_pem)?;
+                let rsa_private_pem = self.decrypt_sensitive_string(&keys.rsa_private_pem)?;
                 let ed25519_private_pem =
-                    self.decrypt_sensitive_string_or_plaintext(&keys.ed25519_private_pem)?;
+                    self.decrypt_sensitive_string(&keys.ed25519_private_pem)?;
                 let svc = Arc::new(JwtTokenService::from_pems(
                     &self.issuer,
                     &rsa_private_pem,
@@ -192,17 +191,12 @@ impl OidcState {
         self.encrypt_sensitive_value(raw_key)
     }
 
-    /// Decrypt a UTF-8 secret that may still be stored in legacy plaintext form.
-    pub fn decrypt_sensitive_string_or_plaintext(
-        &self,
-        value: &str,
-    ) -> Result<String, oidc_core::OidcError> {
-        match self.decrypt_sensitive_value(value) {
-            Ok(bytes) => String::from_utf8(bytes).map_err(|_| {
-                oidc_core::OidcError::Internal("decrypted secret is not valid UTF-8".into())
-            }),
-            Err(_) => Ok(value.to_string()),
-        }
+    /// Decrypt an encrypted UTF-8 secret.
+    pub fn decrypt_sensitive_string(&self, value: &str) -> Result<String, oidc_core::OidcError> {
+        let bytes = self.decrypt_sensitive_value(value)?;
+        String::from_utf8(bytes).map_err(|_| {
+            oidc_core::OidcError::Internal("decrypted secret is not valid UTF-8".into())
+        })
     }
 }
 
@@ -255,11 +249,14 @@ mod tests {
     }
 
     #[test]
-    fn decrypt_sensitive_string_or_plaintext_accepts_legacy_plaintext() {
+    fn decrypt_sensitive_string_requires_valid_ciphertext() {
         let state = test_state();
-        let value = state
-            .decrypt_sensitive_string_or_plaintext("plain-secret")
-            .expect("plaintext fallback should succeed");
-        assert_eq!(value, "plain-secret");
+        let err = state
+            .decrypt_sensitive_string("plain-secret")
+            .expect_err("plaintext should no longer be accepted");
+        assert!(
+            matches!(err, oidc_core::OidcError::Internal(_)),
+            "expected internal error for invalid ciphertext"
+        );
     }
 }

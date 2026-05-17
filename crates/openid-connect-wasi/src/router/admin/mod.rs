@@ -103,6 +103,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/users/{id}/impersonate", post(users::impersonate))
         .route("/api/maintenance/cleanup", post(audit::cleanup_expired))
         .route(
+            "/api/maintenance/reencrypt-secrets",
+            post(audit::reencrypt_legacy_secrets),
+        )
+        .route(
             "/api/realms/{id}/password-policy",
             get(realms::get_password_policy),
         )

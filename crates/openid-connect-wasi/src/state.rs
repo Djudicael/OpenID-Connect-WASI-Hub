@@ -114,6 +114,40 @@ impl AppState {
         Ok(base64::engine::general_purpose::STANDARD.encode(&result))
     }
 
+    /// Decrypt an arbitrary sensitive value using the server encryption key.
+    pub fn decrypt_sensitive_value(
+        &self,
+        encrypted: &str,
+    ) -> Result<Vec<u8>, oidc_core::OidcError> {
+        use aes_gcm::aead::Aead;
+        use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
+        use base64::Engine;
+
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encrypted)
+            .map_err(|e| {
+                oidc_core::OidcError::Internal(format!("Invalid base64 in secret: {e}"))
+            })?;
+
+        if bytes.len() < 29 {
+            return Err(oidc_core::OidcError::Internal(
+                "Encrypted secret too short".into(),
+            ));
+        }
+
+        let (nonce_bytes, ct_and_tag) = bytes.split_at(12);
+        let key_bytes = self.decode_encryption_key()?;
+        let cipher = Aes256Gcm::new_from_slice(&key_bytes)
+            .map_err(|e| oidc_core::OidcError::Internal(format!("AES key error: {e}")))?;
+        let nonce = Nonce::from_slice(nonce_bytes);
+
+        let decrypted = cipher
+            .decrypt(nonce, ct_and_tag)
+            .map_err(|e| oidc_core::OidcError::Internal(format!("Decryption error: {e}")))?;
+
+        Ok(decrypted)
+    }
+
     /// Build state directly from a config struct (no env vars).
     pub fn from_config(config: AppConfig) -> Self {
         validate_encryption_key_hex(&config.encryption_key);
@@ -263,5 +297,20 @@ mod tests {
         let mut config = test_config();
         config.encryption_key = "00112233".to_string();
         let _ = AppState::from_config(config);
+    }
+
+    #[test]
+    fn sensitive_value_roundtrip_encrypts_and_decrypts() {
+        let state = AppState::from_config(test_config());
+        let plaintext = b"secret-value";
+        let encrypted = state
+            .encrypt_sensitive_value(plaintext)
+            .expect("encryption should succeed");
+
+        assert_ne!(encrypted, String::from_utf8_lossy(plaintext));
+        let decrypted = state
+            .decrypt_sensitive_value(&encrypted)
+            .expect("decryption should succeed");
+        assert_eq!(decrypted, plaintext);
     }
 }

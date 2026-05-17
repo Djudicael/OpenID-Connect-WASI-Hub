@@ -255,6 +255,11 @@ async fn test_discovery_document_complete() {
 
     let challenge_methods = body["code_challenge_methods_supported"].as_array().unwrap();
     assert!(challenge_methods.contains(&json!("S256")));
+
+    assert_eq!(body["frontchannel_logout_supported"], true);
+    assert_eq!(body["frontchannel_logout_session_supported"], true);
+    assert_eq!(body["backchannel_logout_supported"], true);
+    assert_eq!(body["backchannel_logout_session_supported"], true);
 }
 
 #[tokio::test]
@@ -896,15 +901,7 @@ async fn test_introspect_revoked_token() {
     let app = TestApp::new().await;
 
     // Login and get tokens
-    let login_body = login(&app).await;
-    let access_token = login_body["access_token"]
-        .as_str()
-        .expect("access_token must be present")
-        .to_string();
-
-    // Revoke the access token
-    let client_id = fixtures::TEST_CLIENT_ID;
-    let client_secret = "dummy"; // admin-ui client has no secret, but revoke expects one
+    let _login_body = login(&app).await;
 
     // We need a client with a secret for introspect/revoke. Seed one.
     let conf_client_id = "introspect-client";

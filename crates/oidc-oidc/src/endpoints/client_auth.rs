@@ -140,11 +140,12 @@ pub async fn authenticate_client_for_endpoint(
                         )
                     })?;
 
-                let client_secret = state
-                    .decrypt_sensitive_string_or_plaintext(encrypted_secret)
-                    .map_err(|_| {
-                        OidcErrorResponse::invalid_client("Failed to decrypt client secret")
-                    })?;
+                let client_secret =
+                    state
+                        .decrypt_sensitive_string(encrypted_secret)
+                        .map_err(|_| {
+                            OidcErrorResponse::invalid_client("Failed to decrypt client secret")
+                        })?;
 
                 let now = chrono::Utc::now().timestamp();
                 crate::tokens::jwt_service::verify_client_secret_jwt(

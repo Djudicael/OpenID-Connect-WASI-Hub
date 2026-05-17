@@ -22,8 +22,9 @@ pub async fn csrf_middleware(request: Request<Body>, next: Next) -> Response {
         method,
         axum::http::Method::GET | axum::http::Method::HEAD | axum::http::Method::OPTIONS
     );
+    let browser_like_request = is_browser_like_request(request.headers()) || cookie_token.is_some();
 
-    if !is_safe_method && !should_skip_validation && cookie_token.is_some() {
+    if !is_safe_method && !should_skip_validation && browser_like_request {
         let header_token = request
             .headers()
             .get(CSRF_HEADER_NAME)
@@ -78,6 +79,13 @@ fn csrf_cookie_header(value: &str) -> String {
     )
 }
 
+fn is_browser_like_request(headers: &axum::http::HeaderMap) -> bool {
+    headers.contains_key(axum::http::header::ORIGIN)
+        || headers.contains_key(axum::http::header::REFERER)
+        || headers.contains_key("sec-fetch-site")
+        || headers.contains_key("sec-fetch-mode")
+}
+
 fn extract_csrf_cookie(headers: &axum::http::HeaderMap) -> Option<String> {
     let cookie_header = headers.get(axum::http::header::COOKIE)?.to_str().ok()?;
     for cookie_pair in cookie_header.split(';') {
@@ -111,5 +119,22 @@ mod tests {
         assert!(header.contains("SameSite=Strict"));
         assert!(header.contains("Secure"));
         assert!(header.contains("Max-Age=86400"));
+    }
+
+    #[test]
+    fn browser_like_request_detects_origin_header() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            axum::http::header::ORIGIN,
+            HeaderValue::from_static("https://app.example.com"),
+        );
+
+        assert!(is_browser_like_request(&headers));
+    }
+
+    #[test]
+    fn browser_like_request_is_false_for_plain_machine_request() {
+        let headers = axum::http::HeaderMap::new();
+        assert!(!is_browser_like_request(&headers));
     }
 }

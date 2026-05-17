@@ -8,6 +8,43 @@ use uuid::Uuid;
 
 use crate::helpers::app::TestApp;
 
+fn encrypt_test_secret(plaintext: &str) -> String {
+    use pkcs8::EncodePrivateKey;
+    use rand::RngCore;
+    use rand::rngs::OsRng;
+    use rsa::pkcs1::EncodeRsaPrivateKey;
+
+    let rsa_key = rsa::RsaPrivateKey::new(&mut OsRng, 2048).expect("failed to generate RSA key");
+    let rsa_pem = rsa_key
+        .to_pkcs1_pem(rsa::pkcs1::LineEnding::LF)
+        .expect("failed to serialize RSA key")
+        .to_string();
+
+    let mut secret_bytes = [0u8; 32];
+    OsRng.fill_bytes(&mut secret_bytes);
+    let ed_key = ed25519_dalek::SigningKey::from_bytes(&secret_bytes);
+    let ed_pem = ed_key
+        .to_pkcs8_pem(pkcs8::LineEnding::LF)
+        .expect("failed to serialize Ed25519 key")
+        .to_string();
+
+    let state =
+        openid_connect_wasi::state::AppState::from_config(openid_connect_wasi::state::AppConfig {
+            database_url: "postgresql://localhost/oidc_hub?sslmode=prefer".to_string(),
+            bind_address: "127.0.0.1".to_string(),
+            port: 8080,
+            issuer: "http://localhost:8080".to_string(),
+            encryption_key: crate::helpers::fixtures::TEST_ENCRYPTION_KEY.to_string(),
+            pairwise_salt: "test-pairwise-salt".to_string(),
+            signing_key: Some(rsa_pem),
+            ed25519_key: Some(ed_pem),
+        });
+
+    state
+        .encrypt_sensitive_value(plaintext.as_bytes())
+        .expect("test secret encryption should succeed")
+}
+
 fn pkce_s256_challenge(verifier: &str) -> String {
     let mut hasher = sha2::Sha256::new();
     use sha2::Digest;
@@ -122,7 +159,7 @@ async fn seed_identity_provider(app: &TestApp, upstream: &MockUpstreamIdp, alias
         userinfo_url: format!("{}/userinfo", upstream.base_url),
         jwks_url: format!("{}/jwks", upstream.base_url),
         client_id: "upstream-client".to_string(),
-        client_secret: "upstream-secret".to_string(),
+        client_secret: encrypt_test_secret("upstream-secret"),
         scopes: vec!["openid".into(), "profile".into(), "email".into()],
         auto_create_users: true,
         link_users_by_email: true,

@@ -20,6 +20,7 @@ use oidc_repository::repositories::group_role_repo::GroupRoleRepo;
 use oidc_repository::repositories::par_repo::ParRepo;
 use oidc_repository::repositories::password_reset_token_repo::PasswordResetTokenRepo;
 use oidc_repository::repositories::realm_repo::RealmRepo;
+use oidc_repository::repositories::realm_signing_keys_repo::RealmSigningKeysRepo;
 use oidc_repository::repositories::role_repo::RoleRepo;
 use oidc_repository::repositories::scope_repo::ScopeRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
@@ -1282,6 +1283,232 @@ pub async fn cleanup_expired(State(state): State<AppState>, auth: AdminAuth) -> 
         "device_codes_deleted": device_codes_deleted,
         "auth_codes_deleted": auth_codes_deleted,
         "par_deleted": par_deleted,
+    }))
+    .into_response()
+}
+
+pub async fn reencrypt_legacy_secrets(State(state): State<AppState>, auth: AdminAuth) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+
+    let mut identity_provider_count = 0_u64;
+    let mut realm_signing_key_count = 0_u64;
+
+    let idp_rows = match conn
+        .query("SELECT id, client_secret FROM identity_providers WHERE deleted_at IS NULL")
+        .await
+    {
+        Ok(result) => result.into_rows(),
+        Err(e) => {
+            tracing::error!("query identity providers for re-encryption failed: {e}");
+            return internal_error();
+        }
+    };
+
+    for row in &idp_rows {
+        let id = match row.get::<Uuid>(0) {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!("skip identity provider row with unreadable id: {e}");
+                continue;
+            }
+        };
+        let client_secret = match row.get::<String>(1) {
+            Ok(secret) => secret,
+            Err(e) => {
+                tracing::warn!("skip identity provider {id} with unreadable secret: {e}");
+                continue;
+            }
+        };
+
+        if state.decrypt_sensitive_value(&client_secret).is_ok() {
+            continue;
+        }
+
+        let encrypted = match state.encrypt_sensitive_value(client_secret.as_bytes()) {
+            Ok(value) => value,
+            Err(e) => {
+                tracing::warn!("failed to encrypt legacy identity provider secret for {id}: {e}");
+                continue;
+            }
+        };
+
+        if let Err(e) = conn
+            .execute_params(
+                "UPDATE identity_providers SET client_secret = $1 WHERE id = $2",
+                &[&encrypted, &id],
+            )
+            .await
+        {
+            tracing::warn!("failed to update encrypted identity provider secret for {id}: {e}");
+            continue;
+        }
+        identity_provider_count += 1;
+    }
+
+    let key_rows = match conn
+        .query(
+            "SELECT realm_id, rsa_private_pem, rsa_kid, rsa_public_n, rsa_public_e, ed25519_private_pem, ed25519_kid, ed25519_public_x, created_at, updated_at FROM realm_signing_keys",
+        )
+        .await
+    {
+        Ok(result) => result.into_rows(),
+        Err(e) => {
+            tracing::error!("query realm signing keys for re-encryption failed: {e}");
+            return internal_error();
+        }
+    };
+
+    for row in &key_rows {
+        let realm_id = match row.get::<Uuid>(0) {
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!("skip unreadable realm signing key row id: {e}");
+                continue;
+            }
+        };
+        let rsa_private_pem = match row.get::<String>(1) {
+            Ok(value) => value,
+            Err(e) => {
+                tracing::warn!("skip unreadable realm RSA key for {realm_id}: {e}");
+                continue;
+            }
+        };
+        let rsa_kid = match row.get::<String>(2) {
+            Ok(value) => value,
+            Err(e) => {
+                tracing::warn!("skip unreadable realm RSA kid for {realm_id}: {e}");
+                continue;
+            }
+        };
+        let rsa_public_n = match row.get::<String>(3) {
+            Ok(value) => value,
+            Err(e) => {
+                tracing::warn!("skip unreadable realm RSA n for {realm_id}: {e}");
+                continue;
+            }
+        };
+        let rsa_public_e = match row.get::<String>(4) {
+            Ok(value) => value,
+            Err(e) => {
+                tracing::warn!("skip unreadable realm RSA e for {realm_id}: {e}");
+                continue;
+            }
+        };
+        let ed25519_private_pem = match row.get::<String>(5) {
+            Ok(value) => value,
+            Err(e) => {
+                tracing::warn!("skip unreadable realm Ed25519 key for {realm_id}: {e}");
+                continue;
+            }
+        };
+        let ed25519_kid = match row.get::<String>(6) {
+            Ok(value) => value,
+            Err(e) => {
+                tracing::warn!("skip unreadable realm Ed25519 kid for {realm_id}: {e}");
+                continue;
+            }
+        };
+        let ed25519_public_x = match row.get::<String>(7) {
+            Ok(value) => value,
+            Err(e) => {
+                tracing::warn!("skip unreadable realm Ed25519 x for {realm_id}: {e}");
+                continue;
+            }
+        };
+        let created_at = match row.get::<chrono::DateTime<chrono::Utc>>(8) {
+            Ok(value) => value,
+            Err(e) => {
+                tracing::warn!("skip unreadable realm key created_at for {realm_id}: {e}");
+                continue;
+            }
+        };
+
+        let rsa_already_encrypted = state.decrypt_sensitive_value(&rsa_private_pem).is_ok();
+        let ed_already_encrypted = state.decrypt_sensitive_value(&ed25519_private_pem).is_ok();
+        if rsa_already_encrypted && ed_already_encrypted {
+            continue;
+        }
+
+        let updated = oidc_core::models::RealmSigningKeys {
+            realm_id,
+            rsa_private_pem: if rsa_already_encrypted {
+                rsa_private_pem
+            } else {
+                match state.encrypt_sensitive_value(rsa_private_pem.as_bytes()) {
+                    Ok(value) => value,
+                    Err(e) => {
+                        tracing::warn!(
+                            "failed to encrypt legacy realm RSA key for {realm_id}: {e}"
+                        );
+                        continue;
+                    }
+                }
+            },
+            rsa_kid,
+            rsa_public_n,
+            rsa_public_e,
+            ed25519_private_pem: if ed_already_encrypted {
+                ed25519_private_pem
+            } else {
+                match state.encrypt_sensitive_value(ed25519_private_pem.as_bytes()) {
+                    Ok(value) => value,
+                    Err(e) => {
+                        tracing::warn!(
+                            "failed to encrypt legacy realm Ed25519 key for {realm_id}: {e}"
+                        );
+                        continue;
+                    }
+                }
+            },
+            ed25519_kid,
+            ed25519_public_x,
+            created_at,
+            updated_at: chrono::Utc::now(),
+        };
+
+        if let Err(e) = RealmSigningKeysRepo.update(&mut conn, &updated).await {
+            tracing::warn!(
+                "failed to update encrypted realm keys for {}: {e}",
+                updated.realm_id
+            );
+            continue;
+        }
+        realm_signing_key_count += 1;
+    }
+
+    let audit = oidc_core::models::AuditEvent {
+        id: generate_uuid_v7(),
+        realm_id: None,
+        event_type: "maintenance.reencrypt_legacy_secrets".to_string(),
+        actor_id: Uuid::parse_str(&auth.subject).ok(),
+        actor_type: if auth.is_api_key {
+            ActorType::ApiKey
+        } else {
+            ActorType::User
+        },
+        target_type: None,
+        target_id: None,
+        details: json!({
+            "identity_providers_reencrypted": identity_provider_count,
+            "realm_signing_keys_reencrypted": realm_signing_key_count,
+        }),
+        ip_address: None,
+        user_agent: None,
+        created_at: chrono::Utc::now(),
+    };
+    if let Err(e) = AuditEventRepo.create(&mut conn, &audit).await {
+        tracing::warn!("failed to write re-encryption audit event: {e}");
+    }
+
+    Json(json!({
+        "identity_providers_reencrypted": identity_provider_count,
+        "realm_signing_keys_reencrypted": realm_signing_key_count,
     }))
     .into_response()
 }
