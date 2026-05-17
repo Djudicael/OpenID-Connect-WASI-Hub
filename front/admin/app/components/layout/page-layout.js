@@ -1,10 +1,13 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../../core/component.js';
 
+let pageLayoutTitleId = 0;
+
 class PageLayout extends BaseComponent {
   constructor() {
     super();
     this._state = { title: '', loading: false };
+    this._titleElementId = `page-layout-title-${++pageLayoutTitleId}`;
   }
 
   get title() {
@@ -25,14 +28,24 @@ class PageLayout extends BaseComponent {
     }
   }
 
+  getPageFocusTarget() {
+    return this.shadowRoot?.querySelector('[data-page-focus]') || null;
+  }
+
+  focusPageContent(options = { preventScroll: true }) {
+    const target = this.getPageFocusTarget();
+    target?.focus(options);
+    return target;
+  }
+
   template() {
     return html`
       <div class="page">
         <div class="page-header">
-          <h1 class="page-title">${this._state.title}</h1>
+          <h1 id=${this._titleElementId} class="page-title">${this._state.title}</h1>
           <slot name="actions"></slot>
         </div>
-        <div class="page-content">
+        <div class="page-content" tabindex="-1" data-page-focus aria-labelledby=${this._titleElementId}>
           ${this._state.loading
         ? html`
               <div class="skeleton">

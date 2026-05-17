@@ -45,10 +45,20 @@ function matchPath(pattern, path) {
 }
 
 class RouterOutlet extends HTMLElement {
+  constructor() {
+    super();
+    this._onRouteChange = this._match.bind(this);
+  }
+
   connectedCallback() {
-    window.addEventListener('popstate', () => this._match());
-    window.addEventListener('navigate', () => this._match());
+    window.addEventListener('popstate', this._onRouteChange);
+    window.addEventListener('navigate', this._onRouteChange);
     this._match();
+  }
+
+  disconnectedCallback() {
+    window.removeEventListener('popstate', this._onRouteChange);
+    window.removeEventListener('navigate', this._onRouteChange);
   }
 
   _match() {
@@ -100,11 +110,33 @@ class RouterOutlet extends HTMLElement {
     const el = document.createElement(route.component);
     el.params = params;
     this.appendChild(el);
+    this._focusRouteContent(el);
+  }
+
+  _focusRouteContent(routeElement) {
     requestAnimationFrame(() => {
-      const main = document.querySelector('.page-content');
-      if (main) {
-        main.setAttribute('tabindex', '-1');
-        main.focus({ preventScroll: true });
+      if (!routeElement?.isConnected) return;
+
+      const pageLayout = routeElement.shadowRoot?.querySelector('c-page-layout');
+      if (pageLayout && typeof pageLayout.focusPageContent === 'function') {
+        pageLayout.focusPageContent({ preventScroll: true });
+        return;
+      }
+
+      const fallback = routeElement.shadowRoot?.querySelector('[data-page-focus], h1, h2, [tabindex]');
+      if (fallback instanceof HTMLElement) {
+        if (!fallback.hasAttribute('tabindex')) {
+          fallback.setAttribute('tabindex', '-1');
+        }
+        fallback.focus({ preventScroll: true });
+        return;
+      }
+
+      if (routeElement instanceof HTMLElement) {
+        if (!routeElement.hasAttribute('tabindex')) {
+          routeElement.setAttribute('tabindex', '-1');
+        }
+        routeElement.focus({ preventScroll: true });
       }
     });
   }
