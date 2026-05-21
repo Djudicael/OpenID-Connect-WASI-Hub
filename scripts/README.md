@@ -10,6 +10,7 @@ Operational scripts for backup, deployment, rollback, and coverage.
 | `deploy.sh` | Build + deploy + verify | `./scripts/deploy.sh` |
 | `rollback.sh` | Restore previous WASM version | `./scripts/rollback.sh --list` |
 | `check-coverage.sh` | Measure code coverage | `./scripts/check-coverage.sh` |
+| `package-release.sh` | Build a release bundle with the WASM artifact and minified frontend | `./scripts/package-release.sh --version v0.1.0` |
 
 ---
 
@@ -104,6 +105,33 @@ wasm/
     ├── openid_connect_wasi_20260509_120000.wasm          ← deploy backup
     ├── openid_connect_wasi_20260510_143000.wasm          ← deploy backup
     └── openid_connect_wasi_pre-rollback-20260510_150000.wasm  ← rollback backup
+```
+
+---
+
+## package-release.sh
+
+Creates a release bundle containing:
+
+- `wasm/openid_connect_wasi.wasm`
+- `front/admin/dist/` (production build with minified JS and CSS)
+- deployment helper scripts
+- `SHA256SUMS.txt`
+
+```bash
+# Build everything and create a versioned bundle
+./scripts/package-release.sh --version v0.1.0
+
+# Reuse already-built artifacts
+./scripts/package-release.sh --skip-build
+```
+
+### Output
+
+```text
+dist/packages/
+├── openid-connect-wasi-v0.1.0/
+└── openid-connect-wasi-v0.1.0.tar.gz
 ```
 
 ---

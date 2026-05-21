@@ -5,7 +5,8 @@
   "description": "OpenID Connect Hub Admin UI - Native Web Components",
   "scripts": {
     "dev": "node dev.js",
-    "build": "node buildJs.js",
+    "build": "node buildJs.js --prod",
+    "build:dev": "node buildJs.js",
     "build:watch": "nodemon --watch app --watch style buildJs.js",
     "e2e": "playwright test",
     "e2e:headed": "playwright test --headed",

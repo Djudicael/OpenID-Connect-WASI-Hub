@@ -1,0 +1,122 @@
+name: CI/CD
+
+on:
+  pull_request:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  FRONTEND_DIR: front/admin
+
+jobs:
+  validate:
+    name: Validate workspace and build artifacts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+          components: rustfmt
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: front/admin/package-lock.json
+
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Rust tests
+        run: cargo test --workspace --exclude integration-tests
+
+      - name: Install frontend dependencies
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: npm ci
+
+      - name: Build minified frontend assets
+        working-directory: ${{ env.FRONTEND_DIR }}
+        run: npm run build
+
+      - name: Build release WASM artifact
+        run: cargo build -p openid-connect-wasi --target wasm32-wasip2 --release
+
+      - name: Upload frontend package
+        uses: actions/upload-artifact@v4
+        with:
+          name: admin-frontend-dist
+          path: front/admin/dist
+          if-no-files-found: error
+
+      - name: Upload WASM package
+        uses: actions/upload-artifact@v4
+        with:
+          name: openid-connect-wasi-wasm
+          path: target/wasm32-wasip2/release/openid_connect_wasi.wasm
+          if-no-files-found: error
+
+  release_bundle:
+    name: Package release bundle
+    needs: validate
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      PACKAGE_VERSION: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('manual-{0}', github.run_number) }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: front/admin/package-lock.json
+
+      - name: Build packaged release bundle
+        run: bash scripts/package-release.sh --version "${PACKAGE_VERSION}"
+
+      - name: Upload release bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openid-connect-wasi-release-bundle
+          path: dist/packages
+          if-no-files-found: error
+
+      - name: Publish GitHub release assets
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/packages/openid-connect-wasi-${{ env.PACKAGE_VERSION }}.tar.gz
