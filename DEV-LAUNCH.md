@@ -93,6 +93,12 @@ The proxy eliminates CORS issues by serving both frontend and backend from the s
 
 Best for testing the **recommended same-origin browser posture** with a real WASI Preview 2 deployment: the admin frontend is built first, embedded into a dedicated frontend WASI binary, and then served behind the same proxy as the dedicated backend WASI app.
 
+Primary start command:
+
+```bash
+cargo run -p oidc-wasm-dev -- start
+```
+
 ```bash
 cd openid_connect_wasi
 
