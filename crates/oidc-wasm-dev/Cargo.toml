@@ -11,29 +11,29 @@ path = "src/main.rs"
 
 [dependencies]
 # Dev orchestration (same as oidc-dev)
-rustainers = "0.15"
+rustainers = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process", "signal", "time"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-dotenvy = "0.15"
+dotenvy = { workspace = true }
 
 # Database
 wasi-pg-client = { workspace = true, features = ["tokio-transport", "uuid", "chrono", "serde-json"] }
 
 # Repository & API key layers
-oidc-repository = { path = "../oidc-repository" }
-oidc-apikey = { path = "../oidc-apikey" }
+oidc-repository = { workspace = true }
+oidc-apikey = { workspace = true }
 
 # HTTP client for health checks
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+reqwest = { workspace = true }
 
 # Port scanning
-portpicker = "0.1"
+portpicker = { workspace = true }
 
 # Workspace
-oidc-core = { path = "../oidc-core" }
+oidc-core = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }

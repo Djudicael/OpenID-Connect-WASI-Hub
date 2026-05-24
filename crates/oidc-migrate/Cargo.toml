@@ -10,8 +10,8 @@ name = "oidc-migrate"
 path = "src/main.rs"
 
 [dependencies]
-oidc-core = { path = "../oidc-core" }
-oidc-repository = { path = "../oidc-repository" }
+oidc-core = { workspace = true }
+oidc-repository = { workspace = true }
 wasi-pg-client = { workspace = true, features = ["tokio-transport"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 tracing = { workspace = true }

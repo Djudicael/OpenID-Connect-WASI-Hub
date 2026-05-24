@@ -1,60 +1,43 @@
 # cargo-deny configuration for OpenID Connect WASI Hub
 # https://embarkstudios.github.io/cargo-deny/
 
-# ---------------------------------------------------------------------------
-# License checking
-# ---------------------------------------------------------------------------
-[licenses]
-# Allow only MIT and Apache-2.0 (the project's own dual-license)
-allow = ["MIT", "Apache-2.0"]
-# Automatically flag unlicensed crates
-unlicensed = "deny"
-# Allow some common permissive licenses that appear in transitive deps
-allow-osi-fsf-free = "neither"
-# Some crates use "Apache-2.0 WITH LLVM-exception" — allow it
-exceptions = [
-    { name = "webpki-roots", allow = ["MPL-2.0"] },
-    { name = "ring", allow = ["ISC", "OpenSSL"] },
-    { name = "rustls-webpki", allow = ["ISC"] },
+[advisories]
+unmaintained = "workspace"
+unsound = "workspace"
+yanked = "warn"
+ignore = [
+    { id = "RUSTSEC-2023-0071", reason = "The workspace still depends on the rsa crate for RS256/JWE flows, and RustSec currently offers no patched release. Keep auditing this until the dependency can be replaced or upstream ships a fix." },
 ]
 
-# Mark crates that are clearly permissive but use non-standard identifiers
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "Unicode-3.0",
+    "ISC",
+    "Unlicense",
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.8
+exceptions = [
+    { crate = "ring", allow = ["ISC", "OpenSSL"] },
+    { crate = "rustls-webpki", allow = ["ISC"] },
+]
+
 [[licenses.clarify]]
-name = "ring"
+crate = "ring"
 expression = "ISC AND MIT AND OpenSSL"
 license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 
-# ---------------------------------------------------------------------------
-# Security advisories
-# ---------------------------------------------------------------------------
-[advisories]
-# Fail on any vulnerability with a CVSS score > 0
-vulnerability = "deny"
-# Warn about unmaintained crates
-unmaintained = "warn"
-# Warn about crates with security notices (but no formal advisory)
-notice = "warn"
-# Ignore specific advisories if needed (uncomment and fill in):
-# ignore = []
-
-# ---------------------------------------------------------------------------
-# Duplicate dependency detection
-# ---------------------------------------------------------------------------
 [bans]
-# Warn on duplicate dependencies (some are unavoidable in large trees)
 multiple-versions = "warn"
-# Deny wildcard version requirements in Cargo.toml
 wildcards = "deny"
-# Allow workspace crates to reference each other
-allow-build-scripts = [
-    { name = "argon2", allow = ["argon2"] },
-    { name = "ring", allow = ["ring"] },
-]
 
-# ---------------------------------------------------------------------------
-# Source / origin checking
-# ---------------------------------------------------------------------------
+[bans.workspace-dependencies]
+unused = "allow"
+
 [sources]
-# Only allow crates from crates.io
 unknown-registry = "deny"
 unknown-git = "deny"
