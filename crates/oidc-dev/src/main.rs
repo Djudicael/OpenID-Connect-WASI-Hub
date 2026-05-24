@@ -1469,7 +1469,15 @@ const server = http.createServer((req, res) => {{
         return;
     }}
 
-    const isApi = req.url.startsWith('/api/') || req.url.startsWith('/oidc/') || req.url.startsWith('/.well-known/') || req.url.startsWith('/health') || req.url.startsWith('/admin') || req.url.startsWith('/realms/');
+    const realmSegments = req.url.split('?')[0].split('/').filter(Boolean);
+    const isRealmBackendRoute = realmSegments[0] === 'realms'
+        && realmSegments.length >= 3
+        && ['login', '.well-known', 'protocol'].includes(realmSegments[2]);
+    const isApi = req.url.startsWith('/api/')
+        || req.url.startsWith('/oidc/')
+        || req.url.startsWith('/.well-known/')
+        || req.url.startsWith('/health')
+        || isRealmBackendRoute;
     const target = isApi ? `http://127.0.0.1:${{BACKEND_PORT}}` : `http://127.0.0.1:${{FRONTEND_PORT}}`;
     console.log(`[proxy] ${{req.method}} ${{req.url}} -> ${{isApi ? 'BACKEND' : 'FRONTEND'}} (${{target}})`);
 

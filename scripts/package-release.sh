@@ -11,7 +11,7 @@ usage() {
     cat <<EOF
 Usage: $0 [OPTIONS]
 
-Create a release bundle containing the production WASM build and the minified admin frontend.
+Create a release bundle containing both production WASM builds and the minified admin frontend.
 
 Options:
   --version VERSION   Version suffix for the output directory/archive
@@ -59,7 +59,8 @@ VERSION="${VERSION//\//-}"
 PACKAGE_NAME="${PACKAGE_PREFIX}-${VERSION}"
 PACKAGE_DIR="${OUTPUT_DIR}/${PACKAGE_NAME}"
 ARCHIVE_PATH="${OUTPUT_DIR}/${PACKAGE_NAME}.tar.gz"
-WASM_PATH="${PROJECT_ROOT}/target/wasm32-wasip2/release/openid_connect_wasi.wasm"
+FRONTEND_WASM_PATH="${PROJECT_ROOT}/target/wasm32-wasip2/release/oidc_admin_wasi.wasm"
+BACKEND_WASM_PATH="${PROJECT_ROOT}/target/wasm32-wasip2/release/openid_connect_wasi.wasm"
 FRONTEND_DIR="${PROJECT_ROOT}/front/admin"
 FRONTEND_DIST_DIR="${FRONTEND_DIR}/dist"
 
@@ -74,17 +75,23 @@ if [[ "$SKIP_BUILD" == "false" ]]; then
         npm run build
     )
 
-    echo "[2/4] Building release WASM artifact..."
+    echo "[2/4] Building release WASM artifacts..."
     (
         cd "$PROJECT_ROOT"
+        cargo build -p oidc-admin-wasi --target wasm32-wasip2 --release
         cargo build -p openid-connect-wasi --target wasm32-wasip2 --release
     )
 else
     echo "[1/4] Skipping builds (--skip-build)"
 fi
 
-if [[ ! -f "$WASM_PATH" ]]; then
-    echo "ERROR: WASM artifact not found at $WASM_PATH" >&2
+if [[ ! -f "$FRONTEND_WASM_PATH" ]]; then
+    echo "ERROR: Frontend WASM artifact not found at $FRONTEND_WASM_PATH" >&2
+    exit 1
+fi
+
+if [[ ! -f "$BACKEND_WASM_PATH" ]]; then
+    echo "ERROR: Backend WASM artifact not found at $BACKEND_WASM_PATH" >&2
     exit 1
 fi
 
@@ -95,7 +102,8 @@ fi
 
 echo "[3/4] Staging package contents..."
 mkdir -p "$PACKAGE_DIR/wasm" "$PACKAGE_DIR/front/admin" "$PACKAGE_DIR/scripts"
-cp "$WASM_PATH" "$PACKAGE_DIR/wasm/"
+cp "$FRONTEND_WASM_PATH" "$PACKAGE_DIR/wasm/"
+cp "$BACKEND_WASM_PATH" "$PACKAGE_DIR/wasm/"
 cp -R "$FRONTEND_DIST_DIR" "$PACKAGE_DIR/front/admin/dist"
 cp "$PROJECT_ROOT/scripts/deploy.sh" "$PACKAGE_DIR/scripts/"
 cp "$PROJECT_ROOT/scripts/rollback.sh" "$PACKAGE_DIR/scripts/"

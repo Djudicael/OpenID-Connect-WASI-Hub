@@ -1,10 +1,11 @@
 //! OIDC WASM Dev Orchestrator — spins up PostgreSQL, seeds data,
-//! builds the WASM component, builds the frontend, and serves both
-//! via a proxy. This mimics the production JAMstack deployment where
-//! static frontend files talk to the WASM backend.
+//! builds the admin frontend, compiles two WASM components, and exposes
+//! them through a stable proxy port.
+//! This mimics the production deployment where a reverse proxy fronts
+//! one frontend WASI app and one backend WASI app on the same origin.
 //!
 //! Usage:
-//!   cargo run -p oidc-wasm-dev -- start    # Start DB + build WASM + build front + proxy
+//!   cargo run -p oidc-wasm-dev -- start    # Start DB + build front + build two WASM apps + proxy
 //!   cargo run -p oidc-wasm-dev -- stop     # Stop everything
 //!   cargo run -p oidc-wasm-dev -- status   # Show status
 //!   cargo run -p oidc-wasm-dev -- test     # Run smoke tests against a running WASM server
@@ -40,6 +41,7 @@ const DB_PASSWORD: &str = "postgres";
 const DB_NAME: &str = "oidc_hub";
 
 const BACKEND_WASM: &str = "openid-connect-wasi";
+const FRONTEND_WASM: &str = "oidc-admin-wasi";
 const FRONTEND_DIR: &str = "front/admin";
 const MIGRATIONS_DIR: &str = "migrations/postgresql";
 
@@ -54,20 +56,24 @@ const WASM_DEV_RUNTIME_STATE_FILE: &str = "oidc-hub-wasm-dev-runtime.json";
 struct WasmDevState {
     db_url: String,
     db_container: Option<rustainers::Container<rustainers::images::GenericImage>>,
-    wasm_port: u16,
+    backend_port: u16,
+    frontend_port: u16,
     proxy_port: u16,
-    wasmtime: Option<Child>,
+    backend_wasmtime: Option<Child>,
+    frontend_wasmtime: Option<Child>,
     proxy: Option<Child>,
 }
 
 impl WasmDevState {
-    fn new(db_url: String, wasm_port: u16, proxy_port: u16) -> Self {
+    fn new(db_url: String, backend_port: u16, frontend_port: u16, proxy_port: u16) -> Self {
         Self {
             db_url,
             db_container: None,
-            wasm_port,
+            backend_port,
+            frontend_port,
             proxy_port,
-            wasmtime: None,
+            backend_wasmtime: None,
+            frontend_wasmtime: None,
             proxy: None,
         }
     }
@@ -76,7 +82,8 @@ impl WasmDevState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct WasmDevRuntimeInfo {
     db_url: String,
-    wasm_port: u16,
+    backend_port: u16,
+    frontend_port: u16,
     proxy_port: u16,
     playwright_base_url: String,
     default_email: String,
@@ -99,7 +106,8 @@ async fn write_runtime_state(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
     let s = state.lock().await;
     let runtime = WasmDevRuntimeInfo {
         db_url: s.db_url.clone(),
-        wasm_port: s.wasm_port,
+        backend_port: s.backend_port,
+        frontend_port: s.frontend_port,
         proxy_port: s.proxy_port,
         playwright_base_url: format!("http://localhost:{}", s.proxy_port),
         default_email: default_email(),
@@ -156,6 +164,7 @@ async fn main() -> Result<()> {
     let state = Arc::new(Mutex::new(WasmDevState::new(
         String::new(),
         pick_port(8080),
+        pick_port(3001),
         pick_port(3000),
     )));
 
@@ -180,13 +189,15 @@ async fn cmd_start(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
 
     let db_url = state.lock().await.db_url.clone();
     let proxy_port = state.lock().await.proxy_port;
-    let wasm_port = state.lock().await.wasm_port;
+    let backend_port = state.lock().await.backend_port;
+    let frontend_port = state.lock().await.frontend_port;
 
     info!("═══════════════════════════════════════════════════════════════");
     info!("  WASM dev environment ready!");
     info!("");
     info!("  Proxy (use this):  http://localhost:{}", proxy_port);
-    info!("  Backend API:       http://localhost:{}", wasm_port);
+    info!("  Frontend WASI:     http://localhost:{}", frontend_port);
+    info!("  Backend WASI:      http://localhost:{}", backend_port);
     info!(
         "  Discovery:         http://localhost:{}/.well-known/openid-configuration",
         proxy_port
@@ -219,9 +230,10 @@ async fn cmd_stop(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
 
 async fn cmd_status(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
     if let Ok(runtime) = read_runtime_state() {
-        info!("DB URL:     {}", runtime.db_url);
-        info!("WASM Port:  {}", runtime.wasm_port);
-        info!("Proxy Port: {}", runtime.proxy_port);
+        info!("DB URL:        {}", runtime.db_url);
+        info!("Frontend Port: {}", runtime.frontend_port);
+        info!("Backend Port:  {}", runtime.backend_port);
+        info!("Proxy Port:    {}", runtime.proxy_port);
         info!("Playwright: {}", runtime.playwright_base_url);
         info!("DEFAULT_EMAIL: {}", runtime.default_email);
         info!("DEFAULT_PASSWORD: {}", runtime.default_password);
@@ -230,12 +242,14 @@ async fn cmd_status(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
     }
 
     let s = state.lock().await;
-    info!("DB URL:     {}", s.db_url);
-    info!("WASM Port:  {}", s.wasm_port);
-    info!("Proxy Port: {}", s.proxy_port);
-    info!("Container:  none");
-    info!("Wasmtime:   none");
-    info!("Proxy:      none");
+    info!("DB URL:        {}", s.db_url);
+    info!("Frontend Port: {}", s.frontend_port);
+    info!("Backend Port:  {}", s.backend_port);
+    info!("Proxy Port:    {}", s.proxy_port);
+    info!("Container:     none");
+    info!("Frontend WASI: none");
+    info!("Backend WASI:  none");
+    info!("Proxy:         none");
     Ok(())
 }
 
@@ -257,9 +271,10 @@ async fn prepare_environment(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
     check_tools().await?;
 
     info!("═══════════════════════════════════════════════════════════════");
-    info!("  OIDC WASM Dev Environment (JAMstack mode)");
+    info!("  OIDC WASM Dev Environment (two WASI apps behind one proxy)");
     info!("  Target: wasm32-wasip2  |  Runtime: wasmtime serve");
-    info!("  Frontend: static build served via proxy");
+    info!("  Frontend: dedicated admin WASI app with embedded assets");
+    info!("  Backend: dedicated OIDC/API WASI app");
     info!("═══════════════════════════════════════════════════════════════");
 
     let db_url = start_database(state).await?;
@@ -269,10 +284,13 @@ async fn prepare_environment(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
     }
 
     run_migrations(&db_url).await?;
-    seed_data(&db_url, 8080).await?;
+    let proxy_port = state.lock().await.proxy_port;
+    seed_data(&db_url, proxy_port).await?;
     build_frontend().await?;
-    build_wasm().await?;
-    start_wasmtime(state).await?;
+    build_wasm_package(FRONTEND_WASM).await?;
+    build_wasm_package(BACKEND_WASM).await?;
+    start_frontend_wasmtime(state).await?;
+    start_backend_wasmtime(state).await?;
     start_proxy(state).await?;
     write_runtime_state(state).await?;
 
@@ -495,17 +513,57 @@ async fn run_smoke_tests(base_url: &str) -> Result<()> {
         }
     }
 
-    match client.get(format!("{}/dist/app.js", base_url)).send().await {
+    match client.get(format!("{}/users", base_url)).send().await {
         Ok(resp) if resp.status().is_success() => {
-            info!("  ✓ GET /dist/app.js → static JS served");
-            passed += 1;
+            let body = resp.text().await.unwrap_or_default();
+            if body.contains("<!DOCTYPE html>") {
+                info!("  ✓ GET /users → SPA fallback served by embedded admin UI");
+                passed += 1;
+            } else {
+                warn!("  ✗ GET /users → missing HTML");
+                failed += 1;
+            }
         }
         Ok(resp) => {
-            warn!("  ✗ GET /dist/app.js → {}", resp.status());
+            warn!("  ✗ GET /users → {}", resp.status());
             failed += 1;
         }
         Err(e) => {
-            warn!("  ✗ GET /dist/app.js → {}", e);
+            warn!("  ✗ GET /users → {}", e);
+            failed += 1;
+        }
+    }
+
+    match client.get(format!("{}/js/index.js", base_url)).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            info!("  ✓ GET /js/index.js → embedded admin JS served");
+            passed += 1;
+        }
+        Ok(resp) => {
+            warn!("  ✗ GET /js/index.js → {}", resp.status());
+            failed += 1;
+        }
+        Err(e) => {
+            warn!("  ✗ GET /js/index.js → {}", e);
+            failed += 1;
+        }
+    }
+
+    match client
+        .get(format!("{}/style/bundle.css", base_url))
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            info!("  ✓ GET /style/bundle.css → embedded admin CSS served");
+            passed += 1;
+        }
+        Ok(resp) => {
+            warn!("  ✗ GET /style/bundle.css → {}", resp.status());
+            failed += 1;
+        }
+        Err(e) => {
+            warn!("  ✗ GET /style/bundle.css → {}", e);
             failed += 1;
         }
     }
@@ -752,7 +810,7 @@ async fn run_migrations(db_url: &str) -> Result<()> {
 
 // ─── Seed Data ──────────────────────────────────────────────────────────────
 
-async fn seed_data(db_url: &str, _proxy_port: u16) -> Result<()> {
+async fn seed_data(db_url: &str, proxy_port: u16) -> Result<()> {
     info!("Seeding dev data...");
 
     let config = wasi_pg_client::Config::from_uri(db_url).context("invalid database URL")?;
@@ -901,8 +959,8 @@ async fn seed_data(db_url: &str, _proxy_port: u16) -> Result<()> {
                 client_secret_hash: None,
                 name: "Admin UI".into(),
                 redirect_uris: vec![
-                    "http://localhost:3000/callback".to_string(),
-                    "http://localhost:3000/admin/callback".to_string(),
+                    format!("http://localhost:{}/callback", proxy_port),
+                    format!("http://localhost:{}/admin/callback", proxy_port),
                 ],
                 allowed_scopes: vec![
                     "openid".into(),
@@ -1062,14 +1120,14 @@ async fn seed_data(db_url: &str, _proxy_port: u16) -> Result<()> {
 
 // ─── WASM Build ─────────────────────────────────────────────────────────────
 
-async fn build_wasm() -> Result<()> {
-    info!("Building WASM component (wasm32-wasip2)...");
+async fn build_wasm_package(package: &str) -> Result<()> {
+    info!("Building WASM component `{package}` (wasm32-wasip2)...");
 
     let build = Command::new("cargo")
         .args([
             "build",
             "-p",
-            BACKEND_WASM,
+            package,
             "--target",
             "wasm32-wasip2",
             "--release",
@@ -1077,26 +1135,36 @@ async fn build_wasm() -> Result<()> {
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .spawn()
-        .context("failed to build WASM component")?;
+        .with_context(|| format!("failed to build WASM component `{package}`"))?;
 
     let output = build.wait_with_output().await?;
     if !output.status.success() {
-        anyhow::bail!("WASM build failed (exit code: {:?})", output.status.code());
+        anyhow::bail!(
+            "WASM build failed for `{package}` (exit code: {:?})",
+            output.status.code()
+        );
     }
-    info!("WASM component built.");
+    info!("WASM component `{package}` built.");
     Ok(())
+}
+
+fn wasm_component_path(package: &str) -> String {
+    format!(
+        "target/wasm32-wasip2/release/{}.wasm",
+        package.replace('-', "_")
+    )
 }
 
 // ─── Wasmtime Serve ─────────────────────────────────────────────────────────
 
-async fn start_wasmtime(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
+async fn start_backend_wasmtime(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
     let port = {
         let s = state.lock().await;
-        s.wasm_port
+        s.backend_port
     };
-    let db_url = {
+    let (db_url, proxy_port) = {
         let s = state.lock().await;
-        s.db_url.clone()
+        (s.db_url.clone(), s.proxy_port)
     };
 
     let encryption_key =
@@ -1104,26 +1172,15 @@ async fn start_wasmtime(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
     let pairwise_salt =
         "0000000000000000000000000000000000000000000000000000000000000000".to_string();
 
-    // Generate deterministic dev signing keys so all WASM instances share the
+    // Generate deterministic dev signing keys so all backend WASM instances share the
     // same keys. Without this, wasmtime serve creates fresh instances per
     // request and random startup keys break token verification (SSO fails).
     let (rsa_pem, ed25519_pem) = generate_dev_signing_keys().await?;
 
-    let wasm_path = format!(
-        "target/wasm32-wasip2/release/{}.wasm",
-        BACKEND_WASM.replace("-", "_")
-    );
+    let wasm_path = wasm_component_path(BACKEND_WASM);
 
-    info!("Starting wasmtime serve on port {port}...");
+    info!("Starting backend WASM via wasmtime serve on port {port}...");
 
-    // NOTE: --max-instance-reuse-count=1000 keeps the same WASM instance alive
-    // across requests so the random JWT signing keys generated at startup are
-    // reused. Without this, every request gets a fresh instance with new keys,
-    // and tokens issued by instance N fail verification on instance N+1.
-    //
-    // PRODUCTION: Do NOT rely on instance reuse. Instead set OIDC_SIGNING_KEY
-    // and OIDC_ED25519_KEY env vars so every instance loads the same
-    // deterministic keys. See JwtTokenService::new for key-generation commands.
     let mut cmd = Command::new("wasmtime");
     cmd.arg("serve")
         .arg("--addr")
@@ -1161,7 +1218,7 @@ async fn start_wasmtime(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
         .arg("--env")
         .arg("OIDC_ED25519_KID=ed-key-1")
         .arg("--env")
-        .arg(format!("OIDC_ISSUER=http://localhost:{}", port))
+        .arg(format!("OIDC_ISSUER=http://localhost:{}", proxy_port))
         .arg("--env")
         .arg("OIDC_RATE_LIMIT_MAX=1000")
         .arg("--env")
@@ -1172,29 +1229,86 @@ async fn start_wasmtime(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    let mut child = cmd.spawn().context("failed to start wasmtime serve")?;
+    let mut child = cmd
+        .spawn()
+        .context("failed to start backend wasmtime serve")?;
 
     let stderr = child.stderr.take().unwrap();
     let stdout = child.stdout.take().unwrap();
-    tokio::spawn(stream_logs("wasmtime", stderr));
-    tokio::spawn(stream_logs("wasmtime-out", stdout));
+    tokio::spawn(stream_logs("backend-wasm", stderr));
+    tokio::spawn(stream_logs("backend-wasm-out", stdout));
 
     let health_url = format!("http://127.0.0.1:{port}/health");
     wait_for_http(&health_url, 30).await?;
 
     {
         let mut s = state.lock().await;
-        s.wasmtime = Some(child);
+        s.backend_wasmtime = Some(child);
     }
 
-    info!("wasmtime serve ready at http://localhost:{port}");
+    info!("Backend WASM ready at http://localhost:{port}");
+    Ok(())
+}
+
+async fn start_frontend_wasmtime(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
+    let port = {
+        let s = state.lock().await;
+        s.frontend_port
+    };
+
+    let wasm_path = wasm_component_path(FRONTEND_WASM);
+
+    info!("Starting frontend WASM via wasmtime serve on port {port}...");
+
+    let mut cmd = Command::new("wasmtime");
+    cmd.arg("serve")
+        .arg("--addr")
+        .arg(format!("{BIND_ADDRESS}:{port}"))
+        .arg("--max-instance-reuse-count")
+        .arg("1000")
+        .arg("--idle-instance-timeout")
+        .arg("300s")
+        .arg("-S")
+        .arg("cli=y")
+        .arg("-S")
+        .arg("inherit-env=y")
+        .arg("-S")
+        .arg("inherit-network=y")
+        .arg("-S")
+        .arg("tcp=y")
+        .arg("-S")
+        .arg("allow-ip-name-lookup=y")
+        .arg("--env")
+        .arg("RUST_LOG=trace")
+        .arg(&wasm_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = cmd
+        .spawn()
+        .context("failed to start frontend wasmtime serve")?;
+
+    let stderr = child.stderr.take().unwrap();
+    let stdout = child.stdout.take().unwrap();
+    tokio::spawn(stream_logs("frontend-wasm", stderr));
+    tokio::spawn(stream_logs("frontend-wasm-out", stdout));
+
+    let url = format!("http://127.0.0.1:{port}/");
+    wait_for_http(&url, 30).await?;
+
+    {
+        let mut s = state.lock().await;
+        s.frontend_wasmtime = Some(child);
+    }
+
+    info!("Frontend WASM ready at http://localhost:{port}");
     Ok(())
 }
 
 // ─── Frontend Build ─────────────────────────────────────────────────────────
 
 async fn build_frontend() -> Result<()> {
-    info!("Building frontend (JAMstack static files)...");
+    info!("Building frontend for compile-time embedding...");
 
     let frontend_dir = std::path::Path::new(FRONTEND_DIR);
     if !frontend_dir.exists() {
@@ -1241,9 +1355,9 @@ async fn build_frontend() -> Result<()> {
 // ─── Proxy ──────────────────────────────────────────────────────────────────
 
 async fn start_proxy(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
-    let (wasm_port, proxy_port) = {
+    let (backend_port, frontend_port, proxy_port) = {
         let s = state.lock().await;
-        (s.wasm_port, s.proxy_port)
+        (s.backend_port, s.frontend_port, s.proxy_port)
     };
 
     info!("Starting proxy on port {proxy_port}...");
@@ -1280,61 +1394,12 @@ nodePaths.forEach(p => {{ if (!module.paths.includes(p)) module.paths.unshift(p)
 
 const http = require('http');
 const httpProxy = require('http-proxy');
-const fs = require('fs');
-const url = require('url');
 
 const proxy = httpProxy.createProxyServer({{}});
 const PROXY_PORT = {proxy_port};
 const BACKEND_PORT = {backend_port};
+const FRONTEND_PORT = {frontend_port};
 const BIND_ADDRESS = '{bind}';
-const FRONTEND_DIR = '{frontend_dir}';
-
-// MIME type map for static files
-const mimeTypes = {{
-    '.html': 'text/html',
-    '.js': 'application/javascript',
-    '.css': 'text/css',
-    '.json': 'application/json',
-    '.png': 'image/png',
-    '.jpg': 'image/jpeg',
-    '.gif': 'image/gif',
-    '.svg': 'image/svg+xml',
-    '.ico': 'image/x-icon',
-    '.woff': 'font/woff',
-    '.woff2': 'font/woff2',
-    '.ttf': 'font/ttf',
-}};
-
-function serveStatic(req, res, filePath) {{
-    const ext = path.extname(filePath).toLowerCase();
-    const contentType = mimeTypes[ext] || 'application/octet-stream';
-
-    fs.readFile(filePath, (err, data) => {{
-        if (err) {{
-            if (err.code === 'ENOENT') {{
-                // SPA fallback: serve index.html for unknown paths
-                const indexPath = path.join(FRONTEND_DIR, 'index.html');
-                fs.readFile(indexPath, (err2, indexData) => {{
-                    if (err2) {{
-                        res.writeHead(404);
-                        res.end('Not found');
-                        return;
-                    }}
-                    res.setHeader('Content-Type', 'text/html');
-                    res.writeHead(200);
-                    res.end(indexData);
-                }});
-                return;
-            }}
-            res.writeHead(500);
-            res.end('Server error');
-            return;
-        }}
-        res.setHeader('Content-Type', contentType);
-        res.writeHead(200);
-        res.end(data);
-    }});
-}}
 
 const server = http.createServer((req, res) => {{
     if (req.method === 'OPTIONS') {{
@@ -1347,31 +1412,34 @@ const server = http.createServer((req, res) => {{
         return;
     }}
 
-    const isApi = req.url.startsWith('/api/') || req.url.startsWith('/oidc/') || req.url.startsWith('/.well-known/') || req.url.startsWith('/health') || req.url.startsWith('/realms/');
-
-    if (isApi) {{
-        const target = `http://127.0.0.1:${{BACKEND_PORT}}`;
-        console.log(`[proxy] ${{req.method}} ${{req.url}} -> BACKEND (${{target}})`);
-        proxy.web(req, res, {{ target }}, (err) => {{
-            console.error('Proxy error:', err.message);
-            if (!res.headersSent) {{
-                res.writeHead(502);
-                res.end('Bad Gateway');
-            }}
-        }});
-    }} else {{
-        // Serve static frontend files from dist/
-        let filePath = path.join(FRONTEND_DIR, req.url === '/' ? 'index.html' : req.url);
-        console.log(`[proxy] ${{req.method}} ${{req.url}} -> STATIC (${{filePath}})`);
-        serveStatic(req, res, filePath);
-    }}
+    const realmSegments = req.url.split('?')[0].split('/').filter(Boolean);
+    const isRealmBackendRoute = realmSegments[0] === 'realms'
+        && realmSegments.length >= 3
+        && ['login', '.well-known', 'protocol'].includes(realmSegments[2]);
+    const isBackend = req.url.startsWith('/api/')
+        || req.url.startsWith('/oidc/')
+        || req.url.startsWith('/.well-known/')
+        || req.url.startsWith('/health')
+        || isRealmBackendRoute;
+    const target = isBackend ? `http://127.0.0.1:${{BACKEND_PORT}}` : `http://127.0.0.1:${{FRONTEND_PORT}}`;
+    console.log(`[proxy] ${{req.method}} ${{req.url}} -> ${{isBackend ? 'BACKEND' : 'FRONTEND'}} (${{target}})`);
+    proxy.web(req, res, {{ target }}, (err) => {{
+        console.error('Proxy error:', err.message);
+        if (!res.headersSent) {{
+            res.writeHead(502);
+            res.end('Bad Gateway');
+        }}
+    }});
 }});
 
-// Add CORS headers to every proxied response
 proxy.on('proxyRes', (proxyRes, req, res) => {{
     proxyRes.headers['access-control-allow-origin'] = '*';
     proxyRes.headers['access-control-allow-methods'] = 'GET, POST, PUT, DELETE, OPTIONS';
     proxyRes.headers['access-control-allow-headers'] = 'Content-Type, Authorization, X-API-Key, X-CSRF-Token';
+}});
+
+server.on('upgrade', (req, socket, head) => {{
+    proxy.ws(req, socket, head, {{ target: `http://127.0.0.1:${{FRONTEND_PORT}}` }});
 }});
 
 proxy.on('error', (err, req, res) => {{
@@ -1383,19 +1451,14 @@ proxy.on('error', (err, req, res) => {{
 
 server.listen(PROXY_PORT, BIND_ADDRESS, () => {{
     console.log(`Proxy running at http://${{BIND_ADDRESS}}:${{PROXY_PORT}}`);
-    console.log(`Serving static files from ${{FRONTEND_DIR}}`);
-    console.log(`Proxying API to http://127.0.0.1:${{BACKEND_PORT}}`);
+    console.log(`Routing frontend to http://127.0.0.1:${{FRONTEND_PORT}}`);
+    console.log(`Routing backend to http://127.0.0.1:${{BACKEND_PORT}}`);
 }});
 "#,
         proxy_port = proxy_port,
-        backend_port = wasm_port,
+        backend_port = backend_port,
+        frontend_port = frontend_port,
         bind = BIND_ADDRESS,
-        frontend_dir = std::path::Path::new(FRONTEND_DIR)
-            .join("dist")
-            .canonicalize()
-            .unwrap_or_else(|_| std::path::Path::new(FRONTEND_DIR).join("dist"))
-            .to_string_lossy()
-            .replace("\\", "/")
     );
 
     let proxy_path = std::env::temp_dir().join("oidc-wasm-proxy.js");
@@ -1444,9 +1507,14 @@ async fn shutdown_all(state: &Arc<Mutex<WasmDevState>>) {
         let _ = proxy.kill().await;
     }
 
-    if let Some(mut wasmtime) = s.wasmtime.take() {
-        info!("Stopping wasmtime...");
-        let _ = wasmtime.kill().await;
+    if let Some(mut frontend_wasmtime) = s.frontend_wasmtime.take() {
+        info!("Stopping frontend WASM...");
+        let _ = frontend_wasmtime.kill().await;
+    }
+
+    if let Some(mut backend_wasmtime) = s.backend_wasmtime.take() {
+        info!("Stopping backend WASM...");
+        let _ = backend_wasmtime.kill().await;
     }
 
     if s.db_container.take().is_some() {

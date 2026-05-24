@@ -10,7 +10,7 @@ Operational scripts for backup, deployment, rollback, and coverage.
 | `deploy.sh` | Build + deploy + verify | `./scripts/deploy.sh` |
 | `rollback.sh` | Restore previous WASM version | `./scripts/rollback.sh --list` |
 | `check-coverage.sh` | Measure code coverage | `./scripts/check-coverage.sh` |
-| `package-release.sh` | Build a release bundle with the WASM artifact and minified frontend | `./scripts/package-release.sh --version v0.1.0` |
+| `package-release.sh` | Build a release bundle with both WASM artifacts and the minified frontend | `./scripts/package-release.sh --version v0.1.0` |
 
 ---
 
@@ -113,6 +113,7 @@ wasm/
 
 Creates a release bundle containing:
 
+- `wasm/oidc_admin_wasi.wasm`
 - `wasm/openid_connect_wasi.wasm`
 - `front/admin/dist/` (production build with minified JS and CSS)
 - deployment helper scripts

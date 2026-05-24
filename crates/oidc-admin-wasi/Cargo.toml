@@ -1,0 +1,30 @@
+[package]
+name = "oidc-admin-wasi"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "oidc_admin_wasi"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "oidc-admin-wasi"
+path = "src/main.rs"
+
+[dependencies]
+axum = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wstd = { workspace = true }
+wstd-axum = { workspace = true }
+wasi = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "signal"] }
+axum = { workspace = true, features = ["tokio", "http1"] }

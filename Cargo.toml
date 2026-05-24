@@ -6,6 +6,7 @@ members = [
     "crates/oidc-oidc",
     "crates/oidc-apikey",
     "crates/openid-connect-wasi",
+    "crates/oidc-admin-wasi",
     "crates/oidc-migrate",
     "crates/oidc-dev",
     "crates/oidc-wasm-dev",
@@ -26,6 +27,7 @@ oidc-repository = { version = "0.1.0", path = "crates/oidc-repository" }
 oidc-oidc = { version = "0.1.0", path = "crates/oidc-oidc" }
 oidc-apikey = { version = "0.1.0", path = "crates/oidc-apikey" }
 openid-connect-wasi = { version = "0.1.0", path = "crates/openid-connect-wasi" }
+oidc-admin-wasi = { version = "0.1.0", path = "crates/oidc-admin-wasi" }
 
 # Async / WASI
 wstd = "0.6"

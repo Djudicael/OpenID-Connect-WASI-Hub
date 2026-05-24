@@ -68,9 +68,6 @@ jobs:
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
 
-      - name: Run Rust tests
-        run: cargo test --workspace --exclude integration-tests
-
       - name: Install frontend dependencies
         working-directory: ${{ env.FRONTEND_DIR }}
         run: npm ci
@@ -79,8 +76,13 @@ jobs:
         working-directory: ${{ env.FRONTEND_DIR }}
         run: npm run build
 
-      - name: Build release WASM artifact
-        run: cargo build -p openid-connect-wasi --target wasm32-wasip2 --release
+      - name: Run Rust tests
+        run: cargo test --workspace --exclude integration-tests
+
+      - name: Build release WASM artifacts
+        run: |
+          cargo build -p oidc-admin-wasi --target wasm32-wasip2 --release
+          cargo build -p openid-connect-wasi --target wasm32-wasip2 --release
 
       - name: Upload frontend package
         uses: actions/upload-artifact@v4
@@ -89,7 +91,14 @@ jobs:
           path: front/admin/dist
           if-no-files-found: error
 
-      - name: Upload WASM package
+      - name: Upload frontend WASM package
+        uses: actions/upload-artifact@v4
+        with:
+          name: oidc-admin-wasi-wasm
+          path: target/wasm32-wasip2/release/oidc_admin_wasi.wasm
+          if-no-files-found: error
+
+      - name: Upload backend WASM package
         uses: actions/upload-artifact@v4
         with:
           name: openid-connect-wasi-wasm
@@ -137,8 +146,20 @@ jobs:
           path: dist/packages
           if-no-files-found: error
 
+      - name: Upload standalone release WASM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openid-connect-wasi-release-wasm
+          path: |
+            target/wasm32-wasip2/release/oidc_admin_wasi.wasm
+            target/wasm32-wasip2/release/openid_connect_wasi.wasm
+          if-no-files-found: error
+
       - name: Publish GitHub release assets
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/packages/openid-connect-wasi-${{ env.PACKAGE_VERSION }}.tar.gz
+          files: |
+            dist/packages/openid-connect-wasi-${{ env.PACKAGE_VERSION }}.tar.gz
+            target/wasm32-wasip2/release/oidc_admin_wasi.wasm
+            target/wasm32-wasip2/release/openid_connect_wasi.wasm

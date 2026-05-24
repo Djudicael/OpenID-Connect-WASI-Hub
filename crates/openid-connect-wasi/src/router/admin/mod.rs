@@ -38,12 +38,9 @@ pub fn conflict() -> Response {
     (StatusCode::CONFLICT, Json(json!({"error": "duplicate"}))).into_response()
 }
 
-/// Build the admin sub-router.
+/// Build the admin API sub-router.
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/admin", get(admin_index_handler))
-        .route("/admin/", get(admin_index_handler))
-        .route("/admin/{*path}", get(admin_index_handler))
         .route("/api/stats", get(audit::stats_handler))
         .route("/api/users", get(users::list))
         .route("/api/users", post(users::create))
@@ -137,12 +134,6 @@ pub fn router() -> Router<AppState> {
         .layer(axum::middleware::from_fn(
             crate::middleware::csrf::csrf_middleware,
         ))
-}
-
-async fn admin_index_handler(
-    _path: axum::extract::Path<String>,
-) -> axum::response::Html<&'static str> {
-    axum::response::Html(include_str!("../../../../../front/admin/index.html"))
 }
 
 pub fn admin_or_forbidden(_auth: &AdminAuth) -> Option<Response> {

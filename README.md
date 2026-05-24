@@ -57,7 +57,7 @@ cargo run -p oidc-dev -- start
 ### 2. WASM Development
 
 ```bash
-# Start everything: PostgreSQL + WASM build + wasmtime serve
+# Start everything: PostgreSQL + frontend build + two WASM builds + proxy
 cargo run -p oidc-wasm-dev -- start
 
 # Open the proxy URL printed by oidc-wasm-dev
@@ -88,9 +88,10 @@ cargo build --release -p openid-connect-wasi --target wasm32-wasip2
 | `crates/oidc-repository/` | PostgreSQL via `pg_client` (WASM) or `tokio-postgres` (native). |
 | `crates/oidc-oidc/` | OIDC/OAuth2 endpoints (Axum). |
 | `crates/oidc-apikey/` | API key service + Axum extractor. |
-| `crates/openid-connect-wasi/` | Server binary. Dual entry: `#[wstd_axum::http_server]` for WASM, `#[tokio::main]` for native. |
+| `crates/openid-connect-wasi/` | Backend server binary. Dual entry: `#[wstd_axum::http_server]` for WASM, `#[tokio::main]` for native. |
+| `crates/oidc-admin-wasi/` | Frontend WASI server for the admin SPA. Serves embedded HTML/CSS/JS. |
 | `crates/oidc-dev/` | Native dev orchestrator (DB + backend + frontend + proxy). |
-| `crates/oidc-wasm-dev/` | WASM dev orchestrator (DB + `wasmtime serve`). |
+| `crates/oidc-wasm-dev/` | WASM dev orchestrator (DB + frontend WASI + backend WASI + proxy). |
 | `front/admin/` | Management UI. Native Web Components + `lit-html`. Built with `esbuild`. |
 | `tests/integration/` | Integration tests against real PostgreSQL + HTTP server. |
 
@@ -189,6 +190,18 @@ This matches the current frontend/runtime assumptions:
 - browser admin requests use `credentials: 'same-origin'`
 - the frontend CSP is same-origin by default
 - CSRF handling is designed around same-origin browser/admin traffic
+
+### Two-WASI deployment mode
+
+If you do not want to host `front/admin/dist/` on S3/CDN/object storage, you can run the browser-facing stack as **two separate WASI apps** behind one reverse proxy:
+
+- a dedicated **frontend WASI** app serves the built admin SPA from compile-time embedded assets
+- a dedicated **backend WASI** app serves `/api`, `/oidc`, `/.well-known`, `/health`, and protocol `realms/*` routes
+- build the frontend first with `npm --prefix front/admin run build`
+- compile the frontend WASI and backend WASI after that; the frontend binary embeds `front/admin/dist/index.html`, `dist/js/index.js`, and the bundled CSS at compile time
+- at runtime, the frontend WASI serves `/`, `/admin`, `/js/index.js`, `/style/*`, and SPA fallback routes directly from memory, with no runtime filesystem access
+- the reverse proxy keeps everything on one browser origin while routing frontend paths to the frontend WASI and protocol/API paths to the backend WASI
+- see `deploy/proxy-cookbook.md` for example configurations for Nginx, Caddy, Traefik, and HAProxy
 
 ### Separate-origin frontend/API deployments
 

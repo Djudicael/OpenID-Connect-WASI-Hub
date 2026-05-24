@@ -5,7 +5,7 @@ The project provides **two** development orchestrators:
 | Crate | Runtime | Use Case |
 |-------|---------|----------|
 | `oidc-dev` | Native (`cargo run`) | Full stack with frontend dev server + proxy |
-| `oidc-wasm-dev` | WASM (`wasmtime serve`) | Test the closest local approximation of the recommended same-origin proxy deployment |
+| `oidc-wasm-dev` | WASM (`wasmtime serve`) | Test the two-WASI deployment where a proxy fronts a frontend WASI app and a backend WASI app on one origin |
 
 Both handle PostgreSQL container lifecycle, migrations, seed data, and dev/E2E runtime metadata automatically.
 
@@ -32,7 +32,7 @@ cp .env.template .env
 # Podman (for PostgreSQL container)
 sudo apt-get update && sudo apt-get install -y podman
 
-# Node.js (for frontend build + proxy — oidc-dev only)
+# Node.js (for frontend build + proxy scripts)
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt-get install -y nodejs
 
@@ -89,17 +89,17 @@ The proxy eliminates CORS issues by serving both frontend and backend from the s
 
 ---
 
-## Option B: `oidc-wasm-dev` (WASI Preview 2 + JAMstack)
+## Option B: `oidc-wasm-dev` (WASI Preview 2 + two WASI apps)
 
-Best for testing the **recommended same-origin proxy deployment posture**: WASM backend + pre-built static frontend served by a proxy. This is production-like for the browser model the project currently tests most heavily.
+Best for testing the **recommended same-origin browser posture** with a real WASI Preview 2 deployment: the admin frontend is built first, embedded into a dedicated frontend WASI binary, and then served behind the same proxy as the dedicated backend WASI app.
 
 ```bash
 cd openid_connect_wasi
 
-# Start DB + build WASM + build frontend + proxy
+# Start DB + build frontend + build both WASM apps + proxy
 cargo run -p oidc-wasm-dev -- start
 
-# Run smoke tests against the running proxy (frontend + backend)
+# Run smoke tests against the running proxy (frontend WASI + backend WASI)
 cargo run -p oidc-wasm-dev -- test
 
 # Or do the full one-shot flow: start → smoke tests → shutdown
@@ -118,12 +118,13 @@ cargo run -p oidc-wasm-dev -- stop
 ### Architecture
 
 ```
-Browser → Proxy (port 3000) → Backend (wasmtime serve, auto port)  /api/*, /oidc/*, /.well-known/*, /health, /realms/*
-                      ↘ Static files (front/admin/dist/)  /* (SPA fallback)
-                              ↓
-                        WASM component (openid_connect_wasi.wasm)
-                              ↓
-                        PostgreSQL container
+Browser → Proxy (port 3000)
+           ├── Frontend WASI (auto port)
+           │      └── embedded admin UI + SPA fallback
+           └── Backend WASI (auto port)
+                  └── /api/* + /oidc/* + /.well-known/* + /health + /realms/*
+                                 ↓
+                           PostgreSQL container
 ```
 
 ### URLs
@@ -131,10 +132,11 @@ Browser → Proxy (port 3000) → Backend (wasmtime serve, auto port)  /api/*, /
 | Service | URL | Description |
 |---------|-----|-------------|
 | **Proxy (use this)** | http://localhost:3000 | Single entrypoint — open in browser |
-| Backend API | http://localhost:<port> | Direct wasmtime serve port (auto-assigned) |
-| OIDC Discovery | http://localhost:3000/.well-known/openid-configuration | OIDC metadata |
-| Realm Discovery | http://localhost:3000/realms/master/.well-known/openid-configuration | Per-realm metadata |
-| Admin UI | http://localhost:3000 | Static SPA served from `front/admin/dist/` |
+| Frontend WASI | http://localhost:<port> | Direct frontend wasmtime port (auto-assigned) |
+| Backend WASI | http://localhost:<port> | Direct backend wasmtime port (auto-assigned) |
+| OIDC Discovery | http://localhost:3000/.well-known/openid-configuration | OIDC metadata via proxy |
+| Realm Discovery | http://localhost:3000/realms/master/.well-known/openid-configuration | Per-realm metadata via proxy |
+| Admin UI | http://localhost:3000 | SPA served by the dedicated frontend WASI app |
 
 ### Why `wasmtime serve`?
 
@@ -143,21 +145,27 @@ Browser → Proxy (port 3000) → Backend (wasmtime serve, auto port)  /api/*, /
 - The binary is a **WASM component** (`.wasm`), not a native executable
 - Validates that all I/O is WASI-compliant (no filesystem, no threads, no process spawning)
 
-### JAMstack Deployment Pattern
+### Two-WASI deployment pattern
 
-This setup mirrors production deployment:
+This setup mirrors a deployment where the browser talks to one origin and the proxy routes to separate WASI components for UI and API:
 
 ```
-Production CDN (static files)          Edge Runtime (WASM)
-         ↓                                        ↓
-    index.html                            wasmtime serve
-    dist/app.js                                 ↓
-    dist/styles.css                       PostgreSQL
-         ↓
-    AJAX calls → /api/*, /oidc/*, /realms/*
+Browser / Gateway
+        ↓
+   reverse proxy
+     ├─ frontend paths ──> oidc_admin_wasi.wasm
+     │                     ├─ embedded index.html
+     │                     ├─ embedded /js/index.js
+     │                     └─ embedded /style/bundle.css
+     └─ API/OIDC paths ──> openid_connect_wasi.wasm
+                           └─ OIDC/API handlers
+                                   ↓
+                              PostgreSQL
 ```
 
-The proxy in `oidc-wasm-dev` acts like a CDN edge node: static files are served directly, API calls are forwarded to the WASM backend.
+The proxy in `oidc-wasm-dev` forwards browser traffic to the appropriate WASM app; it does not serve `front/admin/dist/` itself.
+
+For production proxy examples, see `deploy/proxy-cookbook.md`.
 
 Important posture note:
 
@@ -186,9 +194,9 @@ Important posture note:
 
 | Command | Description |
 |---------|-------------|
-| `start` | PostgreSQL → migrations → seed data → build WASM → `wasmtime serve` |
-| `stop` | Kill wasmtime and remove the PostgreSQL container |
-| `status` | Show DB URL, WASM port, and process status |
+| `start` | PostgreSQL → migrations → seed data → build frontend → build frontend WASI → build backend WASI → start both via `wasmtime serve` → proxy |
+| `stop` | Kill both WASI runtimes and remove the PostgreSQL container |
+| `status` | Show DB URL, frontend port, backend port, and proxy status |
 | `test` | Run smoke tests against an already running WASM server |
 | `smoke` | One-shot WASI validation: start stack → run smoke tests → shutdown |
 | `e2e` | Run Playwright E2E against the running WASM proxy, automatically injecting `PLAYWRIGHT_BASE_URL`, `DEFAULT_EMAIL`, and `DEFAULT_PASSWORD` |
@@ -360,7 +368,6 @@ wsl --shutdown
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OIDC_SERVER_PORT` | auto | WASM server port (auto-detected if unset) |
 | `OIDC_PROXY_PORT` | auto | Proxy port (auto-detected if unset) |
 | `OIDC_DATABASE_URL` | — | Direct DB URL (skip container start) |
 
@@ -382,10 +389,11 @@ wsl --shutdown
 
 1. **Container lifecycle** — Same as `oidc-dev`.
 2. **Migrations** — Same as `oidc-dev`.
-3. **Seed data** — Same as `oidc-dev`, including `DEFAULT_EMAIL` / `DEFAULT_PASSWORD` for the admin user.
-4. **WASM build** — Runs `cargo build -p openid-connect-wasi --target wasm32-wasip2 --release`.
-5. **Serve** — Starts `wasmtime serve` with the built `.wasm` component, passing all required environment variables (`OIDC_DATABASE_URL`, `OIDC_ENCRYPTION_KEY`, etc.) via `--env` flags.
-6. **Runtime metadata** — Writes a temp runtime-state file containing the proxy URL plus `DEFAULT_EMAIL` / `DEFAULT_PASSWORD`, which the `e2e` command reuses to launch Playwright against the correct running WASM stack.
+3. **Seed data** — Same as `oidc-dev`, including `DEFAULT_EMAIL` / `DEFAULT_PASSWORD` for the admin user and proxy-origin redirect URIs for the `admin-ui` client.
+4. **Frontend build** — Runs `npm install` + `node buildJs.js` in `front/admin/` so the generated `dist/` assets exist for compile-time embedding.
+5. **WASM builds** — Runs separate `cargo build` commands for `oidc-admin-wasi` and `openid-connect-wasi` targeting `wasm32-wasip2 --release`.
+6. **Serve + proxy** — Starts two `wasmtime serve` processes: one for the frontend WASI and one for the backend WASI, then starts a small Node proxy that routes browser traffic between them.
+7. **Runtime metadata** — Writes a temp runtime-state file containing the proxy URL plus `DEFAULT_EMAIL` / `DEFAULT_PASSWORD`, which the `e2e` command reuses to launch Playwright against the correct running WASM stack.
 
 ---
 
@@ -450,9 +458,9 @@ cargo build -p openid-connect-wasi --target wasm32-wasip2 --release
 | Concern | `oidc-dev` | `oidc-wasm-dev` |
 |---------|------------|-----------------|
 | Runtime | Native Rust binary (`cargo run`) | WASM component (`wasmtime serve`) |
-| Frontend | Dev server with hot reload | Pre-built static files (JAMstack) |
-| Proxy | Included (CORS elimination) | Included (static + API routing) |
+| Frontend | Dev server with hot reload | Dedicated frontend WASI app with embedded assets |
+| Proxy | Included (CORS elimination) | Included (stable browser origin to two WASI apps) |
 | Use case | Day-to-day development | Production-like deployment testing |
-| Filesystem | Full access | Zero access — validates WASI compliance |
+| Filesystem | Full access | Zero runtime access in the WASI apps — validates WASI compliance |
 | Threads | Full access | No threads — validates single-threaded model |
-| Deployment model | Monolithic | CDN (static) + Edge Runtime (WASM) |
+| Deployment model | Monolithic | Reverse proxy + frontend WASI + backend WASI |
