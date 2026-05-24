@@ -85,21 +85,21 @@ jobs:
           cargo build -p openid-connect-wasi --target wasm32-wasip2 --release
 
       - name: Upload frontend package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: admin-frontend-dist
           path: front/admin/dist
           if-no-files-found: error
 
       - name: Upload frontend WASM package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: oidc-admin-wasi-wasm
           path: target/wasm32-wasip2/release/oidc_admin_wasi.wasm
           if-no-files-found: error
 
       - name: Upload backend WASM package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openid-connect-wasi-wasm
           path: target/wasm32-wasip2/release/openid_connect_wasi.wasm
@@ -140,14 +140,14 @@ jobs:
         run: bash scripts/package-release.sh --version "${PACKAGE_VERSION}"
 
       - name: Upload release bundle artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openid-connect-wasi-release-bundle
           path: dist/packages
           if-no-files-found: error
 
       - name: Upload standalone release WASM artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openid-connect-wasi-release-wasm
           path: |
