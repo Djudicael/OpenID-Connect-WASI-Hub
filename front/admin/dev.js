@@ -53,7 +53,8 @@ Canonical: ${req.protocol}://${req.get('host')}/.well-known/security.txt
 });
 
 // SPA fallback — serve index.html only for non-file routes (not for .js, .css, etc.)
-app.get('/*', (req, res) => {
+// Express 5 requires named wildcards; `/{*path}` matches both `/` and nested routes.
+app.get('/{*path}', (req, res) => {
   if (/\.(js|css|json|png|jpg|jpeg|gif|ico|svg|woff2?|ttf|eot)$/i.test(req.path)) {
     return res.status(404).send('Not Found');
   }
