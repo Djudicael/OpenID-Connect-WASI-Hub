@@ -14,12 +14,12 @@
     "e2e:install": "playwright install chromium"
   },
   "dependencies": {
-    "esbuild": "^0.25",
+    "esbuild": "^0.28",
     "lit-html": "^3"
   },
   "devDependencies": {
-    "@playwright/test": "^1.44",
-    "express": "^4",
+    "@playwright/test": "^1.60",
+    "express": "^5",
     "nodemon": "^3",
     "playwright": "^1.44"
   }
