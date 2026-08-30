@@ -52,7 +52,7 @@ impl std::fmt::Debug for ApiKey {
 impl ApiKey {
     /// Check if the key is expired.
     pub fn is_expired(&self) -> bool {
-        self.expires_at.map_or(false, |exp| Utc::now() > exp)
+        self.expires_at.is_some_and(|exp| Utc::now() > exp)
     }
 
     /// Check if the key is active (not revoked, not expired).

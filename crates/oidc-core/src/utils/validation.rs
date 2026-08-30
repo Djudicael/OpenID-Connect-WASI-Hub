@@ -81,7 +81,7 @@ pub fn is_strong_password(password: &str) -> bool {
 /// - must not start or end with a space or hyphen.
 pub fn is_valid_username(username: &str) -> bool {
     let len = username.len();
-    if len < 2 || len > 100 {
+    if !(2..=100).contains(&len) {
         return false;
     }
     // Must not start or end with space or hyphen

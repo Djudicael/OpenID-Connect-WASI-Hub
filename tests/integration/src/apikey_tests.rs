@@ -139,7 +139,7 @@ async fn test_create_api_key() {
 
     let resp = app
         .client()
-        .post(&format!("{}/api/keys", app.url()))
+        .post(format!("{}/api/keys", app.url()))
         .header("X-API-Key", &admin_raw_key)
         .json(&json!({
             "realm_id": app.master_realm_id().to_string(),
@@ -178,7 +178,7 @@ async fn test_list_api_keys() {
 
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/api/keys?realm_id={}",
             app.url(),
             app.master_realm_id()
@@ -210,7 +210,7 @@ async fn test_get_api_key_by_id() {
 
     let resp = app
         .client()
-        .get(&format!("{}/api/keys/{}", app.url(), key_model.id))
+        .get(format!("{}/api/keys/{}", app.url(), key_model.id))
         .header("X-API-Key", &admin_raw_key)
         .send()
         .await
@@ -234,7 +234,7 @@ async fn test_delete_api_key() {
     // Revoke (delete) the key.
     let resp = app
         .client()
-        .delete(&format!("{}/api/keys/{}", app.url(), key_model.id))
+        .delete(format!("{}/api/keys/{}", app.url(), key_model.id))
         .header("X-API-Key", &admin_raw_key)
         .send()
         .await
@@ -248,7 +248,7 @@ async fn test_delete_api_key() {
     // Subsequent GET should return 404 (key is revoked, not found by active query).
     let resp = app
         .client()
-        .get(&format!("{}/api/keys/{}", app.url(), key_model.id))
+        .get(format!("{}/api/keys/{}", app.url(), key_model.id))
         .header("X-API-Key", &admin_raw_key)
         .send()
         .await
@@ -268,7 +268,7 @@ async fn test_rotate_api_key() {
     // Rotate the key.
     let resp = app
         .client()
-        .post(&format!("{}/api/keys/{}/rotate", app.url(), key_model.id))
+        .post(format!("{}/api/keys/{}/rotate", app.url(), key_model.id))
         .header("X-API-Key", &old_raw_key)
         .send()
         .await
@@ -292,7 +292,7 @@ async fn test_rotate_api_key() {
     // The new key should work for authentication.
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/api/keys?realm_id={}",
             app.url(),
             app.master_realm_id()
@@ -322,7 +322,7 @@ async fn test_api_key_auth_valid() {
     // Use the key to list keys — should succeed.
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/api/keys?realm_id={}",
             app.url(),
             app.master_realm_id()
@@ -342,7 +342,7 @@ async fn test_api_key_auth_invalid() {
     // Use a completely bogus key.
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/api/keys?realm_id={}",
             app.url(),
             app.master_realm_id()
@@ -366,7 +366,7 @@ async fn test_api_key_auth_missing() {
     // No X-API-Key header at all.
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/api/keys?realm_id={}",
             app.url(),
             app.master_realm_id()
@@ -393,7 +393,7 @@ async fn test_api_key_auth_expired() {
 
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/api/keys?realm_id={}",
             app.url(),
             app.master_realm_id()
@@ -416,7 +416,7 @@ async fn test_api_key_routes_accept_admin_jwt() {
 
     let login_resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -434,7 +434,7 @@ async fn test_api_key_routes_accept_admin_jwt() {
 
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/api/keys?realm_id={}",
             app.url(),
             app.master_realm_id()
@@ -457,7 +457,7 @@ async fn test_api_key_routes_reject_non_admin_jwt() {
 
     let token_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=client_credentials&client_id={}&client_secret={}",
@@ -476,7 +476,7 @@ async fn test_api_key_routes_reject_non_admin_jwt() {
 
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/api/keys?realm_id={}",
             app.url(),
             app.master_realm_id()
@@ -516,7 +516,7 @@ async fn test_api_key_cannot_access_other_realm() {
     // Try to list keys in the MASTER realm using the OTHER realm's key.
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/api/keys?realm_id={}",
             app.url(),
             app.master_realm_id()
@@ -548,7 +548,7 @@ async fn test_api_key_cannot_create_in_other_realm() {
 
     let resp = app
         .client()
-        .post(&format!("{}/api/keys", app.url()))
+        .post(format!("{}/api/keys", app.url()))
         .header("X-API-Key", &other_realm_key)
         .json(&json!({
             "realm_id": app.master_realm_id().to_string(),
@@ -582,7 +582,7 @@ async fn test_api_key_cannot_get_key_from_other_realm() {
 
     let resp = app
         .client()
-        .get(&format!("{}/api/keys/{}", app.url(), master_key.id))
+        .get(format!("{}/api/keys/{}", app.url(), master_key.id))
         .header("X-API-Key", &other_realm_key)
         .send()
         .await
@@ -608,7 +608,7 @@ async fn test_deleted_api_key_rejected() {
     // `NOT revoked`. Let's revoke via the API using the key itself.
     let resp = app
         .client()
-        .delete(&format!("{}/api/keys/{}", app.url(), key_model.id))
+        .delete(format!("{}/api/keys/{}", app.url(), key_model.id))
         .header("X-API-Key", &raw_key)
         .send()
         .await
@@ -619,7 +619,7 @@ async fn test_deleted_api_key_rejected() {
     // Now try to use the revoked key.
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/api/keys?realm_id={}",
             app.url(),
             app.master_realm_id()

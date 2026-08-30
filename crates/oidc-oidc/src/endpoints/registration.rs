@@ -70,12 +70,11 @@ fn validate_redirect_uri(uri: &str) -> Result<(), OidcError> {
     }
 
     // Allow http://localhost and http://127.0.0.1 for development
-    if scheme == "http" {
-        if let Some(host) = parsed.host_str() {
-            if host == "localhost" || host == "127.0.0.1" || host == "[::1]" {
-                return Ok(());
-            }
-        }
+    if scheme == "http"
+        && let Some(host) = parsed.host_str()
+        && (host == "localhost" || host == "127.0.0.1" || host == "[::1]")
+    {
+        return Ok(());
     }
 
     Err(OidcError::InvalidInput(format!(
@@ -127,12 +126,10 @@ fn validate_registration_request(req: &RegisterClientRequest) -> Result<(), Oidc
     }
 
     // For private_key_jwt, jwks must be present (jwks_uri fetching is not yet supported)
-    if req.token_endpoint_auth_method == "private_key_jwt" {
-        if req.jwks.is_none() {
-            return Err(OidcError::InvalidInput(
-                "jwks is required when token_endpoint_auth_method is private_key_jwt".into(),
-            ));
-        }
+    if req.token_endpoint_auth_method == "private_key_jwt" && req.jwks.is_none() {
+        return Err(OidcError::InvalidInput(
+            "jwks is required when token_endpoint_auth_method is private_key_jwt".into(),
+        ));
     }
 
     // For client_secret_jwt, no additional fields required (secret is auto-generated)
@@ -182,14 +179,14 @@ pub async fn register_handler(
         "client_secret_basic" | "client_secret_post" => {
             let mut secret_bytes = [0u8; 32];
             getrandom::fill(&mut secret_bytes).map_err(|e| OidcError::Internal(e.to_string()))?;
-            let secret = base64::engine::general_purpose::STANDARD.encode(&secret_bytes);
+            let secret = base64::engine::general_purpose::STANDARD.encode(secret_bytes);
             let hash = state.hasher.hash(&secret)?;
             (ClientType::Confidential, Some(secret), Some(hash), None)
         }
         "client_secret_jwt" => {
             let mut secret_bytes = [0u8; 32];
             getrandom::fill(&mut secret_bytes).map_err(|e| OidcError::Internal(e.to_string()))?;
-            let secret = base64::engine::general_purpose::STANDARD.encode(&secret_bytes);
+            let secret = base64::engine::general_purpose::STANDARD.encode(secret_bytes);
             let hash = state.hasher.hash(&secret)?;
             let encrypted = state.encrypt_client_encryption_key(secret.as_bytes())?;
             (

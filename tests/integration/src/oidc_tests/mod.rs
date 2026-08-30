@@ -51,10 +51,10 @@ fn parse_redirect_query(location: &str, key: &str) -> Option<String> {
     // Check fragment parameters (used by implicit/hybrid flows)
     if let Some(fragment) = url.fragment() {
         for pair in fragment.split('&') {
-            if let Some((k, v)) = pair.split_once('=') {
-                if k == key {
-                    return Some(urlencoding::decode(v).ok()?.to_string());
-                }
+            if let Some((k, v)) = pair.split_once('=')
+                && k == key
+            {
+                return Some(urlencoding::decode(v).ok()?.to_string());
             }
         }
     }
@@ -147,7 +147,7 @@ impl Drop for MockBackchannelRp {
 async fn login(app: &TestApp) -> Value {
     let resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -177,7 +177,7 @@ async fn test_discovery_document_complete() {
     let app = TestApp::new().await;
     let resp = app
         .client()
-        .get(&format!("{}/.well-known/openid-configuration", app.url()))
+        .get(format!("{}/.well-known/openid-configuration", app.url()))
         .send()
         .await
         .expect("discovery request failed");
@@ -267,7 +267,7 @@ async fn test_discovery_does_not_advertise_check_session_iframe() {
     let app = TestApp::new().await;
     let resp = app
         .client()
-        .get(&format!("{}/.well-known/openid-configuration", app.url()))
+        .get(format!("{}/.well-known/openid-configuration", app.url()))
         .send()
         .await
         .expect("discovery request failed");
@@ -288,7 +288,7 @@ async fn test_check_session_endpoint_not_implemented() {
     let app = TestApp::new().await;
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/oidc/session/check?client_id={}&redirect_uri={}",
             app.url(),
             urlencoding::encode(fixtures::TEST_CLIENT_ID),
@@ -308,7 +308,7 @@ async fn test_jwks_has_rsa_key() {
     let app = TestApp::new().await;
     let resp = app
         .client()
-        .get(&format!("{}/oidc/jwks", app.url()))
+        .get(format!("{}/oidc/jwks", app.url()))
         .send()
         .await
         .expect("jwks request failed");
@@ -365,7 +365,7 @@ async fn test_login_invalid_email() {
     let app = TestApp::new().await;
     let resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": "nonexistent@example.com",
             "password": "SomePass123!",
@@ -384,7 +384,7 @@ async fn test_login_wrong_password() {
     let app = TestApp::new().await;
     let resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": "WrongPassword1!",
@@ -403,7 +403,7 @@ async fn test_login_short_password() {
     let app = TestApp::new().await;
     let resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": "short",
@@ -428,7 +428,7 @@ async fn test_login_disabled_user() {
 
     let resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": email,
             "password": password,
@@ -450,7 +450,7 @@ async fn test_login_brute_force_protection() {
     for _ in 0..5 {
         let resp = app
             .client()
-            .post(&format!("{}/oidc/login", app.url()))
+            .post(format!("{}/oidc/login", app.url()))
             .json(&json!({
                 "email": fixtures::TEST_USER_EMAIL,
                 "password": "WrongPassword1!",
@@ -464,7 +464,7 @@ async fn test_login_brute_force_protection() {
     // The 6th attempt should be blocked by brute-force protection
     let resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": "WrongPassword1!",
@@ -541,7 +541,7 @@ async fn test_authorization_code_flow_with_pkce() {
     // 5. POST /oidc/token with authorization_code grant
     let token_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&client_secret={}&code_verifier={}",
@@ -581,7 +581,7 @@ async fn test_authorization_code_flow_with_pkce() {
     // 8. GET /oidc/userinfo with Bearer token
     let userinfo_resp = app
         .client()
-        .get(&format!("{}/oidc/userinfo", app.url()))
+        .get(format!("{}/oidc/userinfo", app.url()))
         .header("authorization", format!("Bearer {access_token}"))
         .send()
         .await
@@ -598,7 +598,7 @@ async fn test_authorization_code_flow_with_pkce() {
     // 9. POST /oidc/introspect — verify active
     let introspect_resp = app
         .client()
-        .post(&format!("{}/oidc/introspect", app.url()))
+        .post(format!("{}/oidc/introspect", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "token={}&client_id={}&client_secret={}",
@@ -620,7 +620,7 @@ async fn test_authorization_code_flow_with_pkce() {
     // 10. POST /oidc/revoke
     let revoke_resp = app
         .client()
-        .post(&format!("{}/oidc/revoke", app.url()))
+        .post(format!("{}/oidc/revoke", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "token={}&client_id={}&client_secret={}",
@@ -637,7 +637,7 @@ async fn test_authorization_code_flow_with_pkce() {
     // 11. POST /oidc/introspect again — verify inactive
     let introspect_resp2 = app
         .client()
-        .post(&format!("{}/oidc/introspect", app.url()))
+        .post(format!("{}/oidc/introspect", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "token={}&client_id={}&client_secret={}",
@@ -698,7 +698,7 @@ async fn test_admin_ui_authorization_code_flow_includes_admin_scope() {
 
     let token_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&code_verifier={}",
@@ -748,7 +748,7 @@ async fn test_refresh_token_rotation() {
     // 2. Use the refresh token to get new tokens
     let refresh_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=refresh_token&refresh_token={}&client_id={}",
@@ -780,7 +780,7 @@ async fn test_refresh_token_rotation() {
     // 3. Try using the OLD refresh_token again — should fail (replay detection)
     let replay_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=refresh_token&refresh_token={}&client_id={}",
@@ -845,7 +845,7 @@ async fn test_refresh_token_cannot_be_redeemed_by_different_client() {
 
     let token_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&client_secret={}&code_verifier={}",
@@ -868,7 +868,7 @@ async fn test_refresh_token_cannot_be_redeemed_by_different_client() {
 
     let wrong_client_refresh = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=refresh_token&refresh_token={}&client_id={}&client_secret={}",
@@ -912,7 +912,7 @@ async fn test_introspect_revoked_token() {
     // Login again using the confidential client to get a token we can introspect/revoke
     let login_resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -935,7 +935,7 @@ async fn test_introspect_revoked_token() {
     // Introspect — should be active
     let intro_resp = app
         .client()
-        .post(&format!("{}/oidc/introspect", app.url()))
+        .post(format!("{}/oidc/introspect", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "token={}&client_id={}&client_secret={}",
@@ -954,7 +954,7 @@ async fn test_introspect_revoked_token() {
     // Revoke
     let revoke_resp = app
         .client()
-        .post(&format!("{}/oidc/revoke", app.url()))
+        .post(format!("{}/oidc/revoke", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "token={}&client_id={}&client_secret={}",
@@ -971,7 +971,7 @@ async fn test_introspect_revoked_token() {
     // Introspect again — should be inactive
     let intro_resp2 = app
         .client()
-        .post(&format!("{}/oidc/introspect", app.url()))
+        .post(format!("{}/oidc/introspect", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "token={}&client_id={}&client_secret={}",
@@ -1009,7 +1009,7 @@ async fn test_introspect_with_basic_auth_header() {
 
     let login_resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -1028,7 +1028,7 @@ async fn test_introspect_with_basic_auth_header() {
 
     let intro_resp = app
         .client()
-        .post(&format!("{}/oidc/introspect", app.url()))
+        .post(format!("{}/oidc/introspect", app.url()))
         .basic_auth(conf_client_id, Some(conf_client_secret))
         .form(&[("token", access_token.as_str())])
         .send()
@@ -1061,7 +1061,7 @@ async fn test_revoke_with_basic_auth_header() {
 
     let login_resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -1080,7 +1080,7 @@ async fn test_revoke_with_basic_auth_header() {
 
     let revoke_resp = app
         .client()
-        .post(&format!("{}/oidc/revoke", app.url()))
+        .post(format!("{}/oidc/revoke", app.url()))
         .basic_auth(conf_client_id, Some(conf_client_secret))
         .form(&[("token", access_token.as_str())])
         .send()
@@ -1091,7 +1091,7 @@ async fn test_revoke_with_basic_auth_header() {
 
     let intro_resp = app
         .client()
-        .post(&format!("{}/oidc/introspect", app.url()))
+        .post(format!("{}/oidc/introspect", app.url()))
         .basic_auth(conf_client_id, Some(conf_client_secret))
         .form(&[("token", access_token.as_str())])
         .send()
@@ -1124,7 +1124,7 @@ async fn test_introspect_client_secret_basic_rejects_client_secret_post() {
 
     let login_resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -1143,7 +1143,7 @@ async fn test_introspect_client_secret_basic_rejects_client_secret_post() {
 
     let intro_resp = app
         .client()
-        .post(&format!("{}/oidc/introspect", app.url()))
+        .post(format!("{}/oidc/introspect", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "token={}&client_id={}&client_secret={}",
@@ -1175,7 +1175,7 @@ async fn test_revoke_client_secret_post_rejects_client_secret_basic() {
 
     let login_resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -1194,7 +1194,7 @@ async fn test_revoke_client_secret_post_rejects_client_secret_basic() {
 
     let revoke_resp = app
         .client()
-        .post(&format!("{}/oidc/revoke", app.url()))
+        .post(format!("{}/oidc/revoke", app.url()))
         .basic_auth(conf_client_id, Some(conf_client_secret))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!("token={}", urlencoding::encode(&access_token)))
@@ -1226,7 +1226,7 @@ async fn test_introspect_and_revoke_restricted_to_own_client() {
 
     let login_resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -1245,7 +1245,7 @@ async fn test_introspect_and_revoke_restricted_to_own_client() {
 
     let intro_with_other_client = app
         .client()
-        .post(&format!("{}/oidc/introspect", app.url()))
+        .post(format!("{}/oidc/introspect", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "token={}&client_id={}&client_secret={}",
@@ -1266,7 +1266,7 @@ async fn test_introspect_and_revoke_restricted_to_own_client() {
 
     let revoke_with_other_client = app
         .client()
-        .post(&format!("{}/oidc/revoke", app.url()))
+        .post(format!("{}/oidc/revoke", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "token={}&client_id={}&client_secret={}",
@@ -1282,7 +1282,7 @@ async fn test_introspect_and_revoke_restricted_to_own_client() {
 
     let intro_with_owner = app
         .client()
-        .post(&format!("{}/oidc/introspect", app.url()))
+        .post(format!("{}/oidc/introspect", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "token={}&client_id={}&client_secret={}",
@@ -1315,7 +1315,7 @@ async fn test_revoke_idempotent() {
     // Login to get a token
     let login_resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -1345,7 +1345,7 @@ async fn test_revoke_idempotent() {
 
     let resp1 = app
         .client()
-        .post(&format!("{}/oidc/revoke", app.url()))
+        .post(format!("{}/oidc/revoke", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(revoke_body.clone())
         .send()
@@ -1357,7 +1357,7 @@ async fn test_revoke_idempotent() {
     // Revoke again — should still return 200 (idempotent per RFC 7009)
     let resp2 = app
         .client()
-        .post(&format!("{}/oidc/revoke", app.url()))
+        .post(format!("{}/oidc/revoke", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(revoke_body)
         .send()
@@ -1376,7 +1376,7 @@ async fn test_userinfo_no_auth() {
     let app = TestApp::new().await;
     let resp = app
         .client()
-        .get(&format!("{}/oidc/userinfo", app.url()))
+        .get(format!("{}/oidc/userinfo", app.url()))
         .send()
         .await
         .expect("userinfo request failed");
@@ -1389,7 +1389,7 @@ async fn test_userinfo_invalid_token() {
     let app = TestApp::new().await;
     let resp = app
         .client()
-        .get(&format!("{}/oidc/userinfo", app.url()))
+        .get(format!("{}/oidc/userinfo", app.url()))
         .header("authorization", "Bearer garbage_token_value")
         .send()
         .await
@@ -1408,7 +1408,7 @@ async fn test_userinfo_success() {
 
     let resp = app
         .client()
-        .get(&format!("{}/oidc/userinfo", app.url()))
+        .get(format!("{}/oidc/userinfo", app.url()))
         .header("authorization", format!("Bearer {access_token}"))
         .send()
         .await
@@ -1431,7 +1431,7 @@ async fn test_logout_redirect_to_home() {
     let app = TestApp::new().await;
     let resp = app
         .client()
-        .get(&format!("{}/oidc/logout", app.url()))
+        .get(format!("{}/oidc/logout", app.url()))
         .send()
         .await
         .expect("logout request failed");
@@ -1476,7 +1476,7 @@ async fn test_logout_frontchannel_page_allows_rp_iframes_and_preserves_redirect_
 
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/oidc/logout?id_token_hint={}&client_id={}&post_logout_redirect_uri={}&state={}",
             app.url(),
             urlencoding::encode(&id_token),
@@ -1538,7 +1538,7 @@ async fn test_logout_backchannel_sends_logout_token_and_redirects() {
 
     let login_resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -1559,7 +1559,7 @@ async fn test_logout_backchannel_sends_logout_token_and_redirects() {
 
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/oidc/logout?id_token_hint={}&client_id={}&post_logout_redirect_uri={}&state={}",
             app.url(),
             urlencoding::encode(&id_token),
@@ -1624,7 +1624,7 @@ async fn test_logout_with_post_logout_redirect() {
 
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/oidc/logout?post_logout_redirect_uri={}&state={}",
             app.url(),
             urlencoding::encode(post_logout_uri),
@@ -1670,7 +1670,7 @@ async fn test_register_confidential_client() {
     let app = TestApp::new().await;
     let resp = app
         .client()
-        .post(&format!("{}/oidc/register", app.url()))
+        .post(format!("{}/oidc/register", app.url()))
         .json(&json!({
             "client_name": "Test Confidential App",
             "redirect_uris": ["https://app.example.com/callback"],
@@ -1692,7 +1692,7 @@ async fn test_register_public_client() {
     let app = TestApp::new().await;
     let resp = app
         .client()
-        .post(&format!("{}/oidc/register", app.url()))
+        .post(format!("{}/oidc/register", app.url()))
         .json(&json!({
             "client_name": "SPA Public App",
             "redirect_uris": ["https://spa.example.com/callback"],
@@ -1717,7 +1717,7 @@ async fn test_authorize_missing_client_id() {
     let app = TestApp::new().await;
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/oidc/authorize?response_type=code&redirect_uri=https://app.example.com/callback",
             app.url()
         ))
@@ -1745,7 +1745,7 @@ async fn test_token_invalid_grant_type() {
     let app = TestApp::new().await;
     let resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body("grant_type=invalid_grant&client_id=admin-ui&client_secret=dummy")
         .send()
@@ -1796,7 +1796,7 @@ async fn test_client_credentials_grant() {
     // 2. POST /oidc/token with grant_type=client_credentials
     let token_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=client_credentials&client_id={}&client_secret={}",
@@ -1835,7 +1835,7 @@ async fn test_client_credentials_grant() {
     // 4. Verify the access token works on /oidc/userinfo — should fail since it's a client, not user
     let userinfo_resp = app
         .client()
-        .get(&format!("{}/oidc/userinfo", app.url()))
+        .get(format!("{}/oidc/userinfo", app.url()))
         .header("authorization", format!("Bearer {access_token}"))
         .send()
         .await
@@ -1851,7 +1851,7 @@ async fn test_client_credentials_grant() {
     // 5. Introspect the token — should be active
     let introspect_resp = app
         .client()
-        .post(&format!("{}/oidc/introspect", app.url()))
+        .post(format!("{}/oidc/introspect", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "token={}&client_id={}&client_secret={}",
@@ -1989,7 +1989,7 @@ async fn test_id_token_contains_nonce() {
     // 3. Exchange code for tokens
     let token_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&client_secret={}&code_verifier={}",
@@ -2077,7 +2077,7 @@ async fn test_id_token_contains_hashes() {
     // 3. Exchange code for tokens
     let token_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&client_secret={}&code_verifier={}",
@@ -2141,7 +2141,7 @@ async fn test_token_wrong_client_secret() {
     // POST /oidc/token with wrong client_secret
     let token_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=authorization_code&code=some_code&redirect_uri={}&client_id={}&client_secret={}&code_verifier=some_verifier",
@@ -2179,7 +2179,7 @@ async fn test_token_missing_client_secret_for_confidential_client() {
 
     let token_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=authorization_code&code=some_code&redirect_uri={}&client_id={}&code_verifier=some_verifier",
@@ -2222,7 +2222,7 @@ async fn test_token_client_secret_basic_rejects_client_secret_post() {
 
     let token_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=authorization_code&code=some_code&redirect_uri={}&client_id={}&client_secret={}&code_verifier=some_verifier",
@@ -2255,7 +2255,7 @@ async fn test_token_client_secret_post_rejects_client_secret_basic() {
 
     let token_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .basic_auth(client_id, Some(client_secret))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
@@ -2298,7 +2298,7 @@ async fn test_token_rejects_mismatched_client_id_between_basic_auth_and_body() {
 
     let token_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .basic_auth(client_id, Some(client_secret))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
@@ -2330,7 +2330,7 @@ async fn test_introspect_without_client_auth() {
     // POST /oidc/introspect without client_id/client_secret
     let introspect_resp = app
         .client()
-        .post(&format!("{}/oidc/introspect", app.url()))
+        .post(format!("{}/oidc/introspect", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body("token=some_token_value")
         .send()
@@ -2358,7 +2358,7 @@ async fn test_revoke_refresh_token() {
     // 2. Login to get tokens
     let login_resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -2381,7 +2381,7 @@ async fn test_revoke_refresh_token() {
     // 3. Revoke the refresh token
     let revoke_resp = app
         .client()
-        .post(&format!("{}/oidc/revoke", app.url()))
+        .post(format!("{}/oidc/revoke", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "token={}&token_type_hint=refresh_token&client_id={}&client_secret={}",
@@ -2402,7 +2402,7 @@ async fn test_revoke_refresh_token() {
     // 4. Try to use the revoked refresh token — should fail
     let refresh_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=refresh_token&refresh_token={}&client_id={}&client_secret={}",
@@ -2431,7 +2431,7 @@ async fn test_discovery_document_fields() {
 
     let resp = app
         .client()
-        .get(&format!("{}/.well-known/openid-configuration", app.url()))
+        .get(format!("{}/.well-known/openid-configuration", app.url()))
         .send()
         .await
         .expect("discovery request failed");
@@ -2508,7 +2508,7 @@ async fn test_discovery_claims_parameter_supported() {
     let app = TestApp::new().await;
     let resp = app
         .client()
-        .get(&format!("{}/.well-known/openid-configuration", app.url()))
+        .get(format!("{}/.well-known/openid-configuration", app.url()))
         .send()
         .await
         .expect("discovery request failed");
@@ -2632,7 +2632,7 @@ async fn test_userinfo_profile_scope_returns_standard_claims() {
 
     let token_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&client_secret={}&code_verifier={}",
@@ -2655,7 +2655,7 @@ async fn test_userinfo_profile_scope_returns_standard_claims() {
     // Get UserInfo
     let userinfo_resp = app
         .client()
-        .get(&format!("{}/oidc/userinfo", app.url()))
+        .get(format!("{}/oidc/userinfo", app.url()))
         .header("authorization", format!("Bearer {access_token}"))
         .send()
         .await

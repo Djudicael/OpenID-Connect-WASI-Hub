@@ -169,7 +169,7 @@ impl SessionRepo {
         result
             .into_rows()
             .iter()
-            .map(|row| Self::map_row(row))
+            .map(Self::map_row)
             .collect::<Result<Vec<_>, _>>()
     }
 
@@ -275,7 +275,7 @@ impl SessionRepo {
         result
             .into_rows()
             .iter()
-            .map(|row| Self::map_row(row))
+            .map(Self::map_row)
             .collect::<Result<Vec<_>, _>>()
     }
 

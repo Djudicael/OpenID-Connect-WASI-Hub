@@ -141,7 +141,7 @@ impl OidcErrorResponse {
             401 => "invalid_client",
             403 => "access_denied",
             404 => "not_found",
-            500 | _ => "server_error",
+            _ => "server_error",
         };
         Self {
             error: error.to_string(),

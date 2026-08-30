@@ -13,7 +13,7 @@ use crate::helpers::fixtures;
 async fn admin_login(app: &TestApp) -> String {
     let resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -33,7 +33,7 @@ async fn admin_login(app: &TestApp) -> String {
 async fn get_master_realm_id(app: &TestApp, token: &str) -> String {
     let resp = app
         .client()
-        .get(&format!("{}/api/realms?limit=1", app.url()))
+        .get(format!("{}/api/realms?limit=1", app.url()))
         .bearer_auth(token)
         .send()
         .await
@@ -54,7 +54,7 @@ async fn test_get_password_policy() {
 
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/api/realms/{}/password-policy",
             app.url(),
             realm_id
@@ -77,7 +77,7 @@ async fn test_update_password_policy() {
 
     let resp = app
         .client()
-        .put(&format!(
+        .put(format!(
             "{}/api/realms/{}/password-policy",
             app.url(),
             realm_id
@@ -101,7 +101,7 @@ async fn test_update_password_policy() {
     // Verify the update
     let get_resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/api/realms/{}/password-policy",
             app.url(),
             realm_id
@@ -131,7 +131,7 @@ async fn test_create_identity_provider_encrypts_client_secret_at_rest() {
 
     let resp = app
         .client()
-        .post(&format!("{}/api/identity-providers", app.url()))
+        .post(format!("{}/api/identity-providers", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -181,7 +181,7 @@ async fn test_create_identity_provider() {
 
     let resp = app
         .client()
-        .post(&format!("{}/api/identity-providers", app.url()))
+        .post(format!("{}/api/identity-providers", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -217,7 +217,7 @@ async fn test_list_identity_providers() {
 
     // Create an IdP first
     app.client()
-        .post(&format!("{}/api/identity-providers", app.url()))
+        .post(format!("{}/api/identity-providers", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -239,7 +239,7 @@ async fn test_list_identity_providers() {
 
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/api/identity-providers?realm_id={}",
             app.url(),
             realm_id
@@ -263,7 +263,7 @@ async fn test_get_identity_provider() {
 
     let create_resp = app
         .client()
-        .post(&format!("{}/api/identity-providers", app.url()))
+        .post(format!("{}/api/identity-providers", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -287,7 +287,7 @@ async fn test_get_identity_provider() {
 
     let resp = app
         .client()
-        .get(&format!("{}/api/identity-providers/{}", app.url(), idp_id))
+        .get(format!("{}/api/identity-providers/{}", app.url(), idp_id))
         .bearer_auth(&token)
         .send()
         .await
@@ -307,7 +307,7 @@ async fn test_update_identity_provider() {
 
     let create_resp = app
         .client()
-        .post(&format!("{}/api/identity-providers", app.url()))
+        .post(format!("{}/api/identity-providers", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -331,7 +331,7 @@ async fn test_update_identity_provider() {
 
     let resp = app
         .client()
-        .put(&format!("{}/api/identity-providers/{}", app.url(), idp_id))
+        .put(format!("{}/api/identity-providers/{}", app.url(), idp_id))
         .bearer_auth(&token)
         .json(&json!({
             "display_name": "Updated IdP",
@@ -345,7 +345,7 @@ async fn test_update_identity_provider() {
 
     let get_resp = app
         .client()
-        .get(&format!("{}/api/identity-providers/{}", app.url(), idp_id))
+        .get(format!("{}/api/identity-providers/{}", app.url(), idp_id))
         .bearer_auth(&token)
         .send()
         .await
@@ -363,7 +363,7 @@ async fn test_delete_identity_provider() {
 
     let create_resp = app
         .client()
-        .post(&format!("{}/api/identity-providers", app.url()))
+        .post(format!("{}/api/identity-providers", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -387,7 +387,7 @@ async fn test_delete_identity_provider() {
 
     let resp = app
         .client()
-        .delete(&format!("{}/api/identity-providers/{}", app.url(), idp_id))
+        .delete(format!("{}/api/identity-providers/{}", app.url(), idp_id))
         .bearer_auth(&token)
         .send()
         .await
@@ -410,7 +410,7 @@ async fn test_impersonate_user() {
     // Get the admin user ID
     let list_resp = app
         .client()
-        .get(&format!("{}/api/users?limit=1", app.url()))
+        .get(format!("{}/api/users?limit=1", app.url()))
         .bearer_auth(&token)
         .send()
         .await
@@ -420,7 +420,7 @@ async fn test_impersonate_user() {
 
     let resp = app
         .client()
-        .post(&format!("{}/api/users/{}/impersonate", app.url(), user_id))
+        .post(format!("{}/api/users/{}/impersonate", app.url(), user_id))
         .bearer_auth(&token)
         .send()
         .await
@@ -444,7 +444,7 @@ async fn test_cleanup_expired() {
 
     let resp = app
         .client()
-        .post(&format!("{}/api/maintenance/cleanup", app.url()))
+        .post(format!("{}/api/maintenance/cleanup", app.url()))
         .bearer_auth(&token)
         .send()
         .await
@@ -468,7 +468,7 @@ async fn test_initiate_account_recovery() {
     // Get the admin user ID
     let list_resp = app
         .client()
-        .get(&format!("{}/api/users?limit=1", app.url()))
+        .get(format!("{}/api/users?limit=1", app.url()))
         .bearer_auth(&token)
         .send()
         .await
@@ -478,7 +478,7 @@ async fn test_initiate_account_recovery() {
 
     let resp = app
         .client()
-        .post(&format!(
+        .post(format!(
             "{}/api/users/{}/account-recovery",
             app.url(),
             user_id

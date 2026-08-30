@@ -37,7 +37,7 @@ impl ApiKeyService {
         getrandom::fill(&mut random_bytes)
             .map_err(|e| OidcError::Internal(format!("getrandom failed: {e}")))?;
 
-        let secret = URL_SAFE_NO_PAD.encode(&random_bytes);
+        let secret = URL_SAFE_NO_PAD.encode(random_bytes);
         let prefix = secret.chars().take(PREFIX_LEN).collect::<String>();
         // Use `.` as separator — it is NOT in the base64 URL-safe alphabet,
         // so it can never collide with characters in the prefix or secret.
@@ -87,12 +87,12 @@ impl ApiKeyService {
         }
 
         // Check rotation grace period
-        if let Some(rotated_at) = api_key.rotated_at {
-            if Utc::now() > rotated_at + Duration::hours(ROTATION_GRACE_HOURS) {
-                return Err(OidcError::AuthenticationFailed(
-                    "key rotation expired".into(),
-                ));
-            }
+        if let Some(rotated_at) = api_key.rotated_at
+            && Utc::now() > rotated_at + Duration::hours(ROTATION_GRACE_HOURS)
+        {
+            return Err(OidcError::AuthenticationFailed(
+                "key rotation expired".into(),
+            ));
         }
 
         if !hashing::verify_secret(raw_key, &api_key.hashed_secret)? {

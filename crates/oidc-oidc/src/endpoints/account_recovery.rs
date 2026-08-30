@@ -31,7 +31,7 @@ pub async fn confirm_account_recovery(
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
-    .map_err(|s| OidcErrorResponse::from_status(s))?;
+    .map_err(OidcErrorResponse::from_status)?;
 
     let recovery_token =
         match oidc_repository::repositories::account_recovery_token_repo::AccountRecoveryTokenRepo

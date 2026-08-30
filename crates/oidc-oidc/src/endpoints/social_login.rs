@@ -698,7 +698,7 @@ async fn exchange_code_for_tokens(
 
     let client_secret = state.decrypt_sensitive_string(&provider.client_secret)?;
 
-    let body = serde_urlencoded::to_string(&[
+    let body = serde_urlencoded::to_string([
         ("grant_type", "authorization_code"),
         ("code", code),
         ("redirect_uri", &redirect_uri),
@@ -825,25 +825,24 @@ async fn find_or_create_local_user(
     }
 
     // 2. If link_users_by_email is enabled, try to find a user by email
-    if provider.link_users_by_email {
-        if let Some(email) = upstream_email {
-            if let Some(user) = UserRepo.find_by_email(conn, realm_id, email).await? {
-                // Link the federated identity to this user
-                let fi = FederatedIdentity {
-                    id: generate_uuid_v7(),
-                    user_id: user.id,
-                    realm_id,
-                    identity_provider_id: provider.id,
-                    upstream_subject: upstream_subject.to_string(),
-                    upstream_username: upstream_name.map(|s| s.to_string()),
-                    upstream_email: Some(email.to_string()),
-                    created_at: chrono::Utc::now(),
-                    last_used_at: Some(chrono::Utc::now()),
-                };
-                FederatedIdentityRepo.create(conn, &fi).await?;
-                return Ok(user);
-            }
-        }
+    if provider.link_users_by_email
+        && let Some(email) = upstream_email
+        && let Some(user) = UserRepo.find_by_email(conn, realm_id, email).await?
+    {
+        // Link the federated identity to this user
+        let fi = FederatedIdentity {
+            id: generate_uuid_v7(),
+            user_id: user.id,
+            realm_id,
+            identity_provider_id: provider.id,
+            upstream_subject: upstream_subject.to_string(),
+            upstream_username: upstream_name.map(|s| s.to_string()),
+            upstream_email: Some(email.to_string()),
+            created_at: chrono::Utc::now(),
+            last_used_at: Some(chrono::Utc::now()),
+        };
+        FederatedIdentityRepo.create(conn, &fi).await?;
+        return Ok(user);
     }
 
     // 3. If auto_create_users is enabled, create a new user

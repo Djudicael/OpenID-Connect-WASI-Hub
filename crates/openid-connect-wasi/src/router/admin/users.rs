@@ -212,14 +212,14 @@ pub async fn create(State(state): State<AppState>, auth: AdminAuth, body: String
         )
             .into_response();
     }
-    if let Some(ref username) = req.username {
-        if !is_valid_username(username) {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({"error": "invalid_request", "error_description": "Invalid input"})),
-            )
-                .into_response();
-        }
+    if let Some(ref username) = req.username
+        && !is_valid_username(username)
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "invalid_request", "error_description": "Invalid input"})),
+        )
+            .into_response();
     }
     let mut conn = match connect(&state).await {
         Ok(c) => c,

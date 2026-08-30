@@ -320,7 +320,7 @@ mod tests {
 
     #[test]
     fn test_extract_sector_identifier_from_redirect_uri() {
-        let sector = extract_sector_identifier(None, &vec!["https://example.com/callback".into()]);
+        let sector = extract_sector_identifier(None, &["https://example.com/callback".into()]);
         assert_eq!(sector, Some("example.com".to_string()));
     }
 
@@ -328,7 +328,7 @@ mod tests {
     fn test_extract_sector_identifier_from_sector_uri() {
         let sector = extract_sector_identifier(
             Some("https://sector.example.com"),
-            &vec!["https://other.com/callback".into()],
+            &["https://other.com/callback".into()],
         );
         assert_eq!(sector, Some("sector.example.com".to_string()));
     }
@@ -337,7 +337,7 @@ mod tests {
     fn test_extract_sector_identifier_sector_uri_takes_precedence() {
         let sector = extract_sector_identifier(
             Some("https://sector.example.com"),
-            &vec!["https://other.com/callback".into()],
+            &["https://other.com/callback".into()],
         );
         // sector_identifier_uri should take precedence over redirect_uri
         assert_eq!(sector, Some("sector.example.com".to_string()));
@@ -345,20 +345,19 @@ mod tests {
 
     #[test]
     fn test_extract_sector_identifier_empty_redirect_uris() {
-        let sector = extract_sector_identifier(None, &vec![]);
+        let sector = extract_sector_identifier(None, &[]);
         assert_eq!(sector, None);
     }
 
     #[test]
     fn test_extract_sector_identifier_invalid_url() {
-        let sector = extract_sector_identifier(None, &vec!["not-a-url".into()]);
+        let sector = extract_sector_identifier(None, &["not-a-url".into()]);
         assert_eq!(sector, None);
     }
 
     #[test]
     fn test_extract_sector_identifier_with_port() {
-        let sector =
-            extract_sector_identifier(None, &vec!["https://example.com:8443/callback".into()]);
+        let sector = extract_sector_identifier(None, &["https://example.com:8443/callback".into()]);
         assert_eq!(sector, Some("example.com".to_string()));
     }
 }

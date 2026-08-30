@@ -51,30 +51,29 @@ impl FromRequestParts<AppState> for AdminAuth {
         }
 
         // Try OIDC Bearer token authentication
-        if let Some(auth_header) = parts.headers.get(axum::http::header::AUTHORIZATION) {
-            if let Ok(auth_str) = auth_header.to_str() {
-                if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                    match state
-                        .token_service
-                        .verify_access_token_with_claims(token)
-                        .await
-                    {
-                        Ok(claims) => {
-                            // Verify the token has the "admin" scope
-                            let scopes: Vec<&str> = claims.scope.split_whitespace().collect();
-                            if !scopes.contains(&"admin") {
-                                return Err(ApiKeyError::InsufficientScope);
-                            }
-                            return Ok(AdminAuth {
-                                subject: claims.sub,
-                                is_api_key: false,
-                                realm_id: None,
-                            });
-                        }
-                        Err(e) => {
-                            tracing::debug!("OIDC token verification failed: {}", e);
-                        }
+        if let Some(auth_header) = parts.headers.get(axum::http::header::AUTHORIZATION)
+            && let Ok(auth_str) = auth_header.to_str()
+            && let Some(token) = auth_str.strip_prefix("Bearer ")
+        {
+            match state
+                .token_service
+                .verify_access_token_with_claims(token)
+                .await
+            {
+                Ok(claims) => {
+                    // Verify the token has the "admin" scope
+                    let scopes: Vec<&str> = claims.scope.split_whitespace().collect();
+                    if !scopes.contains(&"admin") {
+                        return Err(ApiKeyError::InsufficientScope);
                     }
+                    return Ok(AdminAuth {
+                        subject: claims.sub,
+                        is_api_key: false,
+                        realm_id: None,
+                    });
+                }
+                Err(e) => {
+                    tracing::debug!("OIDC token verification failed: {}", e);
                 }
             }
         }

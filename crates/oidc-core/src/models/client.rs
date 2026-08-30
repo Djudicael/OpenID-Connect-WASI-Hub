@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)]
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 

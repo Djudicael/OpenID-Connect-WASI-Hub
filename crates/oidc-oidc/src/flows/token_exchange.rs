@@ -318,13 +318,14 @@ impl TokenExchangeFlow {
 
         if normalized_issuer != normalized_base {
             let prefix = format!("{normalized_base}/realms/");
-            if let Some(realm_name) = normalized_issuer.strip_prefix(&prefix) {
-                if !realm_name.is_empty() && !realm_name.contains('/') {
-                    let mut conn = state.connect().await?;
-                    use oidc_repository::repositories::realm_repo::RealmRepo;
-                    if let Some(realm) = RealmRepo.find_by_name(&mut conn, realm_name).await? {
-                        return Ok(realm.id);
-                    }
+            if let Some(realm_name) = normalized_issuer.strip_prefix(&prefix)
+                && !realm_name.is_empty()
+                && !realm_name.contains('/')
+            {
+                let mut conn = state.connect().await?;
+                use oidc_repository::repositories::realm_repo::RealmRepo;
+                if let Some(realm) = RealmRepo.find_by_name(&mut conn, realm_name).await? {
+                    return Ok(realm.id);
                 }
             }
         }
@@ -578,15 +579,15 @@ impl TokenExchangeFlow {
         };
 
         // Populate user claims if we have a user_id
-        if let Some(uid) = user_id {
-            if let Some(user) = UserRepo.find_by_id(conn, uid).await? {
-                id_token_extra.email = Some(user.email.clone());
-                id_token_extra.email_verified = Some(user.email_verified);
-                id_token_extra.name = user.username.clone();
-                id_token_extra.given_name = user.given_name.clone();
-                id_token_extra.family_name = user.family_name.clone();
-                id_token_extra.locale = Some(user.locale.clone());
-            }
+        if let Some(uid) = user_id
+            && let Some(user) = UserRepo.find_by_id(conn, uid).await?
+        {
+            id_token_extra.email = Some(user.email.clone());
+            id_token_extra.email_verified = Some(user.email_verified);
+            id_token_extra.name = user.username.clone();
+            id_token_extra.given_name = user.given_name.clone();
+            id_token_extra.family_name = user.family_name.clone();
+            id_token_extra.locale = Some(user.locale.clone());
         }
 
         let id_token = token_svc

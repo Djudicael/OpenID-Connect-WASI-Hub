@@ -1459,6 +1459,7 @@ async fn test_cross_repo_single_connection() {
 // ===================================================================
 
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // Intentionally serializes writes to the shared template DB.
 async fn test_concurrent_connections_isolation() {
     // Serialize: this test commits to the shared template DB.
     let _guard = crate::harness::REPO_WRITE_MUTEX.lock().unwrap();

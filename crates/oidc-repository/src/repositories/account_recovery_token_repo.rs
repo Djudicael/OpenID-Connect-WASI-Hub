@@ -81,11 +81,7 @@ impl AccountRecoveryTokenRepo {
             .query_params(sql, &[&user_id])
             .await
             .map_err(mapper::pg_err)?;
-        result
-            .into_rows()
-            .iter()
-            .map(|r| Self::map_row(r))
-            .collect()
+        result.into_rows().iter().map(Self::map_row).collect()
     }
 
     /// Delete expired (and unused) recovery tokens. Returns the number of deleted rows.

@@ -16,7 +16,7 @@ use crate::helpers::fixtures;
 async fn admin_login(app: &TestApp) -> String {
     let resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -36,7 +36,7 @@ async fn admin_login(app: &TestApp) -> String {
 async fn get_master_realm_id(app: &TestApp, token: &str) -> String {
     let resp = app
         .client()
-        .get(&format!("{}/api/realms?limit=1", app.url()))
+        .get(format!("{}/api/realms?limit=1", app.url()))
         .bearer_auth(token)
         .send()
         .await
@@ -48,7 +48,7 @@ async fn get_master_realm_id(app: &TestApp, token: &str) -> String {
 async fn get_admin_user_id(app: &TestApp, token: &str) -> String {
     let resp = app
         .client()
-        .get(&format!("{}/api/users?limit=1", app.url()))
+        .get(format!("{}/api/users?limit=1", app.url()))
         .bearer_auth(token)
         .send()
         .await
@@ -69,7 +69,7 @@ async fn test_create_role() {
 
     let resp = app
         .client()
-        .post(&format!("{}/api/roles", app.url()))
+        .post(format!("{}/api/roles", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -95,7 +95,7 @@ async fn test_list_roles() {
 
     // Create a role first
     app.client()
-        .post(&format!("{}/api/roles", app.url()))
+        .post(format!("{}/api/roles", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -108,7 +108,7 @@ async fn test_list_roles() {
 
     let resp = app
         .client()
-        .get(&format!("{}/api/roles?realm_id={}", app.url(), realm_id))
+        .get(format!("{}/api/roles?realm_id={}", app.url(), realm_id))
         .bearer_auth(&token)
         .send()
         .await
@@ -128,7 +128,7 @@ async fn test_get_role() {
 
     let create_resp = app
         .client()
-        .post(&format!("{}/api/roles", app.url()))
+        .post(format!("{}/api/roles", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -143,7 +143,7 @@ async fn test_get_role() {
 
     let resp = app
         .client()
-        .get(&format!("{}/api/roles/{}", app.url(), role_id))
+        .get(format!("{}/api/roles/{}", app.url(), role_id))
         .bearer_auth(&token)
         .send()
         .await
@@ -163,7 +163,7 @@ async fn test_update_role() {
 
     let create_resp = app
         .client()
-        .post(&format!("{}/api/roles", app.url()))
+        .post(format!("{}/api/roles", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -178,7 +178,7 @@ async fn test_update_role() {
 
     let resp = app
         .client()
-        .put(&format!("{}/api/roles/{}", app.url(), role_id))
+        .put(format!("{}/api/roles/{}", app.url(), role_id))
         .bearer_auth(&token)
         .json(&json!({
             "description": "New description",
@@ -192,7 +192,7 @@ async fn test_update_role() {
 
     let get_resp = app
         .client()
-        .get(&format!("{}/api/roles/{}", app.url(), role_id))
+        .get(format!("{}/api/roles/{}", app.url(), role_id))
         .bearer_auth(&token)
         .send()
         .await
@@ -209,7 +209,7 @@ async fn test_delete_role() {
 
     let create_resp = app
         .client()
-        .post(&format!("{}/api/roles", app.url()))
+        .post(format!("{}/api/roles", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -224,7 +224,7 @@ async fn test_delete_role() {
 
     let resp = app
         .client()
-        .delete(&format!("{}/api/roles/{}", app.url(), role_id))
+        .delete(format!("{}/api/roles/{}", app.url(), role_id))
         .bearer_auth(&token)
         .send()
         .await
@@ -247,7 +247,7 @@ async fn test_create_group() {
 
     let resp = app
         .client()
-        .post(&format!("{}/api/groups", app.url()))
+        .post(format!("{}/api/groups", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -271,7 +271,7 @@ async fn test_list_groups() {
     let realm_id = get_master_realm_id(&app, &token).await;
 
     app.client()
-        .post(&format!("{}/api/groups", app.url()))
+        .post(format!("{}/api/groups", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -283,7 +283,7 @@ async fn test_list_groups() {
 
     let resp = app
         .client()
-        .get(&format!("{}/api/groups?realm_id={}", app.url(), realm_id))
+        .get(format!("{}/api/groups?realm_id={}", app.url(), realm_id))
         .bearer_auth(&token)
         .send()
         .await
@@ -303,7 +303,7 @@ async fn test_get_group() {
 
     let create_resp = app
         .client()
-        .post(&format!("{}/api/groups", app.url()))
+        .post(format!("{}/api/groups", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -317,7 +317,7 @@ async fn test_get_group() {
 
     let resp = app
         .client()
-        .get(&format!("{}/api/groups/{}", app.url(), group_id))
+        .get(format!("{}/api/groups/{}", app.url(), group_id))
         .bearer_auth(&token)
         .send()
         .await
@@ -336,7 +336,7 @@ async fn test_update_group() {
 
     let create_resp = app
         .client()
-        .post(&format!("{}/api/groups", app.url()))
+        .post(format!("{}/api/groups", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -350,7 +350,7 @@ async fn test_update_group() {
 
     let resp = app
         .client()
-        .put(&format!("{}/api/groups/{}", app.url(), group_id))
+        .put(format!("{}/api/groups/{}", app.url(), group_id))
         .bearer_auth(&token)
         .json(&json!({
             "description": "New group description",
@@ -363,7 +363,7 @@ async fn test_update_group() {
 
     let get_resp = app
         .client()
-        .get(&format!("{}/api/groups/{}", app.url(), group_id))
+        .get(format!("{}/api/groups/{}", app.url(), group_id))
         .bearer_auth(&token)
         .send()
         .await
@@ -383,7 +383,7 @@ async fn test_delete_group() {
 
     let create_resp = app
         .client()
-        .post(&format!("{}/api/groups", app.url()))
+        .post(format!("{}/api/groups", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -397,7 +397,7 @@ async fn test_delete_group() {
 
     let resp = app
         .client()
-        .delete(&format!("{}/api/groups/{}", app.url(), group_id))
+        .delete(format!("{}/api/groups/{}", app.url(), group_id))
         .bearer_auth(&token)
         .send()
         .await
@@ -421,7 +421,7 @@ async fn test_assign_role_to_user() {
 
     let role_resp = app
         .client()
-        .post(&format!("{}/api/roles", app.url()))
+        .post(format!("{}/api/roles", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -436,7 +436,7 @@ async fn test_assign_role_to_user() {
 
     let resp = app
         .client()
-        .post(&format!("{}/api/users/{}/roles", app.url(), user_id))
+        .post(format!("{}/api/users/{}/roles", app.url(), user_id))
         .bearer_auth(&token)
         .json(&json!({
             "role_id": role_id,
@@ -457,7 +457,7 @@ async fn test_list_user_roles() {
 
     let role_resp = app
         .client()
-        .post(&format!("{}/api/roles", app.url()))
+        .post(format!("{}/api/roles", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -472,7 +472,7 @@ async fn test_list_user_roles() {
 
     // Assign role
     app.client()
-        .post(&format!("{}/api/users/{}/roles", app.url(), user_id))
+        .post(format!("{}/api/users/{}/roles", app.url(), user_id))
         .bearer_auth(&token)
         .json(&json!({"role_id": role_id}))
         .send()
@@ -481,7 +481,7 @@ async fn test_list_user_roles() {
 
     let resp = app
         .client()
-        .get(&format!("{}/api/users/{}/roles", app.url(), user_id))
+        .get(format!("{}/api/users/{}/roles", app.url(), user_id))
         .bearer_auth(&token)
         .send()
         .await
@@ -490,7 +490,7 @@ async fn test_list_user_roles() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body: Value = resp.json().await.unwrap();
     assert!(body["items"].as_array().is_some());
-    assert!(body["items"].as_array().unwrap().len() >= 1);
+    assert!(!body["items"].as_array().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -502,7 +502,7 @@ async fn test_unassign_role_from_user() {
 
     let role_resp = app
         .client()
-        .post(&format!("{}/api/roles", app.url()))
+        .post(format!("{}/api/roles", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -517,7 +517,7 @@ async fn test_unassign_role_from_user() {
 
     // Assign role
     app.client()
-        .post(&format!("{}/api/users/{}/roles", app.url(), user_id))
+        .post(format!("{}/api/users/{}/roles", app.url(), user_id))
         .bearer_auth(&token)
         .json(&json!({"role_id": role_id}))
         .send()
@@ -526,7 +526,7 @@ async fn test_unassign_role_from_user() {
 
     let resp = app
         .client()
-        .delete(&format!(
+        .delete(format!(
             "{}/api/users/{}/roles/{}",
             app.url(),
             user_id,
@@ -553,7 +553,7 @@ async fn test_assign_group_to_user() {
 
     let group_resp = app
         .client()
-        .post(&format!("{}/api/groups", app.url()))
+        .post(format!("{}/api/groups", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -567,7 +567,7 @@ async fn test_assign_group_to_user() {
 
     let resp = app
         .client()
-        .post(&format!("{}/api/users/{}/groups", app.url(), user_id))
+        .post(format!("{}/api/users/{}/groups", app.url(), user_id))
         .bearer_auth(&token)
         .json(&json!({
             "group_id": group_id,
@@ -588,7 +588,7 @@ async fn test_list_user_groups() {
 
     let group_resp = app
         .client()
-        .post(&format!("{}/api/groups", app.url()))
+        .post(format!("{}/api/groups", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -601,7 +601,7 @@ async fn test_list_user_groups() {
     let group_id = group_body["id"].as_str().unwrap();
 
     app.client()
-        .post(&format!("{}/api/users/{}/groups", app.url(), user_id))
+        .post(format!("{}/api/users/{}/groups", app.url(), user_id))
         .bearer_auth(&token)
         .json(&json!({"group_id": group_id}))
         .send()
@@ -610,7 +610,7 @@ async fn test_list_user_groups() {
 
     let resp = app
         .client()
-        .get(&format!("{}/api/users/{}/groups", app.url(), user_id))
+        .get(format!("{}/api/users/{}/groups", app.url(), user_id))
         .bearer_auth(&token)
         .send()
         .await
@@ -619,7 +619,7 @@ async fn test_list_user_groups() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body: Value = resp.json().await.unwrap();
     assert!(body["items"].as_array().is_some());
-    assert!(body["items"].as_array().unwrap().len() >= 1);
+    assert!(!body["items"].as_array().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -631,7 +631,7 @@ async fn test_unassign_group_from_user() {
 
     let group_resp = app
         .client()
-        .post(&format!("{}/api/groups", app.url()))
+        .post(format!("{}/api/groups", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -644,7 +644,7 @@ async fn test_unassign_group_from_user() {
     let group_id = group_body["id"].as_str().unwrap();
 
     app.client()
-        .post(&format!("{}/api/users/{}/groups", app.url(), user_id))
+        .post(format!("{}/api/users/{}/groups", app.url(), user_id))
         .bearer_auth(&token)
         .json(&json!({"group_id": group_id}))
         .send()
@@ -653,7 +653,7 @@ async fn test_unassign_group_from_user() {
 
     let resp = app
         .client()
-        .delete(&format!(
+        .delete(format!(
             "{}/api/users/{}/groups/{}",
             app.url(),
             user_id,
@@ -679,7 +679,7 @@ async fn test_assign_role_to_group() {
 
     let group_resp = app
         .client()
-        .post(&format!("{}/api/groups", app.url()))
+        .post(format!("{}/api/groups", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -693,7 +693,7 @@ async fn test_assign_role_to_group() {
 
     let role_resp = app
         .client()
-        .post(&format!("{}/api/roles", app.url()))
+        .post(format!("{}/api/roles", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -708,7 +708,7 @@ async fn test_assign_role_to_group() {
 
     let resp = app
         .client()
-        .post(&format!("{}/api/groups/{}/roles", app.url(), group_id))
+        .post(format!("{}/api/groups/{}/roles", app.url(), group_id))
         .bearer_auth(&token)
         .json(&json!({
             "role_id": role_id,
@@ -728,7 +728,7 @@ async fn test_list_group_roles() {
 
     let group_resp = app
         .client()
-        .post(&format!("{}/api/groups", app.url()))
+        .post(format!("{}/api/groups", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -742,7 +742,7 @@ async fn test_list_group_roles() {
 
     let role_resp = app
         .client()
-        .post(&format!("{}/api/roles", app.url()))
+        .post(format!("{}/api/roles", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -756,7 +756,7 @@ async fn test_list_group_roles() {
     let role_id = role_body["id"].as_str().unwrap();
 
     app.client()
-        .post(&format!("{}/api/groups/{}/roles", app.url(), group_id))
+        .post(format!("{}/api/groups/{}/roles", app.url(), group_id))
         .bearer_auth(&token)
         .json(&json!({"role_id": role_id}))
         .send()
@@ -765,7 +765,7 @@ async fn test_list_group_roles() {
 
     let resp = app
         .client()
-        .get(&format!("{}/api/groups/{}/roles", app.url(), group_id))
+        .get(format!("{}/api/groups/{}/roles", app.url(), group_id))
         .bearer_auth(&token)
         .send()
         .await
@@ -774,7 +774,7 @@ async fn test_list_group_roles() {
     assert_eq!(resp.status(), StatusCode::OK);
     let body: Value = resp.json().await.unwrap();
     assert!(body["items"].as_array().is_some());
-    assert!(body["items"].as_array().unwrap().len() >= 1);
+    assert!(!body["items"].as_array().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -785,7 +785,7 @@ async fn test_unassign_role_from_group() {
 
     let group_resp = app
         .client()
-        .post(&format!("{}/api/groups", app.url()))
+        .post(format!("{}/api/groups", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -799,7 +799,7 @@ async fn test_unassign_role_from_group() {
 
     let role_resp = app
         .client()
-        .post(&format!("{}/api/roles", app.url()))
+        .post(format!("{}/api/roles", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -813,7 +813,7 @@ async fn test_unassign_role_from_group() {
     let role_id = role_body["id"].as_str().unwrap();
 
     app.client()
-        .post(&format!("{}/api/groups/{}/roles", app.url(), group_id))
+        .post(format!("{}/api/groups/{}/roles", app.url(), group_id))
         .bearer_auth(&token)
         .json(&json!({"role_id": role_id}))
         .send()
@@ -822,7 +822,7 @@ async fn test_unassign_role_from_group() {
 
     let resp = app
         .client()
-        .delete(&format!(
+        .delete(format!(
             "{}/api/groups/{}/roles/{}",
             app.url(),
             group_id,

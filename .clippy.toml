@@ -13,11 +13,8 @@ too-many-lines-threshold = 150
 # Maximum number of arguments in a function
 too-many-arguments-threshold = 8
 
-# Maximum struct size (in bytes) before clippy warns about large types passed by value
-trivially-copy-pass-by-macros = []
-
-# Disallow large types passed by value (threshold in bytes)
-large-types-passed-by-value = ["OidcProvider", "ClientRegistration", "AuthorizationCode"]
+# Maximum type size (in bytes) used by Clippy's pass-by-value lint.
+pass-by-value-size-limit = 256
 
 # Single-character binding names are fine in short scopes (closures, iterators)
 # but we keep the default to catch accidental misuse

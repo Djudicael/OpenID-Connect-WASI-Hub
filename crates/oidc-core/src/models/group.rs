@@ -127,7 +127,7 @@ impl Group {
             return Err(OidcError::InvalidInput("name must not be empty".into()));
         }
         let len = name.len();
-        if len < 2 || len > 100 {
+        if !(2..=100).contains(&len) {
             return Err(OidcError::InvalidInput(
                 "name must be between 2 and 100 characters".into(),
             ));

@@ -189,7 +189,7 @@ async fn test_social_login_callback_uses_persisted_state_and_binds_session_to_cl
 
     let initiate_resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/realms/master/protocol/openid-connect/social/{}?client_id={}&redirect_uri={}&state={}&nonce={}&code_challenge={}&code_challenge_method=S256&scope={}",
             app.url(),
             provider_alias,
@@ -221,7 +221,7 @@ async fn test_social_login_callback_uses_persisted_state_and_binds_session_to_cl
 
     let callback_resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/realms/master/protocol/openid-connect/social/{}/callback?code={}&state={}",
             app.url(),
             provider_alias,
@@ -265,7 +265,7 @@ async fn test_social_login_callback_uses_persisted_state_and_binds_session_to_cl
 
     let token_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&code_verifier={}",
@@ -341,7 +341,7 @@ async fn test_social_login_callback_rejects_mismatched_cookie_and_replay() {
 
     let initiate_resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/realms/master/protocol/openid-connect/social/{}?client_id={}&redirect_uri={}&state={}&code_challenge={}&code_challenge_method=S256&scope={}",
             app.url(),
             provider_alias,
@@ -368,7 +368,7 @@ async fn test_social_login_callback_rejects_mismatched_cookie_and_replay() {
 
     let mismatched_cookie_resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/realms/master/protocol/openid-connect/social/{}/callback?code={}&state={}",
             app.url(),
             provider_alias,
@@ -394,7 +394,7 @@ async fn test_social_login_callback_rejects_mismatched_cookie_and_replay() {
 
     let success_resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/realms/master/protocol/openid-connect/social/{}/callback?code={}&state={}",
             app.url(),
             provider_alias,
@@ -412,7 +412,7 @@ async fn test_social_login_callback_rejects_mismatched_cookie_and_replay() {
 
     let replay_resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/realms/master/protocol/openid-connect/social/{}/callback?code={}&state={}",
             app.url(),
             provider_alias,

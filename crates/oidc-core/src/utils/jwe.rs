@@ -354,12 +354,12 @@ pub fn encrypt_id_token_if_configured(
     };
 
     // Verify enc is A256GCM (only supported content encryption)
-    if let Some(enc) = enc_enc {
-        if enc != "A256GCM" {
-            return Err(OidcError::InvalidInput(format!(
-                "Unsupported JWE enc: {enc}. Only A256GCM is supported."
-            )));
-        }
+    if let Some(enc) = enc_enc
+        && enc != "A256GCM"
+    {
+        return Err(OidcError::InvalidInput(format!(
+            "Unsupported JWE enc: {enc}. Only A256GCM is supported."
+        )));
     }
 
     match alg {

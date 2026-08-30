@@ -113,12 +113,12 @@ impl JwtBearerFlow {
         }
 
         // iat must not be too far in the future (≤ 5 minutes)
-        if let Some(iat) = claims.iat {
-            if iat > now + 300 {
-                return Err(OidcError::InvalidClientAssertion(
-                    "JWT bearer assertion issued too far in the future".into(),
-                ));
-            }
+        if let Some(iat) = claims.iat
+            && iat > now + 300
+        {
+            return Err(OidcError::InvalidClientAssertion(
+                "JWT bearer assertion issued too far in the future".into(),
+            ));
         }
 
         // ── Step 3: Look up the client and verify the JWT signature ──

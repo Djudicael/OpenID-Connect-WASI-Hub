@@ -7,6 +7,24 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
+const MIGRATION_ADVISORY_LOCK_ID: i64 = 734_662_019;
+const MIGRATION_LOCK_TIMEOUT: &str = "10s";
+
+async fn acquire_migration_lock(conn: &mut wasi_pg_client::Connection) -> anyhow::Result<()> {
+    conn.execute(&format!("SET lock_timeout = '{MIGRATION_LOCK_TIMEOUT}'"))
+        .await?;
+    conn.query(&format!(
+        "SELECT pg_advisory_lock({MIGRATION_ADVISORY_LOCK_ID})"
+    ))
+    .await
+    .map_err(|error| {
+        anyhow::anyhow!(
+            "failed to acquire the migration lock within {MIGRATION_LOCK_TIMEOUT}: {error}"
+        )
+    })?;
+    Ok(())
+}
+
 fn parse_migration_version(name: &str) -> anyhow::Result<u32> {
     name.split_once('_')
         .and_then(|(prefix, _)| prefix.strip_prefix('V'))
@@ -51,6 +69,7 @@ async fn main() -> anyhow::Result<()> {
 
     let config = wasi_pg_client::Config::from_uri(&database_url)?;
     let mut conn = wasi_pg_client::Connection::connect(&config).await?;
+    acquire_migration_lock(&mut conn).await?;
 
     let migrations_dir = Path::new("migrations/postgresql");
     if !migrations_dir.exists() {
@@ -113,15 +132,24 @@ async fn main() -> anyhow::Result<()> {
         let sql = fs::read_to_string(&path)?;
 
         tracing::info!("apply {filename}");
-        conn.batch_execute(&sql)
-            .await
-            .map_err(|e| anyhow::anyhow!("failed to apply {}: {}", filename, e))?;
-
-        conn.execute_params(
-            "INSERT INTO _migrations (filename) VALUES ($1)",
-            &[&filename],
-        )
-        .await?;
+        conn.execute("BEGIN").await?;
+        let migration_result: anyhow::Result<()> = async {
+            conn.batch_execute(&sql)
+                .await
+                .map_err(|error| anyhow::anyhow!("failed to apply {filename}: {error}"))?;
+            conn.execute_params(
+                "INSERT INTO _migrations (filename) VALUES ($1)",
+                &[&filename],
+            )
+            .await?;
+            Ok(())
+        }
+        .await;
+        if let Err(error) = migration_result {
+            let _ = conn.execute("ROLLBACK").await;
+            return Err(error);
+        }
+        conn.execute("COMMIT").await?;
 
         tracing::info!("applied {filename} ok");
     }

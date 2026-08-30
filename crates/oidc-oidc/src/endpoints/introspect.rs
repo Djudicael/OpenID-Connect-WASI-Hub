@@ -38,9 +38,9 @@ pub async fn introspect_handler(
     let mut conn = state
         .connect()
         .await
-        .map_err(|e| OidcErrorResponse::from_internal(e))?;
+        .map_err(OidcErrorResponse::from_internal)?;
 
-    let result = with_transaction!(conn, |e| OidcErrorResponse::from_internal(e), {
+    let result = with_transaction!(conn, OidcErrorResponse::from_internal, {
         // --- Client authentication ---
         let endpoint_uri = state.introspection_endpoint_uri();
         let client = authenticate_client_for_endpoint(
@@ -120,17 +120,17 @@ pub async fn introspect_handler(
         });
 
         // Include cnf claim for DPoP-bound tokens (RFC 9449)
-        if let Some(cnf) = claims.cnf {
-            if let Some(obj) = response.as_object_mut() {
-                obj.insert("cnf".to_string(), cnf);
-            }
+        if let Some(cnf) = claims.cnf
+            && let Some(obj) = response.as_object_mut()
+        {
+            obj.insert("cnf".to_string(), cnf);
         }
 
         // Include authorization_details for RAR tokens (RFC 9396)
-        if let Some(auth_details) = claims.authorization_details {
-            if let Some(obj) = response.as_object_mut() {
-                obj.insert("authorization_details".to_string(), auth_details);
-            }
+        if let Some(auth_details) = claims.authorization_details
+            && let Some(obj) = response.as_object_mut()
+        {
+            obj.insert("authorization_details".to_string(), auth_details);
         }
 
         Ok(Json(response))

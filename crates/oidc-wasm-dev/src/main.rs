@@ -174,9 +174,12 @@ async fn main() -> Result<()> {
         "status" => cmd_status(&state).await,
         "test" => cmd_test(&state).await,
         "smoke" => cmd_smoke(&state).await,
+        "seed" => cmd_seed().await,
         "e2e" => cmd_e2e(extra_args).await,
         _ => {
-            eprintln!("Usage: cargo run -p oidc-wasm-dev -- [start|stop|status|test|smoke|e2e]");
+            eprintln!(
+                "Usage: cargo run -p oidc-wasm-dev -- [start|stop|status|test|smoke|seed|e2e]"
+            );
             std::process::exit(1);
         }
     }
@@ -265,6 +268,19 @@ async fn cmd_smoke(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
     let result = run_smoke_tests(&base_url).await;
     shutdown_all(state).await;
     result
+}
+
+/// Apply migrations and seed a caller-provided PostgreSQL database without
+/// starting the host-side dev proxy or either Wasmtime process.
+async fn cmd_seed() -> Result<()> {
+    let db_url = std::env::var("OIDC_DATABASE_URL")
+        .context("OIDC_DATABASE_URL is required for the seed command")?;
+    let proxy_port = std::env::var("OIDC_PROXY_PORT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(8088);
+    run_migrations(&db_url).await?;
+    seed_data(&db_url, proxy_port).await
 }
 
 async fn prepare_environment(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
@@ -735,6 +751,12 @@ async fn run_migrations(db_url: &str) -> Result<()> {
     let mut conn = wasi_pg_client::Connection::connect(&config)
         .await
         .context("failed to connect to database for migrations")?;
+    conn.execute("SET lock_timeout = '10s'")
+        .await
+        .context("failed to configure the migration lock timeout")?;
+    conn.query("SELECT pg_advisory_lock(734662019)")
+        .await
+        .context("failed to acquire the migration lock within 10s")?;
 
     let migrations_dir = std::path::Path::new(MIGRATIONS_DIR);
     if !migrations_dir.exists() {
@@ -791,15 +813,24 @@ async fn run_migrations(db_url: &str) -> Result<()> {
         let sql = std::fs::read_to_string(&path)?;
 
         info!("apply {filename}");
-        conn.query(&sql)
-            .await
-            .with_context(|| format!("failed to apply {filename}"))?;
-
-        conn.execute_params(
-            "INSERT INTO _migrations (filename) VALUES ($1)",
-            &[&filename],
-        )
-        .await?;
+        conn.execute("BEGIN").await?;
+        let migration_result: Result<()> = async {
+            conn.batch_execute(&sql)
+                .await
+                .with_context(|| format!("failed to apply {filename}"))?;
+            conn.execute_params(
+                "INSERT INTO _migrations (filename) VALUES ($1)",
+                &[&filename],
+            )
+            .await?;
+            Ok(())
+        }
+        .await;
+        if let Err(error) = migration_result {
+            let _ = conn.execute("ROLLBACK").await;
+            return Err(error);
+        }
+        conn.execute("COMMIT").await?;
 
         info!("applied {filename} ok");
     }
@@ -886,7 +917,7 @@ async fn seed_data(db_url: &str, proxy_port: u16) -> Result<()> {
                 let user = oidc_core::models::User {
                     id,
                     realm_id,
-                    email: seeded_admin_email.clone().into(),
+                    email: seeded_admin_email.clone(),
                     email_verified: true,
                     username: Some("admin".into()),
                     password_hash: Some(password_hash),

@@ -32,7 +32,7 @@ use crate::helpers::fixtures;
 async fn admin_login(app: &TestApp) -> String {
     let resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -66,7 +66,7 @@ async fn test_stats_endpoint() {
     let token = admin_login(&app).await;
 
     let resp = admin_client(&app, &token)
-        .get(&format!("{}/api/stats", app.url()))
+        .get(format!("{}/api/stats", app.url()))
         .bearer_auth(&token)
         .send()
         .await
@@ -86,7 +86,7 @@ async fn test_admin_routes_set_server_issued_csrf_cookie_and_reject_mismatched_h
     let token = admin_login(&app).await;
 
     let browser_post_without_csrf = admin_client(&app, &token)
-        .post(&format!("{}/api/realms", app.url()))
+        .post(format!("{}/api/realms", app.url()))
         .bearer_auth(&token)
         .header(reqwest::header::ORIGIN, "https://app.example.com")
         .json(&json!({
@@ -106,7 +106,7 @@ async fn test_admin_routes_set_server_issued_csrf_cookie_and_reject_mismatched_h
     assert_eq!(browser_body["error"], "csrf_validation_failed");
 
     let get_resp = admin_client(&app, &token)
-        .get(&format!("{}/api/realms?limit=1", app.url()))
+        .get(format!("{}/api/realms?limit=1", app.url()))
         .bearer_auth(&token)
         .send()
         .await
@@ -117,7 +117,7 @@ async fn test_admin_routes_set_server_issued_csrf_cookie_and_reject_mismatched_h
         .expect("server should issue a CSRF cookie on admin GET requests");
 
     let bad_post = admin_client(&app, &token)
-        .post(&format!("{}/api/realms", app.url()))
+        .post(format!("{}/api/realms", app.url()))
         .bearer_auth(&token)
         .header(
             reqwest::header::COOKIE,
@@ -138,7 +138,7 @@ async fn test_admin_routes_set_server_issued_csrf_cookie_and_reject_mismatched_h
     assert_eq!(body["error"], "csrf_validation_failed");
 
     let ok_post = admin_client(&app, &token)
-        .post(&format!("{}/api/realms", app.url()))
+        .post(format!("{}/api/realms", app.url()))
         .bearer_auth(&token)
         .header(
             reqwest::header::COOKIE,
@@ -163,7 +163,7 @@ async fn test_reencrypt_legacy_secrets_maintenance_endpoint() {
     let token = admin_login(&app).await;
 
     let csrf_get = admin_client(&app, &token)
-        .get(&format!("{}/api/realms?limit=1", app.url()))
+        .get(format!("{}/api/realms?limit=1", app.url()))
         .bearer_auth(&token)
         .send()
         .await
@@ -173,7 +173,7 @@ async fn test_reencrypt_legacy_secrets_maintenance_endpoint() {
         .expect("server should issue a CSRF cookie");
 
     let legacy_realm_resp = admin_client(&app, &token)
-        .post(&format!("{}/api/realms", app.url()))
+        .post(format!("{}/api/realms", app.url()))
         .bearer_auth(&token)
         .header(
             reqwest::header::COOKIE,
@@ -263,7 +263,7 @@ async fn test_reencrypt_legacy_secrets_maintenance_endpoint() {
     let _ = conn.close().await;
 
     let reencrypt_resp = admin_client(&app, &token)
-        .post(&format!("{}/api/maintenance/reencrypt-secrets", app.url()))
+        .post(format!("{}/api/maintenance/reencrypt-secrets", app.url()))
         .bearer_auth(&token)
         .header(
             reqwest::header::COOKIE,
@@ -319,7 +319,7 @@ async fn test_stats_requires_auth() {
 
     let resp = app
         .client()
-        .get(&format!("{}/api/stats", app.url()))
+        .get(format!("{}/api/stats", app.url()))
         .send()
         .await
         .expect("stats request failed");
@@ -338,7 +338,7 @@ async fn test_create_user() {
 
     // Get realm ID
     let realms_resp = admin_client(&app, &token)
-        .get(&format!("{}/api/realms?limit=1", app.url()))
+        .get(format!("{}/api/realms?limit=1", app.url()))
         .bearer_auth(&token)
         .send()
         .await
@@ -347,7 +347,7 @@ async fn test_create_user() {
     let realm_id = realms_body["items"][0]["id"].as_str().unwrap();
 
     let resp = admin_client(&app, &token)
-        .post(&format!("{}/api/users", app.url()))
+        .post(format!("{}/api/users", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -375,7 +375,7 @@ async fn test_create_user_invalid_email() {
     let token = admin_login(&app).await;
 
     let realms_resp = admin_client(&app, &token)
-        .get(&format!("{}/api/realms?limit=1", app.url()))
+        .get(format!("{}/api/realms?limit=1", app.url()))
         .bearer_auth(&token)
         .send()
         .await
@@ -384,7 +384,7 @@ async fn test_create_user_invalid_email() {
     let realm_id = realms_body["items"][0]["id"].as_str().unwrap();
 
     let resp = admin_client(&app, &token)
-        .post(&format!("{}/api/users", app.url()))
+        .post(format!("{}/api/users", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -404,7 +404,7 @@ async fn test_create_user_weak_password() {
     let token = admin_login(&app).await;
 
     let realms_resp = admin_client(&app, &token)
-        .get(&format!("{}/api/realms?limit=1", app.url()))
+        .get(format!("{}/api/realms?limit=1", app.url()))
         .bearer_auth(&token)
         .send()
         .await
@@ -413,7 +413,7 @@ async fn test_create_user_weak_password() {
     let realm_id = realms_body["items"][0]["id"].as_str().unwrap();
 
     let resp = admin_client(&app, &token)
-        .post(&format!("{}/api/users", app.url()))
+        .post(format!("{}/api/users", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -433,7 +433,7 @@ async fn test_list_users() {
     let token = admin_login(&app).await;
 
     let resp = admin_client(&app, &token)
-        .get(&format!("{}/api/users?limit=10", app.url()))
+        .get(format!("{}/api/users?limit=10", app.url()))
         .bearer_auth(&token)
         .send()
         .await
@@ -443,7 +443,7 @@ async fn test_list_users() {
     let body: Value = resp.json().await.unwrap();
     assert!(body["items"].as_array().is_some());
     assert!(body["total"].as_i64().is_some());
-    assert!(body["items"].as_array().unwrap().len() >= 1);
+    assert!(!body["items"].as_array().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -453,7 +453,7 @@ async fn test_get_user() {
 
     // First list users to get an ID
     let list_resp = admin_client(&app, &token)
-        .get(&format!("{}/api/users?limit=1", app.url()))
+        .get(format!("{}/api/users?limit=1", app.url()))
         .bearer_auth(&token)
         .send()
         .await
@@ -462,7 +462,7 @@ async fn test_get_user() {
     let user_id = list_body["items"][0]["id"].as_str().unwrap();
 
     let resp = admin_client(&app, &token)
-        .get(&format!("{}/api/users/{}", app.url(), user_id))
+        .get(format!("{}/api/users/{}", app.url(), user_id))
         .bearer_auth(&token)
         .send()
         .await
@@ -480,7 +480,7 @@ async fn test_get_user_not_found() {
     let token = admin_login(&app).await;
 
     let resp = admin_client(&app, &token)
-        .get(&format!(
+        .get(format!(
             "{}/api/users/00000000-0000-0000-0000-000000000000",
             app.url()
         ))
@@ -499,7 +499,7 @@ async fn test_update_user() {
 
     // Create a user first
     let realms_resp = admin_client(&app, &token)
-        .get(&format!("{}/api/realms?limit=1", app.url()))
+        .get(format!("{}/api/realms?limit=1", app.url()))
         .bearer_auth(&token)
         .send()
         .await
@@ -508,7 +508,7 @@ async fn test_update_user() {
     let realm_id = realms_body["items"][0]["id"].as_str().unwrap();
 
     let create_resp = admin_client(&app, &token)
-        .post(&format!("{}/api/users", app.url()))
+        .post(format!("{}/api/users", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -524,7 +524,7 @@ async fn test_update_user() {
 
     // Update the user
     let resp = admin_client(&app, &token)
-        .put(&format!("{}/api/users/{}", app.url(), user_id))
+        .put(format!("{}/api/users/{}", app.url(), user_id))
         .bearer_auth(&token)
         .json(&json!({
             "given_name": "Updated",
@@ -538,7 +538,7 @@ async fn test_update_user() {
 
     // Verify the update
     let get_resp = admin_client(&app, &token)
-        .get(&format!("{}/api/users/{}", app.url(), user_id))
+        .get(format!("{}/api/users/{}", app.url(), user_id))
         .bearer_auth(&token)
         .send()
         .await
@@ -554,7 +554,7 @@ async fn test_delete_user() {
     let token = admin_login(&app).await;
 
     let realms_resp = admin_client(&app, &token)
-        .get(&format!("{}/api/realms?limit=1", app.url()))
+        .get(format!("{}/api/realms?limit=1", app.url()))
         .bearer_auth(&token)
         .send()
         .await
@@ -563,7 +563,7 @@ async fn test_delete_user() {
     let realm_id = realms_body["items"][0]["id"].as_str().unwrap();
 
     let create_resp = admin_client(&app, &token)
-        .post(&format!("{}/api/users", app.url()))
+        .post(format!("{}/api/users", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -577,7 +577,7 @@ async fn test_delete_user() {
     let user_id = create_body["id"].as_str().unwrap();
 
     let resp = admin_client(&app, &token)
-        .delete(&format!("{}/api/users/{}", app.url(), user_id))
+        .delete(format!("{}/api/users/{}", app.url(), user_id))
         .bearer_auth(&token)
         .send()
         .await
@@ -589,7 +589,7 @@ async fn test_delete_user() {
 
     // Verify user is gone (soft delete)
     let get_resp = admin_client(&app, &token)
-        .get(&format!("{}/api/users/{}", app.url(), user_id))
+        .get(format!("{}/api/users/{}", app.url(), user_id))
         .bearer_auth(&token)
         .send()
         .await
@@ -607,7 +607,7 @@ async fn test_list_clients() {
     let token = admin_login(&app).await;
 
     let resp = admin_client(&app, &token)
-        .get(&format!("{}/api/clients?limit=10", app.url()))
+        .get(format!("{}/api/clients?limit=10", app.url()))
         .bearer_auth(&token)
         .send()
         .await
@@ -625,7 +625,7 @@ async fn test_get_client() {
     let token = admin_login(&app).await;
 
     let list_resp = admin_client(&app, &token)
-        .get(&format!("{}/api/clients?limit=1", app.url()))
+        .get(format!("{}/api/clients?limit=1", app.url()))
         .bearer_auth(&token)
         .send()
         .await
@@ -634,7 +634,7 @@ async fn test_get_client() {
     let client_id = list_body["items"][0]["id"].as_str().unwrap();
 
     let resp = admin_client(&app, &token)
-        .get(&format!("{}/api/clients/{}", app.url(), client_id))
+        .get(format!("{}/api/clients/{}", app.url(), client_id))
         .bearer_auth(&token)
         .send()
         .await
@@ -652,7 +652,7 @@ async fn test_update_client() {
     let token = admin_login(&app).await;
 
     let list_resp = admin_client(&app, &token)
-        .get(&format!("{}/api/clients?limit=1", app.url()))
+        .get(format!("{}/api/clients?limit=1", app.url()))
         .bearer_auth(&token)
         .send()
         .await
@@ -661,7 +661,7 @@ async fn test_update_client() {
     let client_id = list_body["items"][0]["id"].as_str().unwrap();
 
     let resp = admin_client(&app, &token)
-        .put(&format!("{}/api/clients/{}", app.url(), client_id))
+        .put(format!("{}/api/clients/{}", app.url(), client_id))
         .bearer_auth(&token)
         .json(&json!({
             "name": "Updated Client Name",
@@ -674,7 +674,7 @@ async fn test_update_client() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     let get_resp = admin_client(&app, &token)
-        .get(&format!("{}/api/clients/{}", app.url(), client_id))
+        .get(format!("{}/api/clients/{}", app.url(), client_id))
         .bearer_auth(&token)
         .send()
         .await
@@ -690,7 +690,7 @@ async fn test_delete_client() {
     let token = admin_login(&app).await;
 
     let realms_resp = admin_client(&app, &token)
-        .get(&format!("{}/api/realms?limit=1", app.url()))
+        .get(format!("{}/api/realms?limit=1", app.url()))
         .bearer_auth(&token)
         .send()
         .await
@@ -699,7 +699,7 @@ async fn test_delete_client() {
     let realm_id = realms_body["items"][0]["id"].as_str().unwrap();
 
     let create_resp = admin_client(&app, &token)
-        .post(&format!("{}/api/clients", app.url()))
+        .post(format!("{}/api/clients", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "realm_id": realm_id,
@@ -713,7 +713,7 @@ async fn test_delete_client() {
     let client_id = create_body["id"].as_str().unwrap();
 
     let resp = admin_client(&app, &token)
-        .delete(&format!("{}/api/clients/{}", app.url(), client_id))
+        .delete(format!("{}/api/clients/{}", app.url(), client_id))
         .bearer_auth(&token)
         .send()
         .await
@@ -734,7 +734,7 @@ async fn test_create_realm_encrypts_signing_keys_at_rest() {
     let token = admin_login(&app).await;
 
     let resp = admin_client(&app, &token)
-        .post(&format!("{}/api/realms", app.url()))
+        .post(format!("{}/api/realms", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "name": "encrypted-keys-realm",
@@ -775,7 +775,7 @@ async fn test_create_realm() {
     let token = admin_login(&app).await;
 
     let resp = admin_client(&app, &token)
-        .post(&format!("{}/api/realms", app.url()))
+        .post(format!("{}/api/realms", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "name": "test-realm-create",
@@ -799,7 +799,7 @@ async fn test_get_realm() {
     let token = admin_login(&app).await;
 
     let list_resp = admin_client(&app, &token)
-        .get(&format!("{}/api/realms?limit=1", app.url()))
+        .get(format!("{}/api/realms?limit=1", app.url()))
         .bearer_auth(&token)
         .send()
         .await
@@ -808,7 +808,7 @@ async fn test_get_realm() {
     let realm_id = list_body["items"][0]["id"].as_str().unwrap();
 
     let resp = admin_client(&app, &token)
-        .get(&format!("{}/api/realms/{}", app.url(), realm_id))
+        .get(format!("{}/api/realms/{}", app.url(), realm_id))
         .bearer_auth(&token)
         .send()
         .await
@@ -826,7 +826,7 @@ async fn test_delete_realm() {
     let token = admin_login(&app).await;
 
     let create_resp = admin_client(&app, &token)
-        .post(&format!("{}/api/realms", app.url()))
+        .post(format!("{}/api/realms", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "name": "delete-test-realm",
@@ -840,7 +840,7 @@ async fn test_delete_realm() {
     let realm_id = create_body["id"].as_str().unwrap();
 
     let resp = admin_client(&app, &token)
-        .delete(&format!("{}/api/realms/{}", app.url(), realm_id))
+        .delete(format!("{}/api/realms/{}", app.url(), realm_id))
         .bearer_auth(&token)
         .send()
         .await
@@ -861,7 +861,7 @@ async fn test_list_sessions() {
     let token = admin_login(&app).await;
 
     let resp = admin_client(&app, &token)
-        .get(&format!("{}/api/sessions?limit=10", app.url()))
+        .get(format!("{}/api/sessions?limit=10", app.url()))
         .bearer_auth(&token)
         .send()
         .await
@@ -881,7 +881,7 @@ async fn test_revoke_session() {
     // Login to create a session
     let login_resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -893,7 +893,7 @@ async fn test_revoke_session() {
 
     // List sessions to find the one we just created
     let list_resp = admin_client(&app, &token)
-        .get(&format!("{}/api/sessions?limit=10", app.url()))
+        .get(format!("{}/api/sessions?limit=10", app.url()))
         .bearer_auth(&token)
         .send()
         .await
@@ -904,7 +904,7 @@ async fn test_revoke_session() {
         let session_id = session["id"].as_str().unwrap();
 
         let resp = admin_client(&app, &token)
-            .post(&format!("{}/api/sessions/{}/revoke", app.url(), session_id))
+            .post(format!("{}/api/sessions/{}/revoke", app.url(), session_id))
             .bearer_auth(&token)
             .send()
             .await
@@ -926,7 +926,7 @@ async fn test_list_audit_events() {
     let token = admin_login(&app).await;
 
     let resp = admin_client(&app, &token)
-        .get(&format!("{}/api/audit/events?limit=10", app.url()))
+        .get(format!("{}/api/audit/events?limit=10", app.url()))
         .bearer_auth(&token)
         .send()
         .await
@@ -945,7 +945,7 @@ async fn test_list_audit_events_with_filter() {
 
     // Login creates an audit event
     app.client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -955,7 +955,7 @@ async fn test_list_audit_events_with_filter() {
         .unwrap();
 
     let resp = admin_client(&app, &token)
-        .get(&format!(
+        .get(format!(
             "{}/api/audit/events?limit=10&event_type=user.login",
             app.url()
         ))

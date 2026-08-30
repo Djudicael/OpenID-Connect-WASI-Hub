@@ -229,6 +229,46 @@ The baseline scan is passive only. For comprehensive security testing, consider:
 | Dependency audit | `cargo audit` / `cargo deny` | Every build (in main CI) |
 | Penetration testing | Manual + professional tools | Before production launch |
 
+## Protocol-negative and log-redaction gate
+
+The ZAP baseline does not replace focused OpenID Connect protocol tests. Run the
+following in Linux or WSL before promoting a backend artifact:
+
+```bash
+export CARGO_TARGET_DIR=/tmp/openid-connect-wasi-target
+cargo test -p integration-tests security_tests:: -- --test-threads=1
+cargo test -p openid-connect-wasi middleware::logging::tests
+cargo clippy -p oidc-oidc -p openid-connect-wasi -p integration-tests \
+  --all-targets -- -D warnings
+cargo build -p openid-connect-wasi --target wasm32-wasip2 --release
+```
+
+Required behavior:
+
+- validate the client and exact registered redirect URI before using a caller
+  redirect for either success or error delivery;
+- reject replayed and expired authorization codes and expired login sessions;
+- bind nonce to the authorization transaction and returned ID token;
+- log request paths, never complete URIs containing `code`, `state`, `nonce`,
+  `request`, or other query values; and
+- never log authorization/cookie headers, passwords, tokens, client secrets, or
+  database URLs.
+
+`state` belongs to the relying party: the authorization server echoes the opaque
+value, while the RP must reject mismatch. A nonce is checked against the ID token
+and is not an independently expiring server-side credential. Validate RP state
+mismatch, ID-token nonce mismatch, and clock skew in the real client integration.
+
+The API-key timing regression compares two invalid secrets with the same stored
+lookup prefix and mismatches at opposite ends. Do not compare a valid endpoint
+request with an invalid one: a valid request performs usage accounting and the
+protected operation, so that measures authorization outcome work rather than
+constant-time hash verification.
+
+The development seed commands print disposable local credentials. They must not
+run in production automation. Production bootstrap must retrieve secrets from
+the approved secret system and must not print them.
+
 ### Running an Active Scan (Advanced)
 
 > ⚠️ **Warning**: Active scans send attack payloads. Only run against test/staging environments, never production.

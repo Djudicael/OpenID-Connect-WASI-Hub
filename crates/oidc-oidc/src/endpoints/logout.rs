@@ -40,74 +40,63 @@ pub async fn logout_handler(
     let mut sid_opt: Option<String> = None;
     let mut logout_client_ids: Vec<uuid::Uuid> = Vec::new();
 
-    if let Some(id_token_hint) = params.get("id_token_hint") {
-        if let Ok(mut conn) = state.connect().await {
-            // Best-effort transaction: begin, revoke, commit (ignore errors)
-            if conn.begin().await.is_ok() {
-                if let Ok(subject) = state.verify_id_token_any_issuer(id_token_hint).await {
-                    if let Ok(user_id) = subject.parse::<uuid::Uuid>() {
-                        user_id_opt = Some(user_id);
+    if let Some(id_token_hint) = params.get("id_token_hint")
+        && let Ok(mut conn) = state.connect().await
+    {
+        // Best-effort transaction: begin, revoke, commit (ignore errors)
+        if conn.begin().await.is_ok() {
+            if let Ok(subject) = state.verify_id_token_any_issuer(id_token_hint).await
+                && let Ok(user_id) = subject.parse::<uuid::Uuid>()
+            {
+                user_id_opt = Some(user_id);
 
-                        // Find active sessions for this user to get sid and client info
-                        if let Ok(sessions) =
-                            SessionRepo.find_active_by_user_id(&mut conn, user_id).await
-                        {
-                            for session in &sessions {
-                                if sid_opt.is_none() {
-                                    sid_opt = Some(session.sid.clone());
-                                }
-                                if !logout_client_ids.contains(&session.client_id) {
-                                    logout_client_ids.push(session.client_id);
-                                }
-                            }
+                // Find active sessions for this user to get sid and client info
+                if let Ok(sessions) = SessionRepo.find_active_by_user_id(&mut conn, user_id).await {
+                    for session in &sessions {
+                        if sid_opt.is_none() {
+                            sid_opt = Some(session.sid.clone());
                         }
-
-                        // Revoke all sessions for the user
-                        let _ = SessionRepo.revoke_by_user_id(&mut conn, user_id).await;
+                        if !logout_client_ids.contains(&session.client_id) {
+                            logout_client_ids.push(session.client_id);
+                        }
                     }
                 }
-                let _ = conn.commit().await;
+
+                // Revoke all sessions for the user
+                let _ = SessionRepo.revoke_by_user_id(&mut conn, user_id).await;
             }
+            let _ = conn.commit().await;
         }
     }
 
     // Also try to extract session from cookie if id_token_hint wasn't provided
-    if user_id_opt.is_none() {
-        if let Ok(key) = state.decode_encryption_key() {
-            if let Some(session_id_str) =
-                session_cookie::extract_session_id_from_headers(&headers, &key)
-            {
-                if let Ok(sid_uuid) = uuid::Uuid::parse_str(&session_id_str) {
-                    if let Ok(mut conn) = state.connect().await {
-                        if let Ok(Some(session)) = SessionRepo.find_by_id(&mut conn, sid_uuid).await
-                        {
-                            if !session.revoked {
-                                user_id_opt = session.user_id;
-                                sid_opt = Some(session.sid.clone());
-                                if !logout_client_ids.contains(&session.client_id) {
-                                    logout_client_ids.push(session.client_id);
-                                }
+    if user_id_opt.is_none()
+        && let Ok(key) = state.decode_encryption_key()
+        && let Some(session_id_str) =
+            session_cookie::extract_session_id_from_headers(&headers, &key)
+        && let Ok(sid_uuid) = uuid::Uuid::parse_str(&session_id_str)
+        && let Ok(mut conn) = state.connect().await
+        && let Ok(Some(session)) = SessionRepo.find_by_id(&mut conn, sid_uuid).await
+        && !session.revoked
+    {
+        user_id_opt = session.user_id;
+        sid_opt = Some(session.sid.clone());
+        if !logout_client_ids.contains(&session.client_id) {
+            logout_client_ids.push(session.client_id);
+        }
 
-                                // Find all sessions for this user (for multi-client logout)
-                                if let Some(uid) = session.user_id {
-                                    if let Ok(all_sessions) =
-                                        SessionRepo.find_active_by_user_id(&mut conn, uid).await
-                                    {
-                                        for s in &all_sessions {
-                                            if !logout_client_ids.contains(&s.client_id) {
-                                                logout_client_ids.push(s.client_id);
-                                            }
-                                        }
-                                    }
-                                    let _ = SessionRepo.revoke_by_user_id(&mut conn, uid).await;
-                                } else {
-                                    let _ = SessionRepo.revoke(&mut conn, session.id).await;
-                                }
-                            }
-                        }
+        // Find all sessions for this user (for multi-client logout)
+        if let Some(uid) = session.user_id {
+            if let Ok(all_sessions) = SessionRepo.find_active_by_user_id(&mut conn, uid).await {
+                for s in &all_sessions {
+                    if !logout_client_ids.contains(&s.client_id) {
+                        logout_client_ids.push(s.client_id);
                     }
                 }
             }
+            let _ = SessionRepo.revoke_by_user_id(&mut conn, uid).await;
+        } else {
+            let _ = SessionRepo.revoke(&mut conn, session.id).await;
         }
     }
 
@@ -115,55 +104,55 @@ pub async fn logout_handler(
     let mut frontchannel_clients: Vec<oidc_core::models::Client> = Vec::new();
     let mut backchannel_clients: Vec<oidc_core::models::Client> = Vec::new();
 
-    if !logout_client_ids.is_empty() {
-        if let Ok(mut conn) = state.connect().await {
-            for client_db_id in &logout_client_ids {
-                if let Ok(Some(client)) = ClientRepo.find_by_id(&mut conn, *client_db_id).await {
-                    if client.frontchannel_logout_uri.is_some() {
-                        frontchannel_clients.push(client.clone());
-                    }
-                    if client.backchannel_logout_uri.is_some() {
-                        backchannel_clients.push(client.clone());
-                    }
+    if !logout_client_ids.is_empty()
+        && let Ok(mut conn) = state.connect().await
+    {
+        for client_db_id in &logout_client_ids {
+            if let Ok(Some(client)) = ClientRepo.find_by_id(&mut conn, *client_db_id).await {
+                if client.frontchannel_logout_uri.is_some() {
+                    frontchannel_clients.push(client.clone());
+                }
+                if client.backchannel_logout_uri.is_some() {
+                    backchannel_clients.push(client.clone());
                 }
             }
         }
     }
 
     // --- Back-Channel Logout (fire-and-forget) ---
-    if !backchannel_clients.is_empty() {
-        if let (Some(user_id), Some(sid)) = (&user_id_opt, &sid_opt) {
-            let subject = user_id.to_string();
-            let bc_refs: Vec<&oidc_core::models::Client> = backchannel_clients.iter().collect();
-            // Fire-and-forget: log results but don't block the response
-            let issuer = state.issuer.clone();
-            let token_svc = match backchannel_clients.first() {
-                Some(client) => match state.token_service_for_realm(client.realm_id).await {
-                    Ok(svc) => svc,
-                    Err(_) => state.token_service.clone(),
-                },
-                None => state.token_service.clone(),
-            };
-            // We spawn the backchannel logout as a best-effort async operation
-            // In WASI P2, we can't spawn threads, so we run it inline but don't
-            // let failures block the response
-            let results =
-                perform_backchannel_logout(&token_svc, &issuer, &subject, sid, &bc_refs).await;
-            for result in &results {
-                if result.success {
-                    tracing::info!(
-                        "Back-channel logout delivered to {} ({})",
-                        result.client_id,
-                        result.uri
-                    );
-                } else {
-                    tracing::warn!(
-                        "Back-channel logout FAILED for {} ({}): {:?}",
-                        result.client_id,
-                        result.uri,
-                        result.error
-                    );
-                }
+    if !backchannel_clients.is_empty()
+        && let (Some(user_id), Some(sid)) = (&user_id_opt, &sid_opt)
+    {
+        let subject = user_id.to_string();
+        let bc_refs: Vec<&oidc_core::models::Client> = backchannel_clients.iter().collect();
+        // Fire-and-forget: log results but don't block the response
+        let issuer = state.issuer.clone();
+        let token_svc = match backchannel_clients.first() {
+            Some(client) => match state.token_service_for_realm(client.realm_id).await {
+                Ok(svc) => svc,
+                Err(_) => state.token_service.clone(),
+            },
+            None => state.token_service.clone(),
+        };
+        // We spawn the backchannel logout as a best-effort async operation
+        // In WASI P2, we can't spawn threads, so we run it inline but don't
+        // let failures block the response
+        let results =
+            perform_backchannel_logout(&token_svc, &issuer, &subject, sid, &bc_refs).await;
+        for result in &results {
+            if result.success {
+                tracing::info!(
+                    "Back-channel logout delivered to {} ({})",
+                    result.client_id,
+                    result.uri
+                );
+            } else {
+                tracing::warn!(
+                    "Back-channel logout FAILED for {} ({}): {:?}",
+                    result.client_id,
+                    result.uri,
+                    result.error
+                );
             }
         }
     }
@@ -177,25 +166,25 @@ pub async fn logout_handler(
 
     // --- Front-Channel Logout ---
     // If any clients have frontchannel_logout_uri, return the HTML page with iframes
-    if !frontchannel_clients.is_empty() {
-        if let (Some(_user_id), Some(sid)) = (&user_id_opt, &sid_opt) {
-            let fc_refs: Vec<&oidc_core::models::Client> = frontchannel_clients.iter().collect();
-            let mut response = build_frontchannel_logout_html(
-                &state.issuer,
-                sid,
-                &fc_refs,
-                validated_uri.as_deref(),
-                state_param.as_deref(),
-            );
+    if !frontchannel_clients.is_empty()
+        && let (Some(_user_id), Some(sid)) = (&user_id_opt, &sid_opt)
+    {
+        let fc_refs: Vec<&oidc_core::models::Client> = frontchannel_clients.iter().collect();
+        let mut response = build_frontchannel_logout_html(
+            &state.issuer,
+            sid,
+            &fc_refs,
+            validated_uri.as_deref(),
+            state_param.as_deref(),
+        );
 
-            // Clear the session cookie
-            let clear_header = session_cookie::clear_session_cookie_header();
-            if let Ok(value) = clear_header.parse() {
-                response.headers_mut().insert(SET_COOKIE, value);
-            }
-
-            return response;
+        // Clear the session cookie
+        let clear_header = session_cookie::clear_session_cookie_header();
+        if let Ok(value) = clear_header.parse() {
+            response.headers_mut().insert(SET_COOKIE, value);
         }
+
+        return response;
     }
 
     // --- Standard redirect-based logout (no front-channel clients) ---

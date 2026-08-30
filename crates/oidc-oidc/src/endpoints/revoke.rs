@@ -33,9 +33,9 @@ pub async fn revoke_handler(
     let mut conn = state
         .connect()
         .await
-        .map_err(|e| OidcErrorResponse::from_internal(e))?;
+        .map_err(OidcErrorResponse::from_internal)?;
 
-    with_transaction!(conn, |e| OidcErrorResponse::from_internal(e), {
+    with_transaction!(conn, OidcErrorResponse::from_internal, {
         // --- Client authentication ---
         let endpoint_uri = state.revocation_endpoint_uri();
         let client = authenticate_client_for_endpoint(
@@ -50,16 +50,15 @@ pub async fn revoke_handler(
         let token_hash = oidc_core::utils::sha2_256_hex(token);
 
         // Try refresh token first if hinted, otherwise try access token
-        if token_type_hint == Some("refresh_token") {
-            if let Ok(Some(session)) = SessionRepo
+        if token_type_hint == Some("refresh_token")
+            && let Ok(Some(session)) = SessionRepo
                 .find_by_refresh_token_hash(&mut conn, &token_hash)
                 .await
-            {
-                if session.client_id == client.id {
-                    let _ = SessionRepo.revoke(&mut conn, session.id).await;
-                }
-                return Ok(Json(json!({})));
+        {
+            if session.client_id == client.id {
+                let _ = SessionRepo.revoke(&mut conn, session.id).await;
             }
+            return Ok(Json(json!({})));
         }
 
         // Try as access token
@@ -74,16 +73,15 @@ pub async fn revoke_handler(
         }
 
         // Also try as refresh token if not already tried
-        if token_type_hint != Some("refresh_token") {
-            if let Ok(Some(session)) = SessionRepo
+        if token_type_hint != Some("refresh_token")
+            && let Ok(Some(session)) = SessionRepo
                 .find_by_refresh_token_hash(&mut conn, &token_hash)
                 .await
-            {
-                if session.client_id == client.id {
-                    let _ = SessionRepo.revoke(&mut conn, session.id).await;
-                }
-                return Ok(Json(json!({})));
+        {
+            if session.client_id == client.id {
+                let _ = SessionRepo.revoke(&mut conn, session.id).await;
             }
+            return Ok(Json(json!({})));
         }
 
         // Per RFC 7009, return 200 even if token not found

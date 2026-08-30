@@ -860,6 +860,12 @@ async fn run_migrations(db_url: &str) -> Result<()> {
     let mut conn = wasi_pg_client::Connection::connect(&config)
         .await
         .context("failed to connect to database for migrations")?;
+    conn.execute("SET lock_timeout = '10s'")
+        .await
+        .context("failed to configure the migration lock timeout")?;
+    conn.query("SELECT pg_advisory_lock(734662019)")
+        .await
+        .context("failed to acquire the migration lock within 10s")?;
 
     let migrations_dir = Path::new(MIGRATIONS_DIR);
     if !migrations_dir.exists() {
@@ -918,15 +924,24 @@ async fn run_migrations(db_url: &str) -> Result<()> {
         let sql = std::fs::read_to_string(&path)?;
 
         info!("apply {filename}");
-        conn.query(&sql)
-            .await
-            .with_context(|| format!("failed to apply {filename}"))?;
-
-        conn.execute_params(
-            "INSERT INTO _migrations (filename) VALUES ($1)",
-            &[&filename],
-        )
-        .await?;
+        conn.execute("BEGIN").await?;
+        let migration_result: Result<()> = async {
+            conn.batch_execute(&sql)
+                .await
+                .with_context(|| format!("failed to apply {filename}"))?;
+            conn.execute_params(
+                "INSERT INTO _migrations (filename) VALUES ($1)",
+                &[&filename],
+            )
+            .await?;
+            Ok(())
+        }
+        .await;
+        if let Err(error) = migration_result {
+            let _ = conn.execute("ROLLBACK").await;
+            return Err(error);
+        }
+        conn.execute("COMMIT").await?;
 
         info!("applied {filename} ok");
     }

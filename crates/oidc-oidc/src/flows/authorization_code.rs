@@ -109,7 +109,7 @@ impl AuthorizationCodeFlow {
             // Resolve ACR/AMR based on the authentication method and requested ACR values
             // For authorization_code flow, the user authenticated via password (pwd)
             let resolved_acr_amr = oidc_core::utils::resolve_acr_amr("pwd", &auth_code.acr_values)
-                .map_err(|e| OidcError::LoginRequired(e))?;
+                .map_err(OidcError::LoginRequired)?;
 
             // Resolve claims locale based on user preference and requested claims_locales
             let resolved_locale =

@@ -175,12 +175,12 @@ pub fn verify_request_object(
     }
 
     // 6. If nbf is present, validate it's in the past
-    if let Some(nbf) = claims.nbf {
-        if nbf > now {
-            return Err(OidcError::InvalidRequestObject(
-                "request object not yet valid (nbf)".into(),
-            ));
-        }
+    if let Some(nbf) = claims.nbf
+        && nbf > now
+    {
+        return Err(OidcError::InvalidRequestObject(
+            "request object not yet valid (nbf)".into(),
+        ));
     }
 
     // 7. Reject if request_uri claim is present (per OIDC Core §6.1)
@@ -251,10 +251,10 @@ pub fn verify_request_object(
     if let Some(ref v) = claims.response_mode {
         result.insert("response_mode".to_string(), v.clone());
     }
-    if let Some(ref v) = claims.claims {
-        if let Ok(s) = serde_json::to_string(v) {
-            result.insert("claims".to_string(), s);
-        }
+    if let Some(ref v) = claims.claims
+        && let Ok(s) = serde_json::to_string(v)
+    {
+        result.insert("claims".to_string(), s);
     }
 
     Ok(result)

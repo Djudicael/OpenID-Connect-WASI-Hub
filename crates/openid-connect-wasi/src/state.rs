@@ -186,7 +186,7 @@ impl AppState {
     pub fn from_env() -> Self {
         let database_url = std::env::var("OIDC_DATABASE_URL")
             .unwrap_or_else(|_| "postgresql://localhost/oidc_hub?sslmode=prefer".into());
-        if !std::env::var("OIDC_DATABASE_URL").is_ok() {
+        if std::env::var("OIDC_DATABASE_URL").is_err() {
             tracing::warn!(
                 "OIDC_DATABASE_URL not set — using default (not suitable for production)"
             );
@@ -194,7 +194,7 @@ impl AppState {
 
         let issuer =
             std::env::var("OIDC_ISSUER").unwrap_or_else(|_| "http://localhost:8080".into());
-        if !std::env::var("OIDC_ISSUER").is_ok() {
+        if std::env::var("OIDC_ISSUER").is_err() {
             tracing::warn!(
                 "OIDC_ISSUER not set — using default localhost (not suitable for production)"
             );

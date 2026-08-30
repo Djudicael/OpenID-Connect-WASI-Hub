@@ -114,21 +114,21 @@ impl<S: ApiKeyVerifierState> FromRequestParts<S> for ApiKeyAuth {
 /// - `Authorization: Bearer <key>`
 pub fn extract_raw_key(parts: &Parts) -> Option<String> {
     // Check X-API-Key first
-    if let Some(header) = parts.headers.get("X-API-Key") {
-        if let Ok(val) = header.to_str() {
-            return Some(val.trim().to_string());
-        }
+    if let Some(header) = parts.headers.get("X-API-Key")
+        && let Ok(val) = header.to_str()
+    {
+        return Some(val.trim().to_string());
     }
 
     // Fall back to Authorization: Bearer <key>
-    if let Some(header) = parts.headers.get(axum::http::header::AUTHORIZATION) {
-        if let Ok(auth_str) = header.to_str() {
-            if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                return Some(token.trim().to_string());
-            }
-            if let Some(token) = auth_str.strip_prefix("bearer ") {
-                return Some(token.trim().to_string());
-            }
+    if let Some(header) = parts.headers.get(axum::http::header::AUTHORIZATION)
+        && let Ok(auth_str) = header.to_str()
+    {
+        if let Some(token) = auth_str.strip_prefix("Bearer ") {
+            return Some(token.trim().to_string());
+        }
+        if let Some(token) = auth_str.strip_prefix("bearer ") {
+            return Some(token.trim().to_string());
         }
     }
 
@@ -145,30 +145,30 @@ pub fn extract_raw_key(parts: &Parts) -> Option<String> {
 /// - `Authorization: Bearer <key>` (only if the token does not contain dots)
 pub fn extract_raw_key_from_headers(headers: &axum::http::HeaderMap) -> Option<String> {
     // Check X-API-Key first
-    if let Some(header) = headers.get("X-API-Key") {
-        if let Ok(val) = header.to_str() {
-            let trimmed = val.trim();
-            if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
-            }
+    if let Some(header) = headers.get("X-API-Key")
+        && let Ok(val) = header.to_str()
+    {
+        let trimmed = val.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
         }
     }
 
     // Check Authorization: Bearer <key>
     // Only treat as API key if the token does NOT contain dots (JWTs have dots)
-    if let Some(header) = headers.get(axum::http::header::AUTHORIZATION) {
-        if let Ok(auth_str) = header.to_str() {
-            if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                let trimmed = token.trim();
-                if !trimmed.is_empty() && !trimmed.contains('.') {
-                    return Some(trimmed.to_string());
-                }
+    if let Some(header) = headers.get(axum::http::header::AUTHORIZATION)
+        && let Ok(auth_str) = header.to_str()
+    {
+        if let Some(token) = auth_str.strip_prefix("Bearer ") {
+            let trimmed = token.trim();
+            if !trimmed.is_empty() && !trimmed.contains('.') {
+                return Some(trimmed.to_string());
             }
-            if let Some(token) = auth_str.strip_prefix("bearer ") {
-                let trimmed = token.trim();
-                if !trimmed.is_empty() && !trimmed.contains('.') {
-                    return Some(trimmed.to_string());
-                }
+        }
+        if let Some(token) = auth_str.strip_prefix("bearer ") {
+            let trimmed = token.trim();
+            if !trimmed.is_empty() && !trimmed.contains('.') {
+                return Some(trimmed.to_string());
             }
         }
     }
@@ -211,20 +211,19 @@ pub async fn verify_request_auth<S: oidc_core::traits::TokenService + Sync>(
     }
 
     // Try JWT Bearer token
-    if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION) {
-        if let Ok(auth_str) = auth_header.to_str() {
-            if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                match token_service.verify_access_token_with_claims(token).await {
-                    Ok(claims) => {
-                        return Ok(ApiRouteAuth::JwtBearer {
-                            subject: claims.sub,
-                            scope: claims.scope,
-                        });
-                    }
-                    Err(e) => {
-                        tracing::debug!("JWT verification failed for API route: {}", e);
-                    }
-                }
+    if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION)
+        && let Ok(auth_str) = auth_header.to_str()
+        && let Some(token) = auth_str.strip_prefix("Bearer ")
+    {
+        match token_service.verify_access_token_with_claims(token).await {
+            Ok(claims) => {
+                return Ok(ApiRouteAuth::JwtBearer {
+                    subject: claims.sub,
+                    scope: claims.scope,
+                });
+            }
+            Err(e) => {
+                tracing::debug!("JWT verification failed for API route: {}", e);
             }
         }
     }

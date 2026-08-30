@@ -75,7 +75,7 @@ impl UserGroupRepo {
         result
             .into_rows()
             .iter()
-            .map(|r| Self::map_group_row(r))
+            .map(Self::map_group_row)
             .collect::<Result<Vec<_>, _>>()
     }
 
@@ -97,7 +97,7 @@ impl UserGroupRepo {
         result
             .into_rows()
             .iter()
-            .map(|r| Self::map_user_row(r))
+            .map(Self::map_user_row)
             .collect::<Result<Vec<_>, _>>()
     }
 
@@ -119,7 +119,7 @@ impl UserGroupRepo {
         result
             .into_rows()
             .iter()
-            .map(|r| Self::map_role_row(r))
+            .map(Self::map_role_row)
             .collect::<Result<Vec<_>, _>>()
     }
 

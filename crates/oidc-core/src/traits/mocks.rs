@@ -3,6 +3,8 @@
 //! These mocks are intended for unit testing domain logic without a database.
 //! All repos use `std::sync::RwLock` for WASM compatibility.
 
+#![allow(clippy::new_without_default)]
+
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::RwLock;
@@ -445,7 +447,7 @@ impl InMemoryApiKeyRepo {
             .filter(|k| k.realm_id == realm_id && (include_revoked || !k.revoked))
             .cloned()
             .collect();
-        result.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        result.sort_by_key(|item| std::cmp::Reverse(item.created_at));
         Ok(result)
     }
 
@@ -655,13 +657,13 @@ impl InMemoryAuditEventRepo {
             .iter()
             .filter(|e| {
                 e.realm_id == Some(realm_id)
-                    && event_type.map_or(true, |et| e.event_type == et)
-                    && from.map_or(true, |f| e.created_at >= f)
-                    && to.map_or(true, |t| e.created_at <= t)
+                    && event_type.is_none_or(|et| e.event_type == et)
+                    && from.is_none_or(|f| e.created_at >= f)
+                    && to.is_none_or(|t| e.created_at <= t)
             })
             .collect();
         // Sort by created_at DESC
-        filtered.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        filtered.sort_by_key(|item| std::cmp::Reverse(item.created_at));
         let result: Vec<AuditEvent> = filtered
             .into_iter()
             .skip(offset as usize)
@@ -724,13 +726,13 @@ impl InMemoryAuditEventRepo {
         let mut filtered: Vec<&AuditEvent> = events
             .iter()
             .filter(|e| {
-                event_type.map_or(true, |et| e.event_type == et)
-                    && actor_id.map_or(true, |aid| e.actor_id == Some(*aid))
-                    && from.map_or(true, |f| e.created_at >= f)
-                    && to.map_or(true, |t| e.created_at <= t)
+                event_type.is_none_or(|et| e.event_type == et)
+                    && actor_id.is_none_or(|aid| e.actor_id == Some(*aid))
+                    && from.is_none_or(|f| e.created_at >= f)
+                    && to.is_none_or(|t| e.created_at <= t)
             })
             .collect();
-        filtered.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        filtered.sort_by_key(|item| std::cmp::Reverse(item.created_at));
         let result: Vec<AuditEvent> = filtered
             .into_iter()
             .skip(offset as usize)
@@ -756,11 +758,11 @@ impl InMemoryAuditEventRepo {
         let count = events
             .iter()
             .filter(|e| {
-                realm_id.map_or(true, |rid| e.realm_id == Some(rid))
-                    && event_type.map_or(true, |et| e.event_type == et)
-                    && actor_id.map_or(true, |aid| e.actor_id == Some(*aid))
-                    && from.map_or(true, |f| e.created_at >= f)
-                    && to.map_or(true, |t| e.created_at <= t)
+                realm_id.is_none_or(|rid| e.realm_id == Some(rid))
+                    && event_type.is_none_or(|et| e.event_type == et)
+                    && actor_id.is_none_or(|aid| e.actor_id == Some(*aid))
+                    && from.is_none_or(|f| e.created_at >= f)
+                    && to.is_none_or(|t| e.created_at <= t)
             })
             .count();
         Ok(count as i64)

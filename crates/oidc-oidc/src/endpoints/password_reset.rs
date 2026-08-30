@@ -93,7 +93,7 @@ pub async fn password_reset_request_handler(
         id: generate_uuid_v7(),
         user_id: user.id,
         realm_id: realm.id,
-        token_hash: token_hash,
+        token_hash,
         used: false,
         expires_at: now + chrono::Duration::minutes(15),
         created_at: now,

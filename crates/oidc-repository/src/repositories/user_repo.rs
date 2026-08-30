@@ -244,7 +244,7 @@ impl UserRepo {
         result
             .into_rows()
             .iter()
-            .map(|r| Self::map_row(r))
+            .map(Self::map_row)
             .collect::<Result<Vec<_>, _>>()
     }
 

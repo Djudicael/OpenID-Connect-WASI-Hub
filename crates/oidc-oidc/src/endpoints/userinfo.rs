@@ -111,98 +111,95 @@ pub async fn userinfo_handler(
         "sub": user.id.to_string(),
     });
 
-    if scopes.contains("email") {
-        if let Some(obj) = claims.as_object_mut() {
-            obj.insert("email".to_string(), json!(user.email));
-            obj.insert("email_verified".to_string(), json!(user.email_verified));
-        }
+    if scopes.contains("email")
+        && let Some(obj) = claims.as_object_mut()
+    {
+        obj.insert("email".to_string(), json!(user.email));
+        obj.insert("email_verified".to_string(), json!(user.email_verified));
     }
 
-    if scopes.contains("profile") {
-        if let Some(obj) = claims.as_object_mut() {
-            if let Some(ref name) = user.given_name {
-                obj.insert("given_name".to_string(), json!(name));
-            }
-            if let Some(ref name) = user.family_name {
-                obj.insert("family_name".to_string(), json!(name));
-            }
-            if let Some(ref name) = user.middle_name {
-                obj.insert("middle_name".to_string(), json!(name));
-            }
-            if let Some(ref name) = user.username {
-                obj.insert("name".to_string(), json!(name));
-            }
-            if let Some(ref v) = user.nickname {
-                obj.insert("nickname".to_string(), json!(v));
-            }
-            if let Some(ref v) = user.preferred_username {
-                obj.insert("preferred_username".to_string(), json!(v));
-            }
-            if let Some(ref v) = user.profile {
-                obj.insert("profile".to_string(), json!(v));
-            }
-            if let Some(ref v) = user.picture {
-                obj.insert("picture".to_string(), json!(v));
-            }
-            if let Some(ref v) = user.website {
-                obj.insert("website".to_string(), json!(v));
-            }
-            if let Some(ref v) = user.gender {
-                obj.insert("gender".to_string(), json!(v));
-            }
-            if let Some(ref v) = user.birthdate {
-                obj.insert("birthdate".to_string(), json!(v));
-            }
-            if let Some(ref v) = user.zoneinfo {
-                obj.insert("zoneinfo".to_string(), json!(v));
-            }
-            obj.insert("locale".to_string(), json!(user.locale));
-            obj.insert("updated_at".to_string(), json!(user.updated_at.timestamp()));
+    if scopes.contains("profile")
+        && let Some(obj) = claims.as_object_mut()
+    {
+        if let Some(ref name) = user.given_name {
+            obj.insert("given_name".to_string(), json!(name));
         }
+        if let Some(ref name) = user.family_name {
+            obj.insert("family_name".to_string(), json!(name));
+        }
+        if let Some(ref name) = user.middle_name {
+            obj.insert("middle_name".to_string(), json!(name));
+        }
+        if let Some(ref name) = user.username {
+            obj.insert("name".to_string(), json!(name));
+        }
+        if let Some(ref v) = user.nickname {
+            obj.insert("nickname".to_string(), json!(v));
+        }
+        if let Some(ref v) = user.preferred_username {
+            obj.insert("preferred_username".to_string(), json!(v));
+        }
+        if let Some(ref v) = user.profile {
+            obj.insert("profile".to_string(), json!(v));
+        }
+        if let Some(ref v) = user.picture {
+            obj.insert("picture".to_string(), json!(v));
+        }
+        if let Some(ref v) = user.website {
+            obj.insert("website".to_string(), json!(v));
+        }
+        if let Some(ref v) = user.gender {
+            obj.insert("gender".to_string(), json!(v));
+        }
+        if let Some(ref v) = user.birthdate {
+            obj.insert("birthdate".to_string(), json!(v));
+        }
+        if let Some(ref v) = user.zoneinfo {
+            obj.insert("zoneinfo".to_string(), json!(v));
+        }
+        obj.insert("locale".to_string(), json!(user.locale));
+        obj.insert("updated_at".to_string(), json!(user.updated_at.timestamp()));
     }
 
-    if scopes.contains("address") {
-        if let Some(obj) = claims.as_object_mut() {
-            if let Some(addr) = user.address_claim() {
-                obj.insert(
-                    "address".to_string(),
-                    serde_json::to_value(&addr).unwrap_or_default(),
-                );
-            }
-        }
+    if scopes.contains("address")
+        && let Some(obj) = claims.as_object_mut()
+        && let Some(addr) = user.address_claim()
+    {
+        obj.insert(
+            "address".to_string(),
+            serde_json::to_value(&addr).unwrap_or_default(),
+        );
     }
 
-    if scopes.contains("phone") {
-        if let Some(obj) = claims.as_object_mut() {
-            if let Some(ref v) = user.phone_number {
-                obj.insert("phone_number".to_string(), json!(v));
-            }
-            if let Some(v) = user.phone_number_verified {
-                obj.insert("phone_number_verified".to_string(), json!(v));
-            }
+    if scopes.contains("phone")
+        && let Some(obj) = claims.as_object_mut()
+    {
+        if let Some(ref v) = user.phone_number {
+            obj.insert("phone_number".to_string(), json!(v));
+        }
+        if let Some(v) = user.phone_number_verified {
+            obj.insert("phone_number_verified".to_string(), json!(v));
         }
     }
 
     // Always include roles and groups in UserInfo when available
-    if let Ok(roles) = RoleRepo.find_by_user_id(&mut conn, user.id).await {
-        if !roles.is_empty() {
-            if let Some(obj) = claims.as_object_mut() {
-                obj.insert(
-                    "roles".to_string(),
-                    json!(roles.iter().map(|r| r.name.clone()).collect::<Vec<_>>()),
-                );
-            }
-        }
+    if let Ok(roles) = RoleRepo.find_by_user_id(&mut conn, user.id).await
+        && !roles.is_empty()
+        && let Some(obj) = claims.as_object_mut()
+    {
+        obj.insert(
+            "roles".to_string(),
+            json!(roles.iter().map(|r| r.name.clone()).collect::<Vec<_>>()),
+        );
     }
-    if let Ok(groups) = GroupRepo.find_by_user_id(&mut conn, user.id).await {
-        if !groups.is_empty() {
-            if let Some(obj) = claims.as_object_mut() {
-                obj.insert(
-                    "groups".to_string(),
-                    json!(groups.iter().map(|g| g.name.clone()).collect::<Vec<_>>()),
-                );
-            }
-        }
+    if let Ok(groups) = GroupRepo.find_by_user_id(&mut conn, user.id).await
+        && !groups.is_empty()
+        && let Some(obj) = claims.as_object_mut()
+    {
+        obj.insert(
+            "groups".to_string(),
+            json!(groups.iter().map(|g| g.name.clone()).collect::<Vec<_>>()),
+        );
     }
 
     let _ = conn.close().await;

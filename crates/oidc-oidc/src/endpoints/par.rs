@@ -32,23 +32,21 @@ pub async fn par_handler(
     mut params: HashMap<String, String>,
 ) -> Result<Json<Value>, OidcError> {
     // Extract client_secret_basic from Authorization header if present
-    if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION) {
-        if let Ok(auth_str) = auth_header.to_str() {
-            if let Some(credentials) = auth_str.strip_prefix("Basic ") {
-                use base64::{Engine, engine::general_purpose::STANDARD};
-                if let Ok(decoded) = STANDARD.decode(credentials) {
-                    if let Ok(cred_str) = String::from_utf8(decoded) {
-                        if let Some((client_id, client_secret)) = cred_str.split_once(':') {
-                            params
-                                .entry("client_id".to_string())
-                                .or_insert_with(|| client_id.to_string());
-                            params
-                                .entry("client_secret".to_string())
-                                .or_insert_with(|| client_secret.to_string());
-                        }
-                    }
-                }
-            }
+    if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION)
+        && let Ok(auth_str) = auth_header.to_str()
+        && let Some(credentials) = auth_str.strip_prefix("Basic ")
+    {
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        if let Ok(decoded) = STANDARD.decode(credentials)
+            && let Ok(cred_str) = String::from_utf8(decoded)
+            && let Some((client_id, client_secret)) = cred_str.split_once(':')
+        {
+            params
+                .entry("client_id".to_string())
+                .or_insert_with(|| client_id.to_string());
+            params
+                .entry("client_secret".to_string())
+                .or_insert_with(|| client_secret.to_string());
         }
     }
 

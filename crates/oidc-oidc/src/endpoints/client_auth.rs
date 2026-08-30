@@ -39,31 +39,27 @@ pub fn inject_basic_auth_credentials(
     headers: &HeaderMap,
     params: &mut HashMap<String, String>,
 ) -> Result<(), OidcErrorResponse> {
-    if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION) {
-        if let Ok(auth_str) = auth_header.to_str() {
-            if let Some(credentials) = auth_str.strip_prefix("Basic ") {
-                use base64::{Engine, engine::general_purpose::STANDARD};
-                if let Ok(decoded) = STANDARD.decode(credentials) {
-                    if let Ok(cred_str) = String::from_utf8(decoded) {
-                        if let Some((client_id, client_secret)) = cred_str.split_once(':') {
-                            if params
-                                .get("client_id")
-                                .is_some_and(|provided| provided != client_id)
-                            {
-                                return Err(OidcErrorResponse::invalid_client(
-                                    "Mismatched client_id",
-                                ));
-                            }
-                            params
-                                .entry("client_id".to_string())
-                                .or_insert_with(|| client_id.to_string());
-                            params
-                                .entry("client_secret".to_string())
-                                .or_insert_with(|| client_secret.to_string());
-                        }
-                    }
-                }
+    if let Some(auth_header) = headers.get(axum::http::header::AUTHORIZATION)
+        && let Ok(auth_str) = auth_header.to_str()
+        && let Some(credentials) = auth_str.strip_prefix("Basic ")
+    {
+        use base64::{Engine, engine::general_purpose::STANDARD};
+        if let Ok(decoded) = STANDARD.decode(credentials)
+            && let Ok(cred_str) = String::from_utf8(decoded)
+            && let Some((client_id, client_secret)) = cred_str.split_once(':')
+        {
+            if params
+                .get("client_id")
+                .is_some_and(|provided| provided != client_id)
+            {
+                return Err(OidcErrorResponse::invalid_client("Mismatched client_id"));
             }
+            params
+                .entry("client_id".to_string())
+                .or_insert_with(|| client_id.to_string());
+            params
+                .entry("client_secret".to_string())
+                .or_insert_with(|| client_secret.to_string());
         }
     }
 
@@ -96,10 +92,10 @@ pub async fn authenticate_client_for_endpoint(
             .map_err(|e| {
                 OidcErrorResponse::invalid_client(format!("Invalid client assertion: {e}"))
             })?;
-        if let Some(provided_client_id) = params.get("client_id") {
-            if provided_client_id != &claims.iss {
-                return Err(OidcErrorResponse::invalid_client("Mismatched client_id"));
-            }
+        if let Some(provided_client_id) = params.get("client_id")
+            && provided_client_id != &claims.iss
+        {
+            return Err(OidcErrorResponse::invalid_client("Mismatched client_id"));
         }
         let client_id = claims.iss;
 

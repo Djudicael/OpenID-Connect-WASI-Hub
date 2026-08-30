@@ -153,8 +153,8 @@ impl RoleRepo {
         let pattern = search.map(|s| format!("%{}%", escape_like(s)));
 
         let mut params: Vec<&dyn wasi_pg_client::ToSql> = Vec::new();
-        if realm_id.is_some() {
-            params.push(realm_id.as_ref().unwrap());
+        if let Some(realm_id) = realm_id.as_ref() {
+            params.push(realm_id);
         }
         if let Some(ref p) = pattern {
             params.push(p);
@@ -169,7 +169,7 @@ impl RoleRepo {
         result
             .into_rows()
             .iter()
-            .map(|r| Self::map_row(r))
+            .map(Self::map_row)
             .collect::<Result<Vec<_>, _>>()
     }
 
@@ -216,7 +216,7 @@ impl RoleRepo {
         result
             .into_rows()
             .iter()
-            .map(|r| Self::map_row(r))
+            .map(Self::map_row)
             .collect::<Result<Vec<_>, _>>()
     }
 

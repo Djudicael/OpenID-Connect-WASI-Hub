@@ -44,7 +44,7 @@ fn craft_jwt(header: &serde_json::Value, claims: &serde_json::Value) -> String {
 async fn login_response(app: &TestApp) -> reqwest::Response {
     let resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -92,7 +92,7 @@ async fn test_jwt_alg_none_rejected() {
 
     let resp = app
         .client()
-        .get(&format!("{}/oidc/userinfo", app.url()))
+        .get(format!("{}/oidc/userinfo", app.url()))
         .header("authorization", format!("Bearer {fake_token}"))
         .send()
         .await
@@ -129,7 +129,7 @@ async fn test_jwt_alg_hs256_rejected() {
 
     let resp = app
         .client()
-        .get(&format!("{}/oidc/userinfo", app.url()))
+        .get(format!("{}/oidc/userinfo", app.url()))
         .header("authorization", format!("Bearer {fake_token}"))
         .send()
         .await
@@ -262,7 +262,7 @@ async fn test_authorize_code_exchange_wrong_verifier() {
     let wrong_verifier = "completely_wrong_verifier_value_that_does_not_match";
     let token_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&client_secret={}&code_verifier={}",
@@ -344,7 +344,7 @@ async fn test_authorize_code_exchange_without_verifier() {
     // 2. Exchange code WITHOUT code_verifier (omit it entirely)
     let token_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&client_secret={}",
@@ -411,17 +411,16 @@ async fn test_authorize_open_redirect_rejected() {
             .get("location")
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
-        // Server redirects with error to the requested redirect_uri.
-        // This is acceptable — no sensitive data leaks via error params.
         assert!(
             location.contains("error="),
             "redirect must contain error param, got: {location}"
         );
-        // The redirect should either go to an error page or to the legitimate callback with error
         assert!(
-            location.contains("error=")
-                || location.contains("/oidc/error")
-                || location.starts_with(legitimate_redirect),
+            !location.starts_with(evil_redirect) && !location.starts_with("https://evil.com"),
+            "invalid redirect_uri must never be used as the redirect target, got: {location}"
+        );
+        assert!(
+            location.contains("/oidc/error") || location.starts_with(legitimate_redirect),
             "redirect should go to error page or legitimate callback with error, got: {location}"
         );
     } else {
@@ -452,7 +451,7 @@ async fn test_refresh_token_replay_detected() {
     // 2. Use the refresh token to get new tokens (rotation)
     let refresh_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=refresh_token&refresh_token={}&client_id={}",
@@ -484,7 +483,7 @@ async fn test_refresh_token_replay_detected() {
     // 3. Replay the OLD refresh_token — should be detected
     let replay_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=refresh_token&refresh_token={}&client_id={}",
@@ -509,7 +508,7 @@ async fn test_refresh_token_replay_detected() {
     // 4. The entire token family should be revoked — even the NEW token should fail
     let family_revoke_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=refresh_token&refresh_token={}&client_id={}",
@@ -538,7 +537,7 @@ async fn test_login_sql_injection_email() {
 
     let resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": "' OR 1=1 --",
             "password": fixtures::TEST_USER_PASSWORD,
@@ -573,7 +572,7 @@ async fn test_login_sql_injection_password() {
 
     let resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": "' OR 1=1 --",
@@ -612,7 +611,7 @@ async fn test_login_empty_email() {
 
     let resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": "",
             "password": fixtures::TEST_USER_PASSWORD,
@@ -634,7 +633,7 @@ async fn test_login_empty_password() {
 
     let resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": "",
@@ -656,7 +655,7 @@ async fn test_register_missing_fields() {
 
     let resp = app
         .client()
-        .post(&format!("{}/oidc/register", app.url()))
+        .post(format!("{}/oidc/register", app.url()))
         .json(&json!({}))
         .send()
         .await
@@ -680,7 +679,7 @@ async fn test_security_headers_present_on_health_response() {
 
     let resp = app
         .client()
-        .get(&format!("{}/health", app.url()))
+        .get(format!("{}/health", app.url()))
         .send()
         .await
         .expect("health request failed");
@@ -761,7 +760,7 @@ async fn test_logout_clears_session_cookie_with_zero_max_age() {
 
     let logout_resp = app
         .client()
-        .get(&format!("{}/oidc/logout", app.url()))
+        .get(format!("{}/oidc/logout", app.url()))
         .header("cookie", session_cookie)
         .send()
         .await
@@ -789,7 +788,7 @@ async fn test_cors_preflight_is_restrictive_by_default() {
 
     let resp = app
         .client()
-        .request(reqwest::Method::OPTIONS, &format!("{}/health", app.url()))
+        .request(reqwest::Method::OPTIONS, format!("{}/health", app.url()))
         .header("origin", "https://evil.example")
         .header("access-control-request-method", "GET")
         .send()
@@ -822,7 +821,7 @@ async fn test_rate_limiting_on_login() {
     for i in 0..total_requests {
         let resp = app
             .client()
-            .post(&format!("{}/oidc/login", app.url()))
+            .post(format!("{}/oidc/login", app.url()))
             .json(&json!({
                 "email": format!("ratelimit-test-{i}@localhost"),
                 "password": "SomePassword1!",
@@ -890,71 +889,71 @@ async fn test_api_key_timing_attack() {
     .await
     .expect("failed to seed API key");
 
-    // Build an incorrect key of the same length by flipping characters
-    let incorrect_key: String = {
-        let raw = correct_key.clone();
-        let mut chars: Vec<char> = raw.chars().collect();
-        // Flip the last character before the final segment
-        if let Some(last) = chars.last_mut() {
-            *last = if *last == 'a' { 'b' } else { 'a' };
-        }
-        chars.into_iter().collect()
+    // Compare two invalid keys that retain the valid lookup prefix but differ at
+    // opposite ends of the secret. Comparing a valid request with an invalid one
+    // is not meaningful here: the valid request also increments the usage counter
+    // and executes the protected endpoint.
+    let secret_offset = correct_key
+        .rfind('.')
+        .expect("generated key must contain a secret separator")
+        + 1;
+    let mutate_at = |index: usize| {
+        let mut bytes = correct_key.as_bytes().to_vec();
+        bytes[index] = if bytes[index] == b'a' { b'b' } else { b'a' };
+        String::from_utf8(bytes).expect("generated API keys are ASCII")
     };
+    let incorrect_early = mutate_at(secret_offset);
+    let incorrect_late = mutate_at(correct_key.len() - 1);
 
-    // Measure 10 requests with the correct key
-    let mut correct_times = Vec::with_capacity(10);
+    // Alternate the requests to reduce drift from connection-pool and host load.
+    let mut early_times = Vec::with_capacity(10);
+    let mut late_times = Vec::with_capacity(10);
     for _ in 0..10 {
         let start = std::time::Instant::now();
-        let _resp = app
+        let early_response = app
             .client()
-            .get(&format!(
+            .get(format!(
                 "{}/api/keys?realm_id={}",
                 app.url(),
                 app.master_realm_id()
             ))
-            .header("X-API-Key", correct_key.as_str())
+            .header("X-API-Key", incorrect_early.as_str())
             .send()
             .await
             .expect("request failed");
-        correct_times.push(start.elapsed());
-    }
+        early_times.push(start.elapsed());
+        assert_eq!(early_response.status(), StatusCode::UNAUTHORIZED);
 
-    // Measure 10 requests with the incorrect key
-    let mut incorrect_times = Vec::with_capacity(10);
-    for _ in 0..10 {
         let start = std::time::Instant::now();
-        let _resp = app
+        let late_response = app
             .client()
-            .get(&format!(
+            .get(format!(
                 "{}/api/keys?realm_id={}",
                 app.url(),
                 app.master_realm_id()
             ))
-            .header("X-API-Key", incorrect_key.as_str())
+            .header("X-API-Key", incorrect_late.as_str())
             .send()
             .await
             .expect("request failed");
-        incorrect_times.push(start.elapsed());
+        late_times.push(start.elapsed());
+        assert_eq!(late_response.status(), StatusCode::UNAUTHORIZED);
     }
 
     // Calculate average times
-    let avg_correct: std::time::Duration =
-        correct_times.iter().sum::<std::time::Duration>() / correct_times.len() as u32;
-    let avg_incorrect: std::time::Duration =
-        incorrect_times.iter().sum::<std::time::Duration>() / incorrect_times.len() as u32;
+    let avg_early: std::time::Duration =
+        early_times.iter().sum::<std::time::Duration>() / early_times.len() as u32;
+    let avg_late: std::time::Duration =
+        late_times.iter().sum::<std::time::Duration>() / late_times.len() as u32;
 
-    let diff = if avg_correct > avg_incorrect {
-        avg_correct - avg_incorrect
-    } else {
-        avg_incorrect - avg_correct
-    };
+    let diff = avg_early.abs_diff(avg_late);
 
     // NOTE: This is a best-effort test; true constant-time guarantees require specialized hardware.
     // We check that the timing difference is less than 50ms to catch obvious leaks.
     assert!(
         diff < std::time::Duration::from_millis(500),
-        "timing difference between correct and incorrect API key is {diff:?}, \
-         which may indicate a timing side-channel. avg_correct={avg_correct:?}, avg_incorrect={avg_incorrect:?}"
+        "timing difference between early and late API key mismatch is {diff:?}, \
+         which may indicate a timing side-channel. avg_early={avg_early:?}, avg_late={avg_late:?}"
     );
 
     // Clean up
@@ -974,7 +973,7 @@ async fn test_session_fixation_prevention() {
     // 1. Login to get first set of tokens
     let login_resp_1 = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -1003,7 +1002,7 @@ async fn test_session_fixation_prevention() {
     // 2. Login again with same credentials
     let login_resp_2 = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -1039,7 +1038,7 @@ async fn test_session_fixation_prevention() {
     // 4. Assert the first refresh_token still works (old session not revoked by new login)
     let refresh_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=refresh_token&refresh_token={}&client_id={}",
@@ -1182,11 +1181,11 @@ async fn test_authorize_state_parameter_forwarded() {
 }
 
 // ===================================================================
-// Group 12: Expired Authorization Code (Single-Use)
+// Group 12: Authorization Code Expiry and Single-Use
 // ===================================================================
 
 #[tokio::test]
-async fn test_expired_authorization_code() {
+async fn test_authorization_code_replay_rejected() {
     let app = TestApp::new().await;
 
     // Seed a confidential client with a known secret
@@ -1236,7 +1235,7 @@ async fn test_expired_authorization_code() {
     // 2. Exchange the code for tokens (first use — should succeed)
     let token_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&client_secret={}&code_verifier={}",
@@ -1259,7 +1258,7 @@ async fn test_expired_authorization_code() {
     // 3. Try to exchange the same code again — should fail (single-use)
     let replay_resp = app
         .client()
-        .post(&format!("{}/oidc/token", app.url()))
+        .post(format!("{}/oidc/token", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&client_secret={}&code_verifier={}",
@@ -1285,6 +1284,133 @@ async fn test_expired_authorization_code() {
     );
 }
 
+#[tokio::test]
+async fn test_expired_authorization_code_rejected() {
+    let app = TestApp::new().await;
+    let client_id = "expired-code-client";
+    let client_secret = "ExpiredCodeSecret1!";
+    let redirect_uri = "https://app.example.com/callback";
+    app.seed_client_with_secret(client_id, client_secret, &[redirect_uri])
+        .await;
+
+    let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let code_challenge = pkce_s256_challenge(code_verifier);
+    let authorize_url = format!(
+        "{}/oidc/authorize?client_id={}&redirect_uri={}&response_type=code&scope=openid&state=expiry-state&code_challenge={}&code_challenge_method=S256&login_hint={}",
+        app.url(),
+        urlencoding::encode(client_id),
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(&code_challenge),
+        urlencoding::encode(fixtures::TEST_USER_EMAIL),
+    );
+
+    let authorize_resp = app.client().get(authorize_url).send().await.unwrap();
+    assert_eq!(authorize_resp.status(), StatusCode::TEMPORARY_REDIRECT);
+    let location = authorize_resp
+        .headers()
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    let code = url::Url::parse(location)
+        .unwrap()
+        .query_pairs()
+        .find(|(key, _)| key == "code")
+        .map(|(_, value)| value.to_string())
+        .expect("authorization code must be present");
+
+    let code_hash = oidc_core::utils::sha2_256_hex(&code);
+    let mut conn = app.db_conn().await;
+    conn.execute_params(
+        "UPDATE authorization_codes SET expires_at = NOW() - INTERVAL '1 second' WHERE code = $1",
+        &[&code_hash],
+    )
+    .await
+    .unwrap();
+    let _ = conn.close().await;
+
+    let token_resp = app
+        .client()
+        .post(format!("{}/oidc/token", app.url()))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(format!(
+            "grant_type=authorization_code&code={}&redirect_uri={}&client_id={}&client_secret={}&code_verifier={}",
+            urlencoding::encode(&code),
+            urlencoding::encode(redirect_uri),
+            urlencoding::encode(client_id),
+            urlencoding::encode(client_secret),
+            urlencoding::encode(code_verifier),
+        ))
+        .send()
+        .await
+        .unwrap();
+
+    assert!(
+        token_resp.status() == StatusCode::BAD_REQUEST
+            || token_resp.status() == StatusCode::UNAUTHORIZED,
+        "expired authorization code must be rejected, got {}",
+        token_resp.status()
+    );
+}
+
+#[tokio::test]
+async fn test_expired_session_cookie_cannot_satisfy_prompt_none() {
+    let app = TestApp::new().await;
+    let redirect_uri = "https://app.example.com/callback";
+    app.seed_public_client("expired-session-client", &[redirect_uri])
+        .await;
+
+    let login_resp = login_response(&app).await;
+    let session_cookie = login_resp
+        .headers()
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_string();
+
+    let mut conn = app.db_conn().await;
+    conn.execute_params(
+        "UPDATE sessions SET expires_at = NOW() - INTERVAL '1 second' WHERE revoked = FALSE",
+        &[],
+    )
+    .await
+    .unwrap();
+    let _ = conn.close().await;
+
+    let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let code_challenge = pkce_s256_challenge(code_verifier);
+    let authorize_resp = app
+        .client()
+        .get(format!(
+            "{}/oidc/authorize?client_id=expired-session-client&redirect_uri={}&response_type=code&scope=openid&state=session-expiry&prompt=none&code_challenge={}&code_challenge_method=S256",
+            app.url(),
+            urlencoding::encode(redirect_uri),
+            urlencoding::encode(&code_challenge),
+        ))
+        .header("cookie", session_cookie)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(authorize_resp.status(), StatusCode::TEMPORARY_REDIRECT);
+    let location = authorize_resp
+        .headers()
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(location.starts_with(redirect_uri));
+    assert!(location.contains("error=login_required"), "got: {location}");
+    assert!(
+        !location.contains("code="),
+        "expired session issued a code: {location}"
+    );
+}
+
 // ===================================================================
 // Group 13: Duplicate Client Registration
 // ===================================================================
@@ -1297,7 +1423,7 @@ async fn test_duplicate_client_registration_rejected() {
     let client_name = "DuplicateTestApp";
     let resp1 = app
         .client()
-        .post(&format!("{}/oidc/register", app.url()))
+        .post(format!("{}/oidc/register", app.url()))
         .json(&json!({
             "client_name": client_name,
             "redirect_uris": ["https://app1.example.com/callback"],
@@ -1319,7 +1445,7 @@ async fn test_duplicate_client_registration_rejected() {
     // Second registration with same client_name
     let resp2 = app
         .client()
-        .post(&format!("{}/oidc/register", app.url()))
+        .post(format!("{}/oidc/register", app.url()))
         .json(&json!({
             "client_name": "Duplicate Test Client",
             "redirect_uris": ["https://app.example.com/callback"],
@@ -1359,7 +1485,7 @@ async fn test_token_wrong_audience() {
     // 2. Login using client A to get a token
     let login_resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -1382,7 +1508,7 @@ async fn test_token_wrong_audience() {
     // 3. Introspect the token using client B's credentials
     let introspect_resp = app
         .client()
-        .post(&format!("{}/oidc/introspect", app.url()))
+        .post(format!("{}/oidc/introspect", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "token={}&client_id={}&client_secret={}",

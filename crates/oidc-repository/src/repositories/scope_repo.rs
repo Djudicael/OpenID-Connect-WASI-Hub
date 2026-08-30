@@ -52,11 +52,7 @@ impl ScopeRepo {
             .query_params(&sql, &[&realm_id])
             .await
             .map_err(mapper::pg_err)?;
-        result
-            .into_rows()
-            .iter()
-            .map(|r| Self::map_row(r))
-            .collect()
+        result.into_rows().iter().map(Self::map_row).collect()
     }
 
     /// Insert a new scope.
@@ -117,11 +113,7 @@ impl ScopeRepo {
             .query_params(&sql, &[&limit, &offset])
             .await
             .map_err(mapper::pg_err)?;
-        result
-            .into_rows()
-            .iter()
-            .map(|r| Self::map_row(r))
-            .collect()
+        result.into_rows().iter().map(Self::map_row).collect()
     }
 
     /// Count all scopes.

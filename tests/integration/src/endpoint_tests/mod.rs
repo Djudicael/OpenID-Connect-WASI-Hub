@@ -24,7 +24,7 @@ fn pkce_s256_challenge(verifier: &str) -> String {
 async fn admin_login(app: &TestApp) -> String {
     let resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -65,7 +65,7 @@ async fn test_par_success() {
 
     let resp = app
         .client()
-        .post(&format!("{}/oidc/par", app.url()))
+        .post(format!("{}/oidc/par", app.url()))
         .basic_auth(client_id, Some("par-secret"))
         .form(&[
             ("client_id", client_id),
@@ -107,7 +107,7 @@ async fn test_par_redirect_uri_mismatch_rejected_at_authorize() {
 
     let par_resp = app
         .client()
-        .post(&format!("{}/oidc/par", app.url()))
+        .post(format!("{}/oidc/par", app.url()))
         .basic_auth(client_id, Some("par-secret"))
         .form(&[
             ("client_id", client_id),
@@ -127,7 +127,7 @@ async fn test_par_redirect_uri_mismatch_rejected_at_authorize() {
 
     let authorize_resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/oidc/authorize?client_id={}&redirect_uri={}&request_uri={}",
             app.url(),
             urlencoding::encode(client_id),
@@ -161,7 +161,7 @@ async fn test_authorize_rejects_request_and_request_uri_together() {
 
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/oidc/authorize?client_id={}&redirect_uri={}&request=dummy&request_uri={}",
             app.url(),
             urlencoding::encode(client_id),
@@ -191,7 +191,7 @@ async fn test_par_invalid_client() {
 
     let resp = app
         .client()
-        .post(&format!("{}/oidc/par", app.url()))
+        .post(format!("{}/oidc/par", app.url()))
         .basic_auth("nonexistent-client", Some("wrong-secret"))
         .form(&[
             ("client_id", "nonexistent-client"),
@@ -218,7 +218,7 @@ async fn test_device_authorize_success() {
 
     let resp = app
         .client()
-        .post(&format!("{}/oidc/device/authorize", app.url()))
+        .post(format!("{}/oidc/device/authorize", app.url()))
         .form(&[("client_id", client_id), ("scope", "openid")])
         .send()
         .await
@@ -243,7 +243,7 @@ async fn test_device_verify_page() {
 
     let resp = app
         .client()
-        .get(&format!("{}/oidc/device?user_code=TEST1234", app.url()))
+        .get(format!("{}/oidc/device?user_code=TEST1234", app.url()))
         .send()
         .await
         .expect("device verify failed");
@@ -265,7 +265,7 @@ async fn test_device_authorize_missing_client() {
 
     let resp = app
         .client()
-        .post(&format!("{}/oidc/device/authorize", app.url()))
+        .post(format!("{}/oidc/device/authorize", app.url()))
         .form(&[("scope", "openid")])
         .send()
         .await
@@ -285,7 +285,7 @@ async fn test_webfinger_success() {
 
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/.well-known/webfinger?resource=acct:{}@localhost",
             app.url(),
             fixtures::TEST_USER_EMAIL
@@ -312,7 +312,7 @@ async fn test_webfinger_missing_resource() {
 
     let resp = app
         .client()
-        .get(&format!("{}/.well-known/webfinger", app.url()))
+        .get(format!("{}/.well-known/webfinger", app.url()))
         .send()
         .await
         .expect("webfinger request failed");
@@ -330,7 +330,7 @@ async fn test_check_session_not_supported_for_legacy_query_variant() {
 
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/oidc/session/check?session_state=unchanged",
             app.url()
         ))
@@ -354,7 +354,7 @@ async fn test_password_reset_request() {
 
     let resp = app
         .client()
-        .post(&format!("{}/oidc/password-reset/request", app.url()))
+        .post(format!("{}/oidc/password-reset/request", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "realm": "master",
@@ -373,7 +373,7 @@ async fn test_password_reset_confirm_invalid_token() {
 
     let resp = app
         .client()
-        .post(&format!("{}/oidc/password-reset/confirm", app.url()))
+        .post(format!("{}/oidc/password-reset/confirm", app.url()))
         .json(&json!({
             "token": "invalid-token-12345",
             "new_password": "NewPass123!",
@@ -395,7 +395,7 @@ async fn test_email_verification_request() {
 
     let resp = app
         .client()
-        .post(&format!("{}/oidc/email-verification/request", app.url()))
+        .post(format!("{}/oidc/email-verification/request", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "realm": "master",
@@ -413,7 +413,7 @@ async fn test_email_verification_confirm_invalid_token() {
 
     let resp = app
         .client()
-        .post(&format!("{}/oidc/email-verification/confirm", app.url()))
+        .post(format!("{}/oidc/email-verification/confirm", app.url()))
         .json(&json!({
             "token": "invalid-token-12345",
         }))
@@ -434,7 +434,7 @@ async fn test_account_recovery_confirm_invalid_token() {
 
     let resp = app
         .client()
-        .post(&format!("{}/oidc/account-recovery/confirm", app.url()))
+        .post(format!("{}/oidc/account-recovery/confirm", app.url()))
         .json(&json!({
             "token": "invalid-recovery-token",
             "new_password": "NewPass123!",
@@ -456,7 +456,7 @@ async fn test_register_requires_auth() {
 
     let resp = app
         .client()
-        .post(&format!("{}/oidc/register", app.url()))
+        .post(format!("{}/oidc/register", app.url()))
         .json(&json!({
             "client_name": "Test Client",
             "redirect_uris": ["https://app.example.com/callback"],
@@ -476,7 +476,7 @@ async fn test_register_with_admin_auth() {
     // Get realm ID
     let realms_resp = app
         .client()
-        .get(&format!("{}/api/realms?limit=1", app.url()))
+        .get(format!("{}/api/realms?limit=1", app.url()))
         .bearer_auth(&token)
         .send()
         .await
@@ -486,7 +486,7 @@ async fn test_register_with_admin_auth() {
 
     let resp = app
         .client()
-        .post(&format!("{}/oidc/register", app.url()))
+        .post(format!("{}/oidc/register", app.url()))
         .bearer_auth(&token)
         .json(&json!({
             "client_name": "Registered Client",
@@ -552,7 +552,7 @@ async fn test_per_realm_certs() {
 
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/realms/master/protocol/openid-connect/certs",
             app.url()
         ))
@@ -574,7 +574,7 @@ async fn test_per_realm_certs_not_found() {
 
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/realms/nonexistent/protocol/openid-connect/certs",
             app.url()
         ))

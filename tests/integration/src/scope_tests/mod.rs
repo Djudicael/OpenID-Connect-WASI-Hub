@@ -13,7 +13,7 @@ use crate::helpers::fixtures;
 async fn admin_login(app: &TestApp) -> String {
     let resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -38,7 +38,7 @@ async fn test_scope_crud_lifecycle() {
     // 1. List realms to get the master realm ID
     let list_resp = app
         .client()
-        .get(&format!("{}/api/realms?limit=1", app.url()))
+        .get(format!("{}/api/realms?limit=1", app.url()))
         .header("authorization", format!("Bearer {token}"))
         .send()
         .await
@@ -49,7 +49,7 @@ async fn test_scope_crud_lifecycle() {
     // 2. Create a scope
     let create_resp = app
         .client()
-        .post(&format!("{}/api/scopes", app.url()))
+        .post(format!("{}/api/scopes", app.url()))
         .header("authorization", format!("Bearer {token}"))
         .json(&json!({
             "realm_id": realm_id,
@@ -67,7 +67,7 @@ async fn test_scope_crud_lifecycle() {
     // 3. List scopes — should include the new one
     let scopes_resp = app
         .client()
-        .get(&format!("{}/api/scopes?realm_id={realm_id}", app.url()))
+        .get(format!("{}/api/scopes?realm_id={realm_id}", app.url()))
         .header("authorization", format!("Bearer {token}"))
         .send()
         .await
@@ -83,7 +83,7 @@ async fn test_scope_crud_lifecycle() {
     // 4. Get scope by ID
     let get_resp = app
         .client()
-        .get(&format!("{}/api/scopes/{scope_id}", app.url()))
+        .get(format!("{}/api/scopes/{scope_id}", app.url()))
         .header("authorization", format!("Bearer {token}"))
         .send()
         .await
@@ -97,7 +97,7 @@ async fn test_scope_crud_lifecycle() {
     // 5. Update scope
     let update_resp = app
         .client()
-        .put(&format!("{}/api/scopes/{scope_id}", app.url()))
+        .put(format!("{}/api/scopes/{scope_id}", app.url()))
         .header("authorization", format!("Bearer {token}"))
         .json(&json!({
             "name": "read:users",
@@ -112,7 +112,7 @@ async fn test_scope_crud_lifecycle() {
     // Verify update
     let get2_resp = app
         .client()
-        .get(&format!("{}/api/scopes/{scope_id}", app.url()))
+        .get(format!("{}/api/scopes/{scope_id}", app.url()))
         .header("authorization", format!("Bearer {token}"))
         .send()
         .await
@@ -124,7 +124,7 @@ async fn test_scope_crud_lifecycle() {
     // 6. Delete scope
     let del_resp = app
         .client()
-        .delete(&format!("{}/api/scopes/{scope_id}", app.url()))
+        .delete(format!("{}/api/scopes/{scope_id}", app.url()))
         .header("authorization", format!("Bearer {token}"))
         .send()
         .await
@@ -134,7 +134,7 @@ async fn test_scope_crud_lifecycle() {
     // Verify deletion
     let scopes_resp2 = app
         .client()
-        .get(&format!("{}/api/scopes?realm_id={realm_id}", app.url()))
+        .get(format!("{}/api/scopes?realm_id={realm_id}", app.url()))
         .header("authorization", format!("Bearer {token}"))
         .send()
         .await
@@ -153,7 +153,7 @@ async fn test_scope_unauthorized_without_admin_token() {
 
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/api/scopes?realm_id={}",
             app.url(),
             uuid::Uuid::new_v4()
@@ -172,7 +172,7 @@ async fn test_scope_missing_realm_id_returns_bad_request() {
 
     let resp = app
         .client()
-        .get(&format!("{}/api/scopes", app.url()))
+        .get(format!("{}/api/scopes", app.url()))
         .send()
         .await
         .expect("request failed");
@@ -189,7 +189,7 @@ async fn test_scope_requires_realm_id() {
     // Missing realm_id query param
     let resp = app
         .client()
-        .get(&format!("{}/api/scopes", app.url()))
+        .get(format!("{}/api/scopes", app.url()))
         .header("authorization", format!("Bearer {token}"))
         .send()
         .await
@@ -207,7 +207,7 @@ async fn test_client_creation_with_scope_assignment() {
     // 1. Get master realm ID
     let list_resp = app
         .client()
-        .get(&format!("{}/api/realms?limit=1", app.url()))
+        .get(format!("{}/api/realms?limit=1", app.url()))
         .header("authorization", format!("Bearer {token}"))
         .send()
         .await
@@ -218,7 +218,7 @@ async fn test_client_creation_with_scope_assignment() {
     // 2. Create a custom scope
     let scope_resp = app
         .client()
-        .post(&format!("{}/api/scopes", app.url()))
+        .post(format!("{}/api/scopes", app.url()))
         .header("authorization", format!("Bearer {token}"))
         .json(&json!({
             "realm_id": realm_id,
@@ -234,7 +234,7 @@ async fn test_client_creation_with_scope_assignment() {
     // 3. Create a client that includes the custom scope in allowed_scopes
     let client_resp = app
         .client()
-        .post(&format!("{}/api/clients", app.url()))
+        .post(format!("{}/api/clients", app.url()))
         .header("authorization", format!("Bearer {token}"))
         .json(&json!({
             "realm_id": realm_id,
@@ -255,7 +255,7 @@ async fn test_client_creation_with_scope_assignment() {
     // 4. Login via the scoped client and verify the scope is present in the token
     let login_resp = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -273,7 +273,7 @@ async fn test_client_creation_with_scope_assignment() {
     // 5. Introspect the token to verify scope claim includes custom:action
     let intro_resp = app
         .client()
-        .post(&format!("{}/oidc/introspect", app.url()))
+        .post(format!("{}/oidc/introspect", app.url()))
         .header("content-type", "application/x-www-form-urlencoded")
         .body(format!(
             "token={}&client_id=scoped-client",

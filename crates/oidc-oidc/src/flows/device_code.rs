@@ -73,7 +73,7 @@ impl DeviceCodeFlow {
             }
 
             // --- Fetch the user who authorized ---
-            let user_id = dc.user_id.ok_or_else(|| OidcError::AuthorizationPending)?;
+            let user_id = dc.user_id.ok_or(OidcError::AuthorizationPending)?;
             let user = match UserRepo.find_by_id(&mut conn, user_id).await? {
                 Some(u) => u,
                 None => return Err(OidcError::NotFound("user".into())),

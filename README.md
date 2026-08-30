@@ -11,6 +11,19 @@ A multi-tenant OpenID Connect / OAuth2 identity provider built in Rust with firs
 - **Security** — Argon2id password hashing, HMAC-protected session cookies, brute-force protection, CSRF tokens
 - **PostgreSQL** — All state persisted in PostgreSQL via `wasi-pg-client`
 
+## Request correlation and tracing
+
+The backend preserves a valid W3C `traceparent` trace ID or platform-provided
+`X-Trace-Id`, normalizes it to lowercase, and generates a UUID-based fallback
+when neither header is valid. The request span covers the complete handler, so
+database-client logs emitted during a request inherit the same trace context.
+The response returns that correlation value as `X-Request-ID`.
+
+Do not put secrets, tokens, cookies, connection strings, or request bodies in
+correlation headers or telemetry fields. The deployment proxy must strip or
+validate untrusted correlation headers before relying on them for security
+investigation.
+
 ## Quick Start
 
 ### `.env` setup for dev / E2E

@@ -52,7 +52,7 @@ async fn test_per_realm_token_endpoint_client_credentials_form_semantics() {
 
     let resp = app
         .client()
-        .post(&format!(
+        .post(format!(
             "{}/realms/master/protocol/openid-connect/token",
             app.url()
         ))
@@ -89,7 +89,7 @@ async fn test_per_realm_login_wrong_realm() {
 
     let resp = app
         .client()
-        .post(&format!("{}/realms/nonexistent/login", app.url()))
+        .post(format!("{}/realms/nonexistent/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -110,7 +110,7 @@ async fn test_per_realm_convenience_login_post() {
     // POST /realms/{realm}/login (convenience path, same as token)
     let resp = app
         .client()
-        .post(&format!("{}/realms/master/login", app.url()))
+        .post(format!("{}/realms/master/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -134,7 +134,7 @@ async fn test_realm_discovery_document() {
 
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/realms/master/.well-known/openid-configuration",
             app.url()
         ))
@@ -346,7 +346,7 @@ async fn test_realm_authorization_code_flow_issues_realm_scoped_tokens_and_suppo
 
     let token_resp = app
         .client()
-        .post(&format!(
+        .post(format!(
             "{}/realms/master/protocol/openid-connect/token",
             app.url()
         ))
@@ -393,7 +393,7 @@ async fn test_realm_authorization_code_flow_issues_realm_scoped_tokens_and_suppo
 
     let userinfo_resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/realms/master/protocol/openid-connect/userinfo",
             app.url()
         ))
@@ -422,7 +422,7 @@ async fn test_realm_login_page_html() {
 
     let resp = app
         .client()
-        .get(&format!("{}/realms/master/login", app.url()))
+        .get(format!("{}/realms/master/login", app.url()))
         .send()
         .await
         .expect("realm login page request failed");
@@ -448,7 +448,7 @@ async fn test_realm_login_page_not_found() {
 
     let resp = app
         .client()
-        .get(&format!("{}/realms/nonexistent/login", app.url()))
+        .get(format!("{}/realms/nonexistent/login", app.url()))
         .send()
         .await
         .expect("realm login page request failed");
@@ -482,7 +482,7 @@ async fn test_realm_login_page_disabled_realm() {
 
     let resp = app
         .client()
-        .get(&format!("{}/realms/disabled-realm/login", app.url()))
+        .get(format!("{}/realms/disabled-realm/login", app.url()))
         .send()
         .await
         .expect("realm login page request failed");
@@ -497,7 +497,7 @@ async fn test_realm_login_page_theming() {
     // Update master realm with a custom theme via admin API
     let admin_login = app
         .client()
-        .post(&format!("{}/oidc/login", app.url()))
+        .post(format!("{}/oidc/login", app.url()))
         .json(&json!({
             "email": fixtures::TEST_USER_EMAIL,
             "password": fixtures::TEST_USER_PASSWORD,
@@ -515,7 +515,7 @@ async fn test_realm_login_page_theming() {
     // Get master realm ID
     let list_resp = app
         .client()
-        .get(&format!("{}/api/realms?limit=1", app.url()))
+        .get(format!("{}/api/realms?limit=1", app.url()))
         .header("authorization", format!("Bearer {admin_token}"))
         .send()
         .await
@@ -526,7 +526,7 @@ async fn test_realm_login_page_theming() {
     // Update theme config
     let update_resp = app
         .client()
-        .put(&format!("{}/api/realms/{master_id}", app.url()))
+        .put(format!("{}/api/realms/{master_id}", app.url()))
         .header("authorization", format!("Bearer {admin_token}"))
         .json(&json!({
             "config": {
@@ -546,7 +546,7 @@ async fn test_realm_login_page_theming() {
     // Fetch the login page and verify theme is applied
     let resp = app
         .client()
-        .get(&format!("{}/realms/master/login", app.url()))
+        .get(format!("{}/realms/master/login", app.url()))
         .send()
         .await
         .expect("realm login page request failed");
@@ -578,7 +578,7 @@ async fn test_realm_certs_endpoint() {
 
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/realms/master/protocol/openid-connect/certs",
             app.url()
         ))
@@ -612,7 +612,7 @@ async fn test_realm_certs_unknown_realm() {
 
     let resp = app
         .client()
-        .get(&format!(
+        .get(format!(
             "{}/realms/nonexistent/protocol/openid-connect/certs",
             app.url()
         ))

@@ -95,10 +95,10 @@ pub fn extract_session_id_from_headers(
     // Parse cookies: "name1=value1; name2=value2; ..."
     for cookie_pair in cookie_header.split(';') {
         let cookie_pair = cookie_pair.trim();
-        if let Some(value) = cookie_pair.strip_prefix(&format!("{}=", SESSION_COOKIE_NAME)) {
-            if let Some(session_id) = verify_session_cookie_value(value, encryption_key) {
-                return Some(session_id);
-            }
+        if let Some(value) = cookie_pair.strip_prefix(&format!("{}=", SESSION_COOKIE_NAME))
+            && let Some(session_id) = verify_session_cookie_value(value, encryption_key)
+        {
+            return Some(session_id);
         }
     }
 

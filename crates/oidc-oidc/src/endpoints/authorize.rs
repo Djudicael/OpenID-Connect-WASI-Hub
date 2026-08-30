@@ -217,22 +217,22 @@ async fn authorize_inner(
         url
     };
 
-    // --- Extract redirect_uri early for error responses ---
+    // A caller-supplied redirect URI is untrusted until the corresponding
+    // client has been loaded and the URI is matched exactly against its
+    // registration. Every error before that point stays on the local error
+    // endpoint.
     let redirect_uri_param = params.get("redirect_uri").cloned();
-    let redirect_uri = match redirect_uri_param.as_deref() {
-        Some(uri) if !uri.is_empty() => {
-            // Validate URI format before using it for error redirects
-            if url::Url::parse(uri).is_err() {
-                return Err((
-                    "/oidc/error".to_string(),
-                    "invalid_request".to_string(),
-                    "Invalid redirect_uri format".to_string(),
-                ));
-            }
-            uri.to_string()
-        }
-        _ => "/oidc/error".to_string(),
-    };
+    if redirect_uri_param
+        .as_deref()
+        .is_some_and(|uri| !uri.is_empty() && url::Url::parse(uri).is_err())
+    {
+        return Err((
+            "/oidc/error".to_string(),
+            "invalid_request".to_string(),
+            "Invalid redirect_uri format".to_string(),
+        ));
+    }
+    let redirect_uri = "/oidc/error".to_string();
 
     // --- Pushed Authorization Request (PAR) resolution ---
     let mut params = params;
@@ -449,14 +449,15 @@ async fn authorize_inner(
                 )
             })?;
 
-        if let Some(client_id) = request_client_id.as_deref() {
-            if !unverified_claims.iss.is_empty() && client_id != unverified_claims.iss {
-                return Err((
-                    "/oidc/error".to_string(),
-                    "invalid_request_object".to_string(),
-                    "client_id in request object must match the outer request".to_string(),
-                ));
-            }
+        if let Some(client_id) = request_client_id.as_deref()
+            && !unverified_claims.iss.is_empty()
+            && client_id != unverified_claims.iss
+        {
+            return Err((
+                "/oidc/error".to_string(),
+                "invalid_request_object".to_string(),
+                "client_id in request object must match the outer request".to_string(),
+            ));
         }
 
         // Determine client_id: from params first, then from JWT iss
@@ -531,6 +532,101 @@ async fn authorize_inner(
         merge_protected_authorize_params(&mut params, request_claims, "invalid_request_object")?;
     }
 
+    // Validate the final client_id/redirect_uri pair after PAR/JAR protected
+    // parameters have been resolved, but before any error may be redirected
+    // to a relying party.
+    let requested_redirect_uri = params
+        .get("redirect_uri")
+        .filter(|uri| !uri.is_empty() && url::Url::parse(uri).is_ok())
+        .cloned()
+        .ok_or_else(|| {
+            (
+                "/oidc/error".to_string(),
+                "invalid_request".to_string(),
+                "Missing or invalid redirect_uri".to_string(),
+            )
+        })?;
+    let client_id_str = params.get("client_id").ok_or_else(|| {
+        (
+            "/oidc/error".to_string(),
+            "invalid_request".to_string(),
+            "Missing client_id".to_string(),
+        )
+    })?;
+
+    let mut conn = match state.connect().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("DB connection failed in authorize: {e}");
+            return Err((
+                "/oidc/error".to_string(),
+                "server_error".to_string(),
+                "An internal error occurred".to_string(),
+            ));
+        }
+    };
+
+    let realm_id = if let Some(name) = realm_name {
+        let realm = match RealmRepo.find_by_name(&mut conn, name).await {
+            Ok(Some(realm)) => realm,
+            _ => {
+                return Err((
+                    "/oidc/error".to_string(),
+                    "invalid_request".to_string(),
+                    "Realm not found".to_string(),
+                ));
+            }
+        };
+        if !realm.enabled {
+            return Err((
+                "/oidc/error".to_string(),
+                "access_denied".to_string(),
+                "Realm is disabled".to_string(),
+            ));
+        }
+        realm.id
+    } else {
+        uuid::Uuid::nil()
+    };
+    let client = if realm_id != uuid::Uuid::nil() {
+        ClientRepo
+            .find_by_client_id_in_realm(&mut conn, client_id_str, realm_id)
+            .await
+    } else {
+        ClientRepo.find_by_client_id(&mut conn, client_id_str).await
+    }
+    .map_err(|e| {
+        tracing::error!("DB error finding client in authorize: {e}");
+        (
+            "/oidc/error".to_string(),
+            "server_error".to_string(),
+            "An internal error occurred".to_string(),
+        )
+    })?
+    .ok_or_else(|| {
+        (
+            "/oidc/error".to_string(),
+            "invalid_client".to_string(),
+            "Client not found".to_string(),
+        )
+    })?;
+
+    if !client.enabled {
+        return Err((
+            "/oidc/error".to_string(),
+            "unauthorized_client".to_string(),
+            "Client is disabled".to_string(),
+        ));
+    }
+    if !client.redirect_uris.contains(&requested_redirect_uri) {
+        return Err((
+            "/oidc/error".to_string(),
+            "invalid_request".to_string(),
+            "Invalid redirect_uri".to_string(),
+        ));
+    }
+    let redirect_uri = requested_redirect_uri;
+
     // --- Parameter extraction ---
     let response_type_raw = params.get("response_type").ok_or_else(|| {
         (
@@ -570,7 +666,7 @@ async fn authorize_inner(
     // Determine whether this is a JARM request
     let is_jarm = parsed_response_mode
         .as_ref()
-        .map_or(false, |prm| prm.is_jarm());
+        .is_some_and(|prm| prm.is_jarm());
 
     // Determine the effective delivery mode
     let effective_mode = match &parsed_response_mode {
@@ -598,14 +694,6 @@ async fn authorize_inner(
             }
         }
     };
-
-    let client_id_str = params.get("client_id").ok_or_else(|| {
-        (
-            redirect_uri.clone(),
-            "invalid_request".to_string(),
-            "Missing client_id".to_string(),
-        )
-    })?;
 
     let scope = params.get("scope").unwrap_or(&"openid".to_string()).clone();
     let state_param = params.get("state").cloned();
@@ -693,7 +781,7 @@ async fn authorize_inner(
         if let Some(arr) = details.as_array() {
             for item in arr {
                 if !item.is_object()
-                    || !item.get("type").map_or(false, |t| {
+                    || !item.get("type").is_some_and(|t| {
                         t.is_string() && !t.as_str().unwrap_or_default().is_empty()
                     })
                 {
@@ -730,103 +818,6 @@ async fn authorize_inner(
                 "Resource URI must not exceed 512 characters".to_string(),
             ));
         }
-    }
-
-    // --- Client validation ---
-    let mut conn = match state.connect().await {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!("DB connection failed in authorize: {e}");
-            return Err((
-                "/oidc/error".to_string(),
-                "server_error".to_string(),
-                "An internal error occurred".to_string(),
-            ));
-        }
-    };
-
-    // Resolve realm if provided, then look up client within that realm
-    let realm_id = if let Some(name) = realm_name {
-        let realm = match RealmRepo.find_by_name(&mut conn, name).await {
-            Ok(Some(r)) => r,
-            _ => {
-                return Err((
-                    redirect_uri.clone(),
-                    "invalid_request".to_string(),
-                    "Realm not found".to_string(),
-                ));
-            }
-        };
-        if !realm.enabled {
-            return Err((
-                redirect_uri.clone(),
-                "access_denied".to_string(),
-                "Realm is disabled".to_string(),
-            ));
-        }
-        realm.id
-    } else {
-        uuid::Uuid::nil()
-    };
-    let client = if realm_id != uuid::Uuid::nil() {
-        match ClientRepo
-            .find_by_client_id_in_realm(&mut conn, client_id_str, realm_id)
-            .await
-        {
-            Ok(Some(c)) => c,
-            Ok(None) => {
-                return Err((
-                    redirect_uri.clone(),
-                    "invalid_client".to_string(),
-                    "Client not found in realm".to_string(),
-                ));
-            }
-            Err(e) => {
-                tracing::error!("DB error finding client in authorize: {}", e);
-                return Err((
-                    redirect_uri.clone(),
-                    "server_error".to_string(),
-                    "An internal error occurred".to_string(),
-                ));
-            }
-        }
-    } else {
-        match ClientRepo.find_by_client_id(&mut conn, client_id_str).await {
-            Ok(Some(c)) => c,
-            Ok(None) => {
-                return Err((
-                    redirect_uri.clone(),
-                    "invalid_client".to_string(),
-                    "Client not found".to_string(),
-                ));
-            }
-            Err(e) => {
-                tracing::error!("DB error finding client in authorize: {}", e);
-                return Err((
-                    redirect_uri.clone(),
-                    "server_error".to_string(),
-                    "An internal error occurred".to_string(),
-                ));
-            }
-        }
-    };
-
-    if !client.enabled {
-        return Err((
-            redirect_uri.clone(),
-            "unauthorized_client".to_string(),
-            "Client is disabled".to_string(),
-        ));
-    }
-
-    if !client.redirect_uris.contains(&redirect_uri) {
-        // Security: if redirect_uri is invalid, we MUST NOT redirect back.
-        // Return to generic error page instead.
-        return Err((
-            "/oidc/error".to_string(),
-            "invalid_request".to_string(),
-            "Invalid redirect_uri".to_string(),
-        ));
     }
 
     if client.pkce_required {
@@ -945,68 +936,62 @@ async fn authorize_inner(
     };
 
     // prompt=none: If the user is not authenticated, return login_required.
-    if prompt_values.contains(&"none") {
-        if cookie_user.is_none()
-            && params.get("login_hint").is_none()
-            && id_token_hint_subject.is_none()
-        {
-            return Err((
-                redirect_uri.clone(),
-                "login_required".to_string(),
-                "The Authorization Server requires End-User authentication.".to_string(),
-            ));
-        }
-        // If a valid session cookie, login_hint, or id_token_hint exists, we proceed.
+    if prompt_values.contains(&"none")
+        && cookie_user.is_none()
+        && !params.contains_key("login_hint")
+        && id_token_hint_subject.is_none()
+    {
+        return Err((
+            redirect_uri.clone(),
+            "login_required".to_string(),
+            "The Authorization Server requires End-User authentication.".to_string(),
+        ));
     }
+    // If a valid session cookie, login_hint, or id_token_hint exists, we proceed.
 
     // prompt=consent: Pass-through — we auto-consent for now.
 
     // --- max_age parameter handling (OIDC Core §3.1.2.1) ---
     // If max_age is specified and the user's auth_time exceeds it, require
     // re-authentication.
-    if let Some(max_age_str) = params.get("max_age") {
-        if let Ok(max_age) = max_age_str.parse::<i64>() {
-            if max_age >= 0 {
-                // If we have a session cookie, check auth_time via session creation time.
-                if cookie_user.is_some() {
-                    // The session's created_at serves as a proxy for auth_time.
-                    // We look up the session again to check the time.
-                    if let Some(ref session_id_str) = cookie_session_id {
-                        if let Ok(sid) = uuid::Uuid::parse_str(session_id_str) {
-                            if let Ok(Some(session)) = SessionRepo.find_by_id(&mut conn, sid).await
-                            {
-                                let auth_age =
-                                    (chrono::Utc::now() - session.created_at).num_seconds();
-                                if auth_age > max_age {
-                                    // Session is too old — require re-authentication.
-                                    let login_url = build_login_url(
-                                        &format!(
-                                            "/oidc/authorize?{}",
-                                            serde_urlencoded::to_string(&params)
-                                                .unwrap_or_default()
-                                        ),
-                                        state_param.as_ref(),
-                                    );
-                                    return Ok(AuthorizeResult::Redirect(login_url));
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    // No session cookie — if login_hint is provided, proceed.
-                    // Otherwise, redirect to login.
-                    let login_hint = params.get("login_hint");
-                    if login_hint.is_none() {
-                        let login_url = build_login_url(
-                            &format!(
-                                "/oidc/authorize?{}",
-                                serde_urlencoded::to_string(&params).unwrap_or_default()
-                            ),
-                            state_param.as_ref(),
-                        );
-                        return Ok(AuthorizeResult::Redirect(login_url));
-                    }
+    if let Some(max_age_str) = params.get("max_age")
+        && let Ok(max_age) = max_age_str.parse::<i64>()
+        && max_age >= 0
+    {
+        // If we have a session cookie, check auth_time via session creation time.
+        if cookie_user.is_some() {
+            // The session's created_at serves as a proxy for auth_time.
+            // We look up the session again to check the time.
+            if let Some(ref session_id_str) = cookie_session_id
+                && let Ok(sid) = uuid::Uuid::parse_str(session_id_str)
+                && let Ok(Some(session)) = SessionRepo.find_by_id(&mut conn, sid).await
+            {
+                let auth_age = (chrono::Utc::now() - session.created_at).num_seconds();
+                if auth_age > max_age {
+                    // Session is too old — require re-authentication.
+                    let login_url = build_login_url(
+                        &format!(
+                            "/oidc/authorize?{}",
+                            serde_urlencoded::to_string(&params).unwrap_or_default()
+                        ),
+                        state_param.as_ref(),
+                    );
+                    return Ok(AuthorizeResult::Redirect(login_url));
                 }
+            }
+        } else {
+            // No session cookie — if login_hint is provided, proceed.
+            // Otherwise, redirect to login.
+            let login_hint = params.get("login_hint");
+            if login_hint.is_none() {
+                let login_url = build_login_url(
+                    &format!(
+                        "/oidc/authorize?{}",
+                        serde_urlencoded::to_string(&params).unwrap_or_default()
+                    ),
+                    state_param.as_ref(),
+                );
+                return Ok(AuthorizeResult::Redirect(login_url));
             }
         }
     }
@@ -1492,9 +1477,8 @@ async fn authorize_inner(
                 let fields: Vec<(String, String)> = redirect_fragments
                     .iter()
                     .filter_map(|frag| {
-                        let mut parts = frag.splitn(2, '=');
-                        let name = parts.next()?;
-                        let value = parts.next()?;
+                        let (name, value) = frag.split_once('=')?;
+
                         Some((
                             name.to_string(),
                             urlencoding::decode(value).unwrap_or_default().to_string(),
