@@ -127,6 +127,7 @@ impl AuditEventRepo {
         offset: i64,
         event_type: Option<&str>,
         actor_id: Option<&Uuid>,
+        realm_id: Option<Uuid>,
         from: Option<chrono::DateTime<chrono::Utc>>,
         to: Option<chrono::DateTime<chrono::Utc>>,
     ) -> Result<Vec<AuditEvent>, OidcError> {
@@ -139,6 +140,10 @@ impl AuditEventRepo {
         }
         if actor_id.is_some() {
             where_clauses.push(format!("actor_id = ${}", param_idx));
+            param_idx += 1;
+        }
+        if realm_id.is_some() {
+            where_clauses.push(format!("realm_id = ${}", param_idx));
             param_idx += 1;
         }
         if from.is_some() {
@@ -177,6 +182,9 @@ impl AuditEventRepo {
         }
         if let Some(aid) = actor_id_ref {
             params.push(aid);
+        }
+        if let Some(ref realm_id) = realm_id {
+            params.push(realm_id);
         }
         if let Some(f) = from_ref {
             params.push(f);

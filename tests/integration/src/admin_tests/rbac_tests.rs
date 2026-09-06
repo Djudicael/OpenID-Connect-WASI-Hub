@@ -835,3 +835,200 @@ async fn test_unassign_role_from_group() {
 
     assert_eq!(resp.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn test_role_permissions_enforce_admin_routes_and_group_inheritance() {
+    let app = TestApp::new().await;
+    let admin_token = admin_login(&app).await;
+    let realm_id = get_master_realm_id(&app, &admin_token).await;
+
+    let user = app
+        .client()
+        .post(format!("{}/api/users", app.url()))
+        .bearer_auth(&admin_token)
+        .json(&json!({
+            "realm_id": realm_id,
+            "email": "delegated-admin@example.com",
+            "password": "DelegatedPass123!"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(user.status(), StatusCode::OK);
+    let user_id = user.json::<Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let user_reader = app
+        .client()
+        .post(format!("{}/api/roles", app.url()))
+        .bearer_auth(&admin_token)
+        .json(&json!({
+            "realm_id": realm_id,
+            "name": "delegated-user-reader",
+            "permissions": ["users:read"]
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    app.client()
+        .post(format!("{}/api/users/{user_id}/roles", app.url()))
+        .bearer_auth(&admin_token)
+        .json(&json!({"role_id": user_reader["id"]}))
+        .send()
+        .await
+        .unwrap();
+
+    let client_reader = app
+        .client()
+        .post(format!("{}/api/roles", app.url()))
+        .bearer_auth(&admin_token)
+        .json(&json!({
+            "realm_id": realm_id,
+            "name": "delegated-client-reader",
+            "permissions": ["clients:read"]
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    let group = app
+        .client()
+        .post(format!("{}/api/groups", app.url()))
+        .bearer_auth(&admin_token)
+        .json(&json!({"realm_id": realm_id, "name": "delegated-client-readers"}))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    let group_id = group["id"].as_str().unwrap();
+    app.client()
+        .post(format!("{}/api/groups/{group_id}/roles", app.url()))
+        .bearer_auth(&admin_token)
+        .json(&json!({"role_id": client_reader["id"]}))
+        .send()
+        .await
+        .unwrap();
+    app.client()
+        .post(format!("{}/api/users/{user_id}/groups", app.url()))
+        .bearer_auth(&admin_token)
+        .json(&json!({"group_id": group_id}))
+        .send()
+        .await
+        .unwrap();
+
+    let delegated_login = app
+        .client()
+        .post(format!("{}/oidc/login", app.url()))
+        .json(&json!({
+            "email": "delegated-admin@example.com",
+            "password": "DelegatedPass123!"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(delegated_login.status(), StatusCode::OK);
+    let delegated_token = delegated_login.json::<Value>().await.unwrap()["access_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let users = app
+        .client()
+        .get(format!("{}/api/users?realm_id={realm_id}", app.url()))
+        .bearer_auth(&delegated_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(users.status(), StatusCode::OK);
+
+    let clients = app
+        .client()
+        .get(format!("{}/api/clients?realm_id={realm_id}", app.url()))
+        .bearer_auth(&delegated_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(clients.status(), StatusCode::OK);
+
+    let forbidden = app
+        .client()
+        .post(format!("{}/api/users", app.url()))
+        .bearer_auth(&delegated_token)
+        .json(&json!({
+            "realm_id": realm_id,
+            "email": "must-not-be-created@example.com",
+            "password": "ForbiddenPass123!"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(forbidden.status(), StatusCode::FORBIDDEN);
+
+    let unrelated = app
+        .client()
+        .get(format!("{}/api/audit/events", app.url()))
+        .bearer_auth(&delegated_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unrelated.status(), StatusCode::FORBIDDEN);
+
+    let other_realm = app
+        .client()
+        .post(format!("{}/api/realms", app.url()))
+        .bearer_auth(&admin_token)
+        .json(&json!({"name": "delegated-boundary", "display_name": "Other realm"}))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    let other_realm_id = other_realm["id"].as_str().unwrap();
+    let other_user = app
+        .client()
+        .post(format!("{}/api/users", app.url()))
+        .bearer_auth(&admin_token)
+        .json(&json!({
+            "realm_id": other_realm_id,
+            "email": "other-realm-user@example.com",
+            "password": "OtherRealmPass123!"
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+
+    let cross_realm_list = app
+        .client()
+        .get(format!("{}/api/users?realm_id={other_realm_id}", app.url()))
+        .bearer_auth(&delegated_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cross_realm_list.status(), StatusCode::FORBIDDEN);
+
+    let cross_realm_object = app
+        .client()
+        .get(format!(
+            "{}/api/users/{}",
+            app.url(),
+            other_user["id"].as_str().unwrap()
+        ))
+        .bearer_auth(&delegated_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cross_realm_object.status(), StatusCode::FORBIDDEN);
+}

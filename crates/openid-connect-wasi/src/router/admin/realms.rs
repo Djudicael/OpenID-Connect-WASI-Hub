@@ -17,6 +17,7 @@ use oidc_repository::repositories::realm_signing_keys_repo::RealmSigningKeysRepo
 use crate::middleware::admin_auth::AdminAuth;
 use crate::router::admin::{
     admin_or_forbidden, bad_request, conflict, connect, internal_error, not_found,
+    realm_or_forbidden, scoped_realm,
 };
 use crate::state::AppState;
 
@@ -49,17 +50,30 @@ pub async fn list(
         Ok(c) => c,
         Err(r) => return r,
     };
-    let realms = match RealmRepo.list(&mut conn, query.limit, query.offset).await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!("list realms error: {e}");
-            return internal_error();
+    let (realms, total) = if let Some(realm_id) = auth.realm_id.filter(|_| !auth.is_global_admin())
+    {
+        match RealmRepo.find_by_id(&mut conn, realm_id).await {
+            Ok(Some(realm)) => (vec![realm], 1),
+            Ok(None) => (vec![], 0),
+            Err(e) => {
+                tracing::error!("list delegated realm error: {e}");
+                return internal_error();
+            }
         }
+    } else {
+        let realms = match RealmRepo.list(&mut conn, query.limit, query.offset).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("list realms error: {e}");
+                return internal_error();
+            }
+        };
+        let total = RealmRepo.count(&mut conn).await.unwrap_or_else(|e| {
+            tracing::warn!("failed to count realms: {e}");
+            0
+        });
+        (realms, total)
     };
-    let total = RealmRepo.count(&mut conn).await.unwrap_or_else(|e| {
-        tracing::warn!("failed to count realms: {e}");
-        0
-    });
     let rows: Vec<Value> = realms
         .into_iter()
         .map(|r| {
@@ -448,27 +462,29 @@ pub async fn list_identity_providers(
     if let Some(r) = admin_or_forbidden(&auth) {
         return r;
     }
-    let mut conn = match connect(&state).await {
-        Ok(c) => c,
-        Err(r) => return r,
-    };
-    let items = match query.realm_id {
-        Some(realm_id) => match IdentityProviderRepo
-            .find_by_realm(&mut conn, realm_id)
-            .await
-        {
-            Ok(i) => i,
-            Err(e) => {
-                tracing::error!("list identity providers error: {e}");
-                return internal_error();
-            }
-        },
-        None => {
+    let realm_id = match scoped_realm(&auth, query.realm_id) {
+        Ok(Some(value)) => value,
+        Ok(None) => {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({"error": "realm_id required"})),
             )
                 .into_response();
+        }
+        Err(response) => return response,
+    };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let items = match IdentityProviderRepo
+        .find_by_realm(&mut conn, realm_id)
+        .await
+    {
+        Ok(i) => i,
+        Err(e) => {
+            tracing::error!("list identity providers error: {e}");
+            return internal_error();
         }
     };
     let rows: Vec<Value> = items.into_iter().map(|i| json!({
@@ -522,6 +538,9 @@ pub async fn create_identity_provider(
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
+    if let Some(response) = realm_or_forbidden(&auth, req.realm_id) {
+        return response;
+    }
     let mut conn = match connect(&state).await {
         Ok(c) => c,
         Err(r) => return r,

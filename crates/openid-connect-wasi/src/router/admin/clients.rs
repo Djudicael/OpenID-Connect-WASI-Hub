@@ -12,6 +12,7 @@ use oidc_repository::repositories::client_repo::ClientRepo;
 use crate::middleware::admin_auth::AdminAuth;
 use crate::router::admin::{
     admin_or_forbidden, bad_request, conflict, connect, internal_error, not_found,
+    realm_or_forbidden, scoped_realm,
 };
 use crate::state::AppState;
 
@@ -40,6 +41,10 @@ pub async fn list(
     if let Some(r) = admin_or_forbidden(&auth) {
         return r;
     }
+    let realm_id = match scoped_realm(&auth, query.realm_id) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
     let mut conn = match connect(&state).await {
         Ok(c) => c,
         Err(r) => return r,
@@ -47,7 +52,7 @@ pub async fn list(
     let clients = match ClientRepo
         .list(
             &mut conn,
-            query.realm_id,
+            realm_id,
             query.search.as_deref(),
             query.limit,
             query.offset,
@@ -61,7 +66,7 @@ pub async fn list(
         }
     };
     let total = ClientRepo
-        .count(&mut conn, query.realm_id)
+        .count(&mut conn, realm_id)
         .await
         .unwrap_or_else(|e| {
             tracing::warn!("failed to count clients: {e}");
@@ -185,6 +190,9 @@ pub async fn create(State(state): State<AppState>, auth: AdminAuth, body: String
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
+    if let Some(response) = realm_or_forbidden(&auth, req.realm_id) {
+        return response;
+    }
     let mut conn = match connect(&state).await {
         Ok(c) => c,
         Err(r) => return r,

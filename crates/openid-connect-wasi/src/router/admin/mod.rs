@@ -213,6 +213,28 @@ pub fn admin_or_forbidden(auth: &AdminAuth) -> Option<Response> {
         .then(|| (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))).into_response())
 }
 
+/// Resolve a requested realm against the caller's authenticated realm.
+/// User and API-key administrators cannot read or mutate another realm.
+pub fn scoped_realm(
+    auth: &AdminAuth,
+    requested: Option<uuid::Uuid>,
+) -> Result<Option<uuid::Uuid>, Response> {
+    if auth.is_global_admin() {
+        return Ok(requested);
+    }
+    match (auth.realm_id, requested) {
+        (Some(auth_realm), Some(requested_realm)) if auth_realm != requested_realm => {
+            Err((StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))).into_response())
+        }
+        (Some(auth_realm), None) => Ok(Some(auth_realm)),
+        (_, requested) => Ok(requested),
+    }
+}
+
+pub fn realm_or_forbidden(auth: &AdminAuth, realm_id: uuid::Uuid) -> Option<Response> {
+    scoped_realm(auth, Some(realm_id)).err()
+}
+
 pub async fn connect(state: &AppState) -> Result<Connection, Response> {
     match wasi_pg_client::Connection::connect(&state.db_config).await {
         Ok(c) => Ok(Connection::from_pg_client(c)),

@@ -189,10 +189,10 @@ cargo build --release -p openid-connect-wasi --target wasm32-wasip2
 
 The server accepts **two** authentication methods on protected admin endpoints:
 
-1. **Bearer Token** — OIDC access token authenticated in the realm. The broad `admin` scope grants full administration; role permissions can grant delegated organization access.
+1. **Bearer Token** — OIDC access token for a user whose direct or group roles grant the required administration permission.
 2. **API Key** — `X-API-Key: <key>` or `Authorization: Bearer <api_key>` header
 
-Organization administration supports the realm-wide permissions `organizations:view`, `organizations:manage`, and `organizations:members`, plus resource-scoped forms such as `organizations:<organization-uuid>:view`. The three actions are independent.
+The `admin` permission grants full administration. Delegated roles and API keys can use independent resource/action permissions such as `users:read`, `users:write`, and `sessions:revoke`. See the [delegated administration guide](docs/delegated-administration.md) for the complete permission reference. Organization administration also supports resource-scoped permissions such as `organizations:<organization-uuid>:view`.
 
 ## Deployment Posture
 

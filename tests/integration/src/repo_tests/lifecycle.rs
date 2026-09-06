@@ -1358,13 +1358,13 @@ async fn test_audit_event_list_recent() {
     }
 
     let list = AuditEventRepo
-        .list_recent(&mut conn, 3, 0, None, None, None, None)
+        .list_recent(&mut conn, 3, 0, None, None, None, None, None)
         .await
         .expect("list_recent failed");
     assert_eq!(list.len(), 3);
 
     let list = AuditEventRepo
-        .list_recent(&mut conn, 3, 3, None, None, None, None)
+        .list_recent(&mut conn, 3, 3, None, None, None, None, None)
         .await
         .expect("list_recent failed");
     assert_eq!(list.len(), 2);

@@ -308,7 +308,7 @@ class RolesPage extends BaseComponent {
                 .value=${createPermissions}
                 @input=${(e) => this.setState({ createPermissions: e.target.value })}
               />
-              <div class="hint">Comma-separated list of permissions</div>
+              <div class="hint">Comma-separated, for example users:read, clients:read, or users:*</div>
             </div>
           </div>
         ` : ''}

@@ -5,7 +5,8 @@
 //! `reqwest` client for making HTTP requests in integration tests.
 
 use oidc_repository::repositories::{
-    client_repo::ClientRepo, realm_repo::RealmRepo, user_repo::UserRepo,
+    client_repo::ClientRepo, realm_repo::RealmRepo, role_repo::RoleRepo, user_repo::UserRepo,
+    user_role_repo::UserRoleRepo,
 };
 use uuid::Uuid;
 
@@ -456,6 +457,25 @@ async fn seed_baseline_data(conn: &mut oidc_repository::Connection) -> (Uuid, St
         .create(conn, &user)
         .await
         .expect("failed to seed admin user");
+
+    let now = chrono::Utc::now();
+    let admin_role = oidc_core::models::Role {
+        id: Uuid::new_v4(),
+        realm_id,
+        name: "test-admin".to_string(),
+        description: Some("Test administrator".to_string()),
+        permissions: vec!["admin".to_string()],
+        created_at: now,
+        updated_at: now,
+    };
+    RoleRepo
+        .create(conn, &admin_role)
+        .await
+        .expect("failed to seed admin role");
+    UserRoleRepo
+        .assign(conn, user.id, admin_role.id)
+        .await
+        .expect("failed to assign admin role");
 
     // Admin UI client — PasswordFlow::execute defaults to "admin-ui"
     // so the client_id must match exactly.

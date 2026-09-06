@@ -53,7 +53,8 @@ impl UserRoleRepo {
         user_id: Uuid,
         role_id: Uuid,
     ) -> Result<(), OidcError> {
-        let sql = "INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)";
+        let sql =
+            "INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING";
         conn.execute_params(sql, &[&user_id, &role_id])
             .await
             .map_err(mapper::pg_err)?;

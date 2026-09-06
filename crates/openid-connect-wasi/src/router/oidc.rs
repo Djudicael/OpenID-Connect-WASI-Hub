@@ -62,7 +62,8 @@ pub fn router() -> Router<AppState> {
             oidc_oidc::endpoints::session::check_session::check_session_handler(state.oidc_state(), Query(params)).await
         }))
         .route("/oidc/register", post(|State(state): State<AppState>, auth: AdminAuth, Json(req): Json<oidc_oidc::endpoints::registration::RegisterClientRequest>| async move {
-            match oidc_oidc::endpoints::registration::register_handler(state.oidc_state(), auth.realm_id, Json(req)).await {
+            let restricted_realm = (!auth.is_global_admin()).then_some(auth.realm_id).flatten();
+            match oidc_oidc::endpoints::registration::register_handler(state.oidc_state(), restricted_realm, Json(req)).await {
                 Ok(json) => (axum::http::StatusCode::OK, json).into_response(),
                 Err(e) => oidc_oidc::errors::from_oidc_error(&e).into_response(),
             }

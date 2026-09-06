@@ -1081,6 +1081,40 @@ async fn seed_data(db_url: &str, proxy_port: u16) -> Result<()> {
         }
     };
 
+    // Grant the seeded user explicit administrator authority. Login tokens do
+    // not confer management access by themselves; the admin router evaluates
+    // the user's current direct and group roles.
+    {
+        let pg_conn = wasi_pg_client::Connection::connect(&config)
+            .await
+            .context("seed: connect for admin role")?;
+        let mut conn = oidc_repository::Connection::from_pg_client(pg_conn);
+        let role_repo = oidc_repository::repositories::role_repo::RoleRepo;
+        let role = match role_repo
+            .find_by_name(&mut conn, realm_id, "realm-admin")
+            .await?
+        {
+            Some(role) => role,
+            None => {
+                let now = chrono::Utc::now();
+                let role = oidc_core::models::Role {
+                    id: oidc_core::utils::generate_uuid_v7(),
+                    realm_id,
+                    name: "realm-admin".into(),
+                    description: Some("Full realm administrator".into()),
+                    permissions: vec!["admin".into()],
+                    created_at: now,
+                    updated_at: now,
+                };
+                role_repo.create(&mut conn, &role).await?;
+                role
+            }
+        };
+        oidc_repository::repositories::user_role_repo::UserRoleRepo
+            .assign(&mut conn, user_id, role.id)
+            .await?;
+    }
+
     // 3. Clients
     info!("Step 3/5: OIDC clients...");
     {

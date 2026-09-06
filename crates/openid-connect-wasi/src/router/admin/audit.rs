@@ -29,6 +29,7 @@ use oidc_repository::repositories::user_repo::UserRepo;
 use crate::middleware::admin_auth::AdminAuth;
 use crate::router::admin::{
     admin_or_forbidden, bad_request, conflict, connect, internal_error, not_found,
+    realm_or_forbidden, scoped_realm,
 };
 use crate::state::AppState;
 
@@ -47,30 +48,38 @@ pub async fn stats_handler(
     if let Some(r) = admin_or_forbidden(&auth) {
         return r;
     }
+    let realm_id = match scoped_realm(&auth, query.realm_id) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
     let mut conn = match connect(&state).await {
         Ok(c) => c,
         Err(r) => return r,
     };
     let user_count = UserRepo
-        .count(&mut conn, query.realm_id)
+        .count(&mut conn, realm_id)
         .await
         .unwrap_or_else(|e| {
             tracing::warn!("failed to count users: {e}");
             0
         });
     let client_count = ClientRepo
-        .count(&mut conn, query.realm_id)
+        .count(&mut conn, realm_id)
         .await
         .unwrap_or_else(|e| {
             tracing::warn!("failed to count clients: {e}");
             0
         });
-    let realm_count = RealmRepo.count(&mut conn).await.unwrap_or_else(|e| {
-        tracing::warn!("failed to count realms: {e}");
-        0
-    });
+    let realm_count = if realm_id.is_some() {
+        1
+    } else {
+        RealmRepo.count(&mut conn).await.unwrap_or_else(|e| {
+            tracing::warn!("failed to count realms: {e}");
+            0
+        })
+    };
     let session_count = SessionRepo
-        .count(&mut conn, None, query.realm_id, Some(false))
+        .count(&mut conn, None, realm_id, Some(false))
         .await
         .unwrap_or_else(|e| {
             tracing::warn!("failed to count sessions: {e}");
@@ -113,6 +122,10 @@ pub async fn list_sessions(
     if let Some(r) = admin_or_forbidden(&auth) {
         return r;
     }
+    let realm_id = match scoped_realm(&auth, query.realm_id) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
     let mut conn = match connect(&state).await {
         Ok(c) => c,
         Err(r) => return r,
@@ -121,7 +134,7 @@ pub async fn list_sessions(
         .list(
             &mut conn,
             query.user_id,
-            query.realm_id,
+            realm_id,
             query.revoked,
             query.limit,
             query.offset,
@@ -135,7 +148,7 @@ pub async fn list_sessions(
         }
     };
     let total = SessionRepo
-        .count(&mut conn, query.user_id, query.realm_id, query.revoked)
+        .count(&mut conn, query.user_id, realm_id, query.revoked)
         .await
         .unwrap_or_else(|e| {
             tracing::warn!("failed to count sessions: {e}");
@@ -190,6 +203,7 @@ pub struct AuditListQuery {
     offset: i64,
     event_type: Option<String>,
     actor_id: Option<String>,
+    realm_id: Option<Uuid>,
 }
 
 pub async fn list(
@@ -200,6 +214,10 @@ pub async fn list(
     if let Some(r) = admin_or_forbidden(&auth) {
         return r;
     }
+    let realm_id = match scoped_realm(&auth, query.realm_id) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
     let mut conn = match connect(&state).await {
         Ok(c) => c,
         Err(r) => return r,
@@ -208,7 +226,14 @@ pub async fn list(
     let actor_id_filter: Option<Uuid> = query.actor_id.as_deref().and_then(|s| s.parse().ok());
     let actor_id_ref = actor_id_filter.as_ref();
     let total = match AuditEventRepo
-        .count(&mut conn, None, event_type_filter, actor_id_ref, None, None)
+        .count(
+            &mut conn,
+            realm_id,
+            event_type_filter,
+            actor_id_ref,
+            None,
+            None,
+        )
         .await
     {
         Ok(t) => t,
@@ -224,6 +249,7 @@ pub async fn list(
             query.offset,
             event_type_filter,
             actor_id_ref,
+            realm_id,
             None,
             None,
         )
@@ -263,6 +289,9 @@ pub async fn list_scopes(
 ) -> Response {
     if let Some(r) = admin_or_forbidden(&auth) {
         return r;
+    }
+    if let Some(response) = realm_or_forbidden(&auth, query.realm_id) {
+        return response;
     }
     let mut conn = match connect(&state).await {
         Ok(c) => c,
@@ -307,6 +336,9 @@ pub async fn create_scope(
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
+    if let Some(response) = realm_or_forbidden(&auth, req.realm_id) {
+        return response;
+    }
     let mut conn = match connect(&state).await {
         Ok(c) => c,
         Err(r) => return r,
@@ -460,6 +492,10 @@ pub async fn list_roles(
     if let Some(r) = admin_or_forbidden(&auth) {
         return r;
     }
+    let realm_id = match scoped_realm(&auth, query.realm_id) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
     let mut conn = match connect(&state).await {
         Ok(c) => c,
         Err(r) => return r,
@@ -467,7 +503,7 @@ pub async fn list_roles(
     let items = match RoleRepo
         .list(
             &mut conn,
-            query.realm_id,
+            realm_id,
             query.search.as_deref(),
             query.limit,
             query.offset,
@@ -481,7 +517,7 @@ pub async fn list_roles(
         }
     };
     let total = RoleRepo
-        .count(&mut conn, query.realm_id)
+        .count(&mut conn, realm_id)
         .await
         .unwrap_or_else(|e| {
             tracing::warn!("failed to count roles: {e}");
@@ -520,6 +556,9 @@ pub async fn create_role(State(state): State<AppState>, auth: AdminAuth, body: S
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
+    if let Some(response) = realm_or_forbidden(&auth, req.realm_id) {
+        return response;
+    }
     let mut conn = match connect(&state).await {
         Ok(c) => c,
         Err(r) => return r,
@@ -766,6 +805,10 @@ pub async fn list_groups(
     if let Some(r) = admin_or_forbidden(&auth) {
         return r;
     }
+    let realm_id = match scoped_realm(&auth, query.realm_id) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
     let mut conn = match connect(&state).await {
         Ok(c) => c,
         Err(r) => return r,
@@ -773,7 +816,7 @@ pub async fn list_groups(
     let items = match GroupRepo
         .list(
             &mut conn,
-            query.realm_id,
+            realm_id,
             query.search.as_deref(),
             query.limit,
             query.offset,
@@ -787,7 +830,7 @@ pub async fn list_groups(
         }
     };
     let total = GroupRepo
-        .count(&mut conn, query.realm_id)
+        .count(&mut conn, realm_id)
         .await
         .unwrap_or_else(|e| {
             tracing::warn!("failed to count groups: {e}");
@@ -830,6 +873,9 @@ pub async fn create_group(
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
+    if let Some(response) = realm_or_forbidden(&auth, req.realm_id) {
+        return response;
+    }
     let mut conn = match connect(&state).await {
         Ok(c) => c,
         Err(r) => return r,
@@ -1114,6 +1160,19 @@ pub async fn assign_role_to_group(
         Ok(c) => c,
         Err(r) => return r,
     };
+    let group = match GroupRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(group)) => group,
+        Ok(None) => return not_found(),
+        Err(_) => return internal_error(),
+    };
+    let role = match RoleRepo.find_by_id(&mut conn, req.role_id).await {
+        Ok(Some(role)) => role,
+        Ok(None) => return not_found(),
+        Err(_) => return internal_error(),
+    };
+    if group.realm_id != role.realm_id {
+        return bad_request();
+    }
     match GroupRoleRepo.assign(&mut conn, id, req.role_id).await {
         Ok(()) => {
             let audit = oidc_core::models::AuditEvent {

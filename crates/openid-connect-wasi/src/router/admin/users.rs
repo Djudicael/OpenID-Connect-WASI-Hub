@@ -21,6 +21,7 @@ use oidc_repository::repositories::user_role_repo::UserRoleRepo;
 use crate::middleware::admin_auth::AdminAuth;
 use crate::router::admin::{
     admin_or_forbidden, bad_request, conflict, connect, internal_error, not_found,
+    realm_or_forbidden, scoped_realm,
 };
 use crate::state::AppState;
 
@@ -49,6 +50,10 @@ pub async fn list(
     if let Some(r) = admin_or_forbidden(&auth) {
         return r;
     }
+    let realm_id = match scoped_realm(&auth, query.realm_id) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
     let mut conn = match connect(&state).await {
         Ok(c) => c,
         Err(r) => return r,
@@ -56,7 +61,7 @@ pub async fn list(
     let users = match UserRepo
         .list(
             &mut conn,
-            query.realm_id,
+            realm_id,
             query.search.as_deref(),
             query.limit,
             query.offset,
@@ -70,7 +75,7 @@ pub async fn list(
         }
     };
     let total = UserRepo
-        .count(&mut conn, query.realm_id)
+        .count(&mut conn, realm_id)
         .await
         .unwrap_or_else(|e| {
             tracing::warn!("failed to count users: {e}");
@@ -292,6 +297,9 @@ pub async fn create(State(state): State<AppState>, auth: AdminAuth, body: String
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
+    if let Some(response) = realm_or_forbidden(&auth, req.realm_id) {
+        return response;
+    }
     if !is_valid_email(&req.email) {
         return (
             StatusCode::BAD_REQUEST,
@@ -638,6 +646,19 @@ pub async fn assign_role(
         Ok(c) => c,
         Err(r) => return r,
     };
+    let user = match UserRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(user)) => user,
+        Ok(None) => return not_found(),
+        Err(_) => return internal_error(),
+    };
+    let role = match RoleRepo.find_by_id(&mut conn, req.role_id).await {
+        Ok(Some(role)) => role,
+        Ok(None) => return not_found(),
+        Err(_) => return internal_error(),
+    };
+    if user.realm_id != role.realm_id {
+        return bad_request();
+    }
     match UserRoleRepo.assign(&mut conn, id, req.role_id).await {
         Ok(()) => {
             let audit = oidc_core::models::AuditEvent {
@@ -770,6 +791,22 @@ pub async fn assign_group(
         Ok(c) => c,
         Err(r) => return r,
     };
+    let user = match UserRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(user)) => user,
+        Ok(None) => return not_found(),
+        Err(_) => return internal_error(),
+    };
+    let group = match oidc_repository::repositories::group_repo::GroupRepo
+        .find_by_id(&mut conn, req.group_id)
+        .await
+    {
+        Ok(Some(group)) => group,
+        Ok(None) => return not_found(),
+        Err(_) => return internal_error(),
+    };
+    if user.realm_id != group.realm_id {
+        return bad_request();
+    }
     match UserGroupRepo.assign(&mut conn, id, req.group_id).await {
         Ok(()) => {
             let audit = oidc_core::models::AuditEvent {

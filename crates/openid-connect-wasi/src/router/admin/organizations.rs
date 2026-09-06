@@ -192,7 +192,7 @@ pub async fn list(
     if !(1..=100).contains(&query.limit) || query.offset < 0 {
         return invalid("limit must be 1..=100 and offset must be non-negative");
     }
-    if auth.realm_id.is_some() && auth.realm_id != Some(query.realm_id) {
+    if !auth.is_global_admin() && auth.realm_id.is_some() && auth.realm_id != Some(query.realm_id) {
         return forbidden();
     }
     let mut conn = match connect(&state).await {
@@ -270,7 +270,8 @@ pub async fn create(
     if let Some(response) = admin_or_forbidden(&auth) {
         return response;
     }
-    if auth.realm_id.is_some() && auth.realm_id != Some(request.realm_id) {
+    if !auth.is_global_admin() && auth.realm_id.is_some() && auth.realm_id != Some(request.realm_id)
+    {
         return forbidden();
     }
     let now = Utc::now();
@@ -319,7 +320,10 @@ pub async fn update(
         Ok(None) => return not_found(),
         Err(error) => return repository_error("get organization for update", error),
     };
-    if auth.realm_id.is_some() && auth.realm_id != Some(organization.realm_id) {
+    if !auth.is_global_admin()
+        && auth.realm_id.is_some()
+        && auth.realm_id != Some(organization.realm_id)
+    {
         return forbidden();
     }
     if let Some(name) = request.name {
@@ -838,7 +842,10 @@ async fn load_authorized_organization(
         Ok(None) => return Err(not_found()),
         Err(error) => return Err(repository_error("get organization", error)),
     };
-    if auth.realm_id.is_some() && auth.realm_id != Some(organization.realm_id) {
+    if !auth.is_global_admin()
+        && auth.realm_id.is_some()
+        && auth.realm_id != Some(organization.realm_id)
+    {
         return Err(forbidden());
     }
     Ok(organization)
