@@ -32,7 +32,6 @@ oidc-admin-wasi = { version = "0.1.0", path = "crates/oidc-admin-wasi" }
 # Async / WASI
 wstd = "0.6"
 wstd-axum = "0.6"
-wasi = { version = "0.13", features = ["std"] }
 
 # Web
 axum = { version = "0.8", default-features = false, features = ["json", "matched-path", "original-uri", "query", "tower-log", "tracing"] }
@@ -47,7 +46,7 @@ serde_json = "1"
 serde_urlencoded = "0.7"
 
 # Database (pg_client)
-wasi-pg-client = "0.2.0"
+wasi-pg-client = "0.2.1"
 
 # Crypto
 getrandom = "0.4"

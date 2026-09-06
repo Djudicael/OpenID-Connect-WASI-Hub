@@ -44,9 +44,9 @@ cp .env.template .env
 
 ### Prerequisites
 
-- Rust 1.85+ with `wasm32-wasip2` target
+- Rust 1.96 with `wasm32-wasip2` target
 - Podman (for PostgreSQL container)
-- wasmtime ≥ 20 (for running the WASM component)
+- wasmtime ≥ 48.0.1 (for WASI 0.3 support used by `wasi-pg-client`)
 - Node.js 20+ (for frontend dev server)
 
 ```bash
@@ -345,7 +345,9 @@ Then start `wasmtime serve` with the required WASI worlds enabled:
 
 ```bash
 wasmtime serve \
+  -W component-model-async=y \
   -S cli=y \
+  -S p3=y \
   -S inherit-env=y \
   -S inherit-network=y \
   -S tcp=y \

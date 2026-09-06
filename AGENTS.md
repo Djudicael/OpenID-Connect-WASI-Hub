@@ -15,7 +15,7 @@ This is the **OpenID Connect WASI Hub** — a production-grade identity provider
 - **Dev target**: native (`x86_64` or `aarch64`)
 - **Build command (native)**: `cargo build --release`
 - **Build command (WASI)**: `cargo build -p openid-connect-wasi --target wasm32-wasip2 --release`
-- **Run (WASI)**: `wasmtime run --wasi inherit-network --wasi inherit-env target/wasm32-wasip2/release/openid_connect_wasi.wasm`
+- **Run (WASI)**: `wasmtime serve -W component-model-async=y -S p3=y -S inherit-network=y -S inherit-env=y -S tcp=y -S allow-ip-name-lookup=y target/wasm32-wasip2/release/openid_connect_wasi.wasm`
 
 ### Workspace Layout
 - `crates/oidc-core/` — Pure domain logic. No I/O. No framework deps.

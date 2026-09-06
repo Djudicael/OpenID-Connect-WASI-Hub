@@ -449,6 +449,10 @@ async fn cmd_wasm() -> Result<()> {
 
     let mut cmd = Command::new("wasmtime");
     cmd.arg("run")
+        .arg("-W")
+        .arg("component-model-async=y")
+        .arg("-S")
+        .arg("p3=y")
         .arg("--wasi")
         .arg("inherit-network")
         .arg("--wasi")
