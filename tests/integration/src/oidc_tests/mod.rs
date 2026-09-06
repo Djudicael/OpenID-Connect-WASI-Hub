@@ -508,9 +508,7 @@ async fn test_authorization_code_flow_with_pkce() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize request failed");
 
@@ -678,9 +676,7 @@ async fn test_admin_ui_authorization_code_flow_includes_admin_scope() {
     );
 
     let authorize_resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize request failed");
 
@@ -827,9 +823,7 @@ async fn test_refresh_token_cannot_be_redeemed_by_different_client() {
     );
 
     let authorize_resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize request failed");
 
@@ -1904,9 +1898,7 @@ async fn test_redirect_uri_exact_match_rejected() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize request failed");
 
@@ -1969,9 +1961,7 @@ async fn test_id_token_contains_nonce() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize request failed");
 
@@ -2057,9 +2047,7 @@ async fn test_id_token_contains_hashes() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize request failed");
 
@@ -2620,9 +2608,7 @@ async fn test_userinfo_profile_scope_returns_standard_claims() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, Some("ClaimsPass1!"))
         .await
         .expect("authorize failed");
     assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
@@ -2712,9 +2698,7 @@ async fn test_authorize_with_display_parameter() {
         );
 
         let resp = app
-            .client()
-            .get(&authorize_url)
-            .send()
+            .authorize_get(&authorize_url, None)
             .await
             .expect("authorize failed");
         assert_eq!(
@@ -2751,9 +2735,7 @@ async fn test_authorize_with_claims_parameter() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize failed");
     assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
@@ -2786,9 +2768,7 @@ async fn test_implicit_flow_token_response_type() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize failed");
     assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
@@ -2822,9 +2802,7 @@ async fn test_implicit_flow_id_token_response_type() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize failed");
     assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
@@ -2858,9 +2836,7 @@ async fn test_hybrid_flow_code_token_response_type() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize failed");
     assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
@@ -2899,9 +2875,7 @@ async fn test_hybrid_flow_code_id_token_response_type() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize failed");
     assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
@@ -2940,9 +2914,7 @@ async fn test_hybrid_flow_code_id_token_token_response_type() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize failed");
     assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);

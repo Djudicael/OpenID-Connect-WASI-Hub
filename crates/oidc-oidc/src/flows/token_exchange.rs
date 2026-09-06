@@ -428,6 +428,8 @@ impl TokenExchangeFlow {
             family_revoked: false,
             authorization_details: None,
             resource: resource.map(|r| vec![r.to_string()]).unwrap_or_default(),
+            acr: oidc_core::utils::ACR_BRONZE.to_string(),
+            amr: vec!["token_exchange".to_string()],
         };
 
         SessionRepo.create(conn, &session).await?;
@@ -511,6 +513,8 @@ impl TokenExchangeFlow {
             family_revoked: false,
             authorization_details: None,
             resource: resource.map(|r| vec![r.to_string()]).unwrap_or_default(),
+            acr: oidc_core::utils::ACR_BRONZE.to_string(),
+            amr: vec!["token_exchange".to_string()],
         };
 
         SessionRepo.create(conn, &session).await?;
@@ -624,6 +628,8 @@ impl TokenExchangeFlow {
             family_revoked: false,
             authorization_details: None,
             resource: resource.map(|r| vec![r.to_string()]).unwrap_or_default(),
+            acr: oidc_core::utils::ACR_BRONZE.to_string(),
+            amr: vec!["token_exchange".to_string()],
         };
 
         SessionRepo.create(conn, &session).await?;

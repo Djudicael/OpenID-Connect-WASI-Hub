@@ -6,6 +6,7 @@ import { listUserGroups, assignGroupToUser, unassignGroupFromUser, listGroups } 
 import { navigate } from '../core/router.js';
 import { showToast } from '../components/ui/toast.js';
 import { handleApiError } from '../utils/error-handler.js';
+import { get, http } from '../core/http.js';
 
 const ConfirmDialog = customElements.get('c-modal');
 
@@ -44,6 +45,7 @@ class UserDetailPage extends BaseComponent {
       selectedGroupId: '',
       addRoleLoading: false,
       addGroupLoading: false,
+      mfa: null,
     };
     this._onBeforeUnload = this._onBeforeUnload.bind(this);
   }
@@ -83,11 +85,25 @@ class UserDetailPage extends BaseComponent {
       this.setState({ user, savedUser: { ...user }, loading: false, dirty: false });
       this._loadUserRoles(id);
       this._loadUserGroups(id);
+      this._loadMfa(id);
     } catch (err) {
       if (err.name === 'AbortError') return;
       handleApiError(err, 'Failed to load user');
       this.setState({ loading: false });
     }
+  }
+
+  async _loadMfa(id) {
+    try { this.setState({ mfa: await get(`/api/users/${id}/mfa`, this.signal) }); }
+    catch (err) { if (err.name !== 'AbortError') this.setState({ mfa: null }); }
+  }
+
+  async _resetMfa() {
+    const user=this._state.user; if(!user)return;
+    const confirmed=await ConfirmDialog.confirm('Remove all authenticator apps, passkeys, and recovery codes for this user? Their active sessions will also be revoked.','Reset MFA');
+    if(!confirmed)return;
+    try { await http(`/api/users/${user.id}/mfa`,{method:'DELETE'}); showToast('MFA credentials reset','success'); this._loadMfa(user.id); }
+    catch(err){handleApiError(err,'Failed to reset MFA');}
   }
 
   async _save() {
@@ -473,6 +489,16 @@ class UserDetailPage extends BaseComponent {
                     <input type="checkbox" ?checked=${user.enabled} @change=${(e) => this._updateField('enabled', e.target.checked)} />
                     Enabled
                   </label>
+
+                  <!-- Roles Section -->
+                  <div class="section">
+                    <div class="section-title">Multi-factor authentication</div>
+                    ${this._state.mfa ? html`
+                      <p>Authenticator app: <strong>${this._state.mfa.totp_enabled ? 'Enabled' : 'Not configured'}</strong></p>
+                      <p>Passkeys: <strong>${this._state.mfa.passkeys.length}</strong> · Recovery codes remaining: <strong>${this._state.mfa.recovery_codes_remaining}</strong></p>
+                      <c-button variant="danger" size="sm" @click=${()=>this._resetMfa()} ?disabled=${!this._state.mfa.totp_enabled&&!this._state.mfa.passkeys.length}>Reset MFA</c-button>
+                    ` : html`<div class="empty-state">Loading MFA status...</div>`}
+                  </div>
 
                   <!-- Roles Section -->
                   <div class="section">

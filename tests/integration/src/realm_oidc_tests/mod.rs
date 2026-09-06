@@ -235,9 +235,7 @@ async fn test_realm_authorize_redirects_to_realm_login() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("realm authorize request failed");
 
@@ -257,7 +255,7 @@ async fn test_realm_authorize_redirects_to_realm_login() {
 }
 
 #[tokio::test]
-async fn test_realm_authorize_with_login_hint_success() {
+async fn test_realm_authorize_with_session_and_login_hint_success() {
     let app = TestApp::new().await;
 
     let client_id = fixtures::TEST_CLIENT_ID;
@@ -276,13 +274,11 @@ async fn test_realm_authorize_with_login_hint_success() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("realm authorize request failed");
 
-    // With login_hint, the user is auto-authenticated and redirected back with a code
+    // A valid browser session authorizes the user; login_hint only preselects the account.
     assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
     let location = resp
         .headers()
@@ -323,9 +319,7 @@ async fn test_realm_authorization_code_flow_issues_realm_scoped_tokens_and_suppo
     );
 
     let authorize_resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("realm authorize request failed");
     assert_eq!(authorize_resp.status(), StatusCode::TEMPORARY_REDIRECT);

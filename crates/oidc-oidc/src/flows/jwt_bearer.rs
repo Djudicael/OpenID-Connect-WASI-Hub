@@ -261,6 +261,8 @@ impl JwtBearerFlow {
                 family_revoked: false,
                 authorization_details: None,
                 resource: vec![],
+                acr: oidc_core::utils::ACR_BRONZE.to_string(),
+                amr: vec!["jwt".to_string()],
             };
 
             SessionRepo.create(&mut conn, &session).await?;

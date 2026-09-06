@@ -23,6 +23,9 @@ pub const AMR_SMS: &str = "sms";
 pub const AMR_DEVICE_CODE: &str = "device_code";
 pub const AMR_TOKEN_EXCHANGE: &str = "token_exchange";
 pub const AMR_SOCIAL: &str = "social";
+pub const AMR_HWK: &str = "hwk";
+pub const AMR_USER: &str = "user";
+pub const AMR_RECOVERY: &str = "recovery";
 
 /// All supported AMR values.
 pub const SUPPORTED_AMR_VALUES: &[&str] = &[
@@ -33,6 +36,9 @@ pub const SUPPORTED_AMR_VALUES: &[&str] = &[
     AMR_DEVICE_CODE,
     AMR_TOKEN_EXCHANGE,
     AMR_SOCIAL,
+    AMR_HWK,
+    AMR_USER,
+    AMR_RECOVERY,
 ];
 
 /// Resolved ACR/AMR result for an authentication event.

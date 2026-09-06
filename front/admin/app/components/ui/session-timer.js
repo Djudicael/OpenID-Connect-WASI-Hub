@@ -26,7 +26,7 @@ class SessionTimer extends BaseComponent {
   _checkSession() {
     const tokens = authService.tokens;
     if (!tokens || !tokens.expires_at) {
-      this.setState({ expiresIn: 0, warning: false, expired: true });
+      this.setState({ expiresIn: 0, warning: false, expired: false });
       return;
     }
     const remaining = tokens.expires_at - Date.now();

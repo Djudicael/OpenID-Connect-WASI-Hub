@@ -14,7 +14,7 @@ const SESSION_COLUMNS: &str = r#"
     scope, revoked, expires_at, refresh_expires_at,
     created_at, last_used_at,
     token_family_id, previous_session_id, rotated_at, reused_at, family_revoked,
-    authorization_details, resource
+    authorization_details, resource, acr, amr
 "#;
 
 impl SessionRepo {
@@ -56,8 +56,8 @@ impl SessionRepo {
                 access_token_hash, refresh_token_hash, id_token_jti,
                 scope, revoked, expires_at, refresh_expires_at,
                 token_family_id, previous_session_id, rotated_at, reused_at, family_revoked,
-                authorization_details, resource
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+                authorization_details, resource, acr, amr
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
         "#;
         conn.execute_params(
             sql,
@@ -82,6 +82,8 @@ impl SessionRepo {
                 &entity.family_revoked,
                 &entity.authorization_details,
                 &mapper::to_json_value_vec(&entity.resource),
+                &entity.acr,
+                &mapper::to_json_value_vec(&entity.amr),
             ],
         )
         .await
@@ -375,6 +377,8 @@ impl SessionRepo {
             family_revoked: mapper::bool_(row, 19)?,
             authorization_details: row.get::<serde_json::Value>(20).ok(),
             resource: mapper::json_string_vec(row, 21)?,
+            acr: mapper::string(row, 22)?,
+            amr: mapper::json_string_vec(row, 23)?,
         })
     }
 }

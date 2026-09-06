@@ -35,6 +35,7 @@ import './pages/apikey-detail-page.js';
 import './pages/scopes-page.js';
 import './pages/identity-providers-page.js';
 import './pages/password-policies-page.js';
+import './pages/security-page.js';
 import './pages/maintenance-page.js';
 import './pages/audit-page.js';
 import './pages/not-found-page.js';

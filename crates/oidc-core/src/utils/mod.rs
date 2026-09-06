@@ -10,9 +10,9 @@ pub mod token;
 pub mod validation;
 
 pub use acr::{
-    ACR_BRONZE, ACR_SILVER, AMR_DEVICE_CODE, AMR_MFA, AMR_OTP, AMR_PWD, AMR_SMS, AMR_SOCIAL,
-    AMR_TOKEN_EXCHANGE, ResolvedAcrAmr, SUPPORTED_ACR_VALUES, SUPPORTED_AMR_VALUES,
-    resolve_acr_amr, resolve_locale,
+    ACR_BRONZE, ACR_SILVER, AMR_DEVICE_CODE, AMR_HWK, AMR_MFA, AMR_OTP, AMR_PWD, AMR_RECOVERY,
+    AMR_SMS, AMR_SOCIAL, AMR_TOKEN_EXCHANGE, AMR_USER, ResolvedAcrAmr, SUPPORTED_ACR_VALUES,
+    SUPPORTED_AMR_VALUES, resolve_acr_amr, resolve_locale,
 };
 pub use html::html_escape;
 pub use id::generate_uuid_v7;

@@ -6,8 +6,9 @@ use axum::http::header::SET_COOKIE;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
+use crate::endpoints::mfa::LoginMfaProof;
 use crate::errors::{OidcErrorResponse, from_oidc_error};
-use crate::flows::password::PasswordFlow;
+use crate::flows::password::{PasswordFlow, PasswordFlowOutcome};
 use crate::session_cookie;
 use crate::state::OidcState;
 use oidc_core::OidcError;
@@ -21,6 +22,8 @@ pub struct LoginRequest {
     /// Optional realm name for authentication.
     /// When omitted, defaults to "master" (backward-compatible).
     pub realm: Option<String>,
+    #[serde(flatten)]
+    pub mfa: Option<LoginMfaProof>,
 }
 
 /// Successful login response.
@@ -59,9 +62,30 @@ pub async fn login_handler(
         req.client_id.as_deref(),
         req.realm.as_deref(),
         None, // DPoP not supported at the login endpoint
+        req.mfa.as_ref(),
     )
     .await
     .map_err(|e| from_oidc_error(&e))?;
+
+    let result = match result {
+        PasswordFlowOutcome::MfaRequired(challenge) => {
+            return Ok((
+                axum::http::StatusCode::ACCEPTED,
+                Json(serde_json::json!({
+                    "mfa_required": true,
+                    "challenge": challenge
+                })),
+            )
+                .into_response());
+        }
+        PasswordFlowOutcome::MfaRejected => {
+            return Ok(from_oidc_error(&OidcError::AuthenticationFailed(
+                "MFA verification failed".into(),
+            ))
+            .into_response());
+        }
+        PasswordFlowOutcome::Authenticated(result) => result,
+    };
 
     // Build the JSON response body
     let body = Json(LoginResponse {

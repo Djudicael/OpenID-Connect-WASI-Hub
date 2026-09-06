@@ -11,6 +11,7 @@ pub mod federated_identity_repo;
 pub mod group_repo;
 pub mod group_role_repo;
 pub mod identity_provider_repo;
+pub mod mfa_repo;
 pub mod organization_repo;
 pub mod par_repo;
 pub mod password_reset_token_repo;

@@ -12,6 +12,7 @@ const links = [
   // TODO: Add when backend admin CRUD endpoints exist for identity providers
   // { path: '/identity-providers', label: 'Identity Providers' },
   { path: '/password-policies', label: 'Password Policies' },
+  { path: '/security', label: 'Sign-in Security' },
   { path: '/sessions', label: 'Sessions' },
   { path: '/api-keys', label: 'API Keys' },
   { path: '/scopes', label: 'Scopes' },

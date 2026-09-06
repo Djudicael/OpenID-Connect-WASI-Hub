@@ -76,7 +76,7 @@ pub async fn discovery_handler(state: OidcState) -> Json<Value> {
             "updated_at"
         ]),
         "acr_values_supported" => json!(["urn:mace:incommon:iap:bronze", "urn:mace:incommon:iap:silver"]),
-        "amr_values_supported" => json!(["pwd", "mfa", "otp", "sms", "device_code", "token_exchange", "social"]),
+        "amr_values_supported" => json!(["pwd", "mfa", "otp", "hwk", "user", "recovery", "device_code", "token_exchange", "social"]),
         "claims_locales_supported" => json!(["en", "fr", "de", "es"]),
         "display_values_supported" => json!(["page", "popup", "touch", "wap"]),
         "claims_parameter_supported" => json!(true),
@@ -159,7 +159,7 @@ pub async fn realm_discovery_handler(state: OidcState, realm: String) -> Json<Va
             "updated_at"
         ]),
         "acr_values_supported" => json!(["urn:mace:incommon:iap:bronze", "urn:mace:incommon:iap:silver"]),
-        "amr_values_supported" => json!(["pwd", "mfa", "otp", "sms", "device_code", "token_exchange", "social"]),
+        "amr_values_supported" => json!(["pwd", "mfa", "otp", "hwk", "user", "recovery", "device_code", "token_exchange", "social"]),
         "claims_locales_supported" => json!(["en", "fr", "de", "es"]),
         "display_values_supported" => json!(["page", "popup", "touch", "wap"]),
         "claims_parameter_supported" => json!(true),

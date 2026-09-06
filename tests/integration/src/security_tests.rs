@@ -166,9 +166,7 @@ async fn test_authorize_pkce_required_for_public_client() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize request failed");
 
@@ -237,9 +235,7 @@ async fn test_authorize_code_exchange_wrong_verifier() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize request failed");
 
@@ -320,9 +316,7 @@ async fn test_authorize_code_exchange_without_verifier() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize request failed");
 
@@ -398,9 +392,7 @@ async fn test_authorize_open_redirect_rejected() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize request failed");
 
@@ -1092,9 +1084,7 @@ async fn test_redirect_uri_path_traversal() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize request failed");
 
@@ -1153,9 +1143,7 @@ async fn test_authorize_state_parameter_forwarded() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize request failed");
 
@@ -1211,9 +1199,7 @@ async fn test_authorization_code_replay_rejected() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize request failed");
 
@@ -1304,7 +1290,7 @@ async fn test_expired_authorization_code_rejected() {
         urlencoding::encode(fixtures::TEST_USER_EMAIL),
     );
 
-    let authorize_resp = app.client().get(authorize_url).send().await.unwrap();
+    let authorize_resp = app.authorize_get(&authorize_url, None).await.unwrap();
     assert_eq!(authorize_resp.status(), StatusCode::TEMPORARY_REDIRECT);
     let location = authorize_resp
         .headers()

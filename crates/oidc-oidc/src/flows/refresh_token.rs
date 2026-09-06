@@ -176,8 +176,8 @@ impl RefreshTokenFlow {
                 name: user.username.clone(),
                 given_name: user.given_name.clone(),
                 family_name: user.family_name.clone(),
-                acr: Some(oidc_core::utils::ACR_BRONZE.to_string()),
-                amr: Some(vec![oidc_core::utils::AMR_PWD.to_string()]),
+                acr: Some(session.acr.clone()),
+                amr: Some(session.amr.clone()),
                 organization,
                 ..Default::default()
             };
@@ -218,6 +218,8 @@ impl RefreshTokenFlow {
                 family_revoked: false,
                 authorization_details: None,
                 resource: vec![],
+                acr: session.acr.clone(),
+                amr: session.amr.clone(),
             };
 
             SessionRepo.create(&mut conn, &new_session).await?;

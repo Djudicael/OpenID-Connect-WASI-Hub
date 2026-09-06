@@ -10,6 +10,7 @@ pub mod introspect;
 pub mod jwks;
 pub mod login;
 pub mod logout;
+pub mod mfa;
 pub mod organization_invitations;
 pub mod organizations;
 pub mod par;

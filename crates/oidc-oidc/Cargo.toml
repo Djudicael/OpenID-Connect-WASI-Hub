@@ -29,6 +29,8 @@ hex = { workspace = true }
 aes-gcm = { workspace = true }
 url = { workspace = true }
 hmac = { workspace = true }
+sha1 = { workspace = true }
+passkey-auth = { workspace = true }
 subtle = { workspace = true }
 wasi-pg-client = { workspace = true }
 

@@ -194,6 +194,52 @@ impl TestApp {
         &self.client
     }
 
+    /// Send an authorization request with a real password-authenticated
+    /// browser session when the URL contains a `login_hint`.
+    pub async fn authorize_get(
+        &self,
+        url: &str,
+        password: Option<&str>,
+    ) -> Result<reqwest::Response, reqwest::Error> {
+        let login_hint = url::Url::parse(url).ok().and_then(|parsed| {
+            parsed
+                .query_pairs()
+                .find(|(key, _)| key == "login_hint")
+                .map(|(_, value)| value.into_owned())
+        });
+
+        let mut request = self.client.get(url);
+        if let Some(email) = login_hint {
+            let login = self
+                .client
+                .post(format!("{}/oidc/login", self.url()))
+                .json(&serde_json::json!({
+                    "email": email,
+                    "password": password.unwrap_or(fixtures::TEST_USER_PASSWORD),
+                }))
+                .send()
+                .await?;
+            assert_eq!(
+                login.status(),
+                reqwest::StatusCode::OK,
+                "test browser login should succeed"
+            );
+            let cookie = login
+                .headers()
+                .get(reqwest::header::SET_COOKIE)
+                .expect("login should set a session cookie")
+                .to_str()
+                .expect("session cookie should be valid ASCII")
+                .split(';')
+                .next()
+                .expect("session cookie should have a value")
+                .to_string();
+            request = request.header(reqwest::header::COOKIE, cookie);
+        }
+
+        request.send().await
+    }
+
     /// The master realm ID seeded during setup.
     pub fn master_realm_id(&self) -> Uuid {
         self.master_realm_id

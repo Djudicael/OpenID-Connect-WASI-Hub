@@ -8,7 +8,7 @@ A multi-tenant OpenID Connect / OAuth2 identity provider built in Rust with firs
 - **Multi-Tenancy** — Per-realm users, clients, sessions, scopes, and branded login pages
 - **WASI Preview 2** — Runs as a WASM component via `wasmtime serve` with no filesystem access
 - **Admin Console** — Native Web Components management UI (no React/Vue/Angular), primarily tested behind a same-origin proxy deployment
-- **Security** — Argon2id password hashing, HMAC-protected session cookies, brute-force protection, CSRF tokens
+- **Security** — Argon2id password hashing, TOTP, passkeys, one-time recovery codes, protected session cookies, brute-force protection, and CSRF tokens. See the [MFA guide](docs/multi-factor-authentication.md).
 - **PostgreSQL** — All state persisted in PostgreSQL via `wasi-pg-client`
 - **Organizations** — B2B tenants with invitations, verified domains, identity providers, groups, roles, and OIDC claims. See the [organization guide](docs/organizations.md).
 

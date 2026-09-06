@@ -198,6 +198,8 @@ impl DeviceCodeFlow {
                 family_revoked: false,
                 authorization_details: None,
                 resource: vec![],
+                acr: oidc_core::utils::ACR_BRONZE.to_string(),
+                amr: vec![oidc_core::utils::AMR_PWD.to_string()],
             };
 
             SessionRepo.create(&mut conn, &session).await?;

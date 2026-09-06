@@ -25,6 +25,7 @@ const routes = [
   { path: '/scopes', component: 'scopes-page' },
   { path: '/identity-providers', component: 'identity-providers-page' },
   { path: '/password-policies', component: 'password-policies-page' },
+  { path: '/security', component: 'security-page' },
   { path: '/maintenance', component: 'maintenance-page' },
   { path: '/audit', component: 'audit-page' },
 ];

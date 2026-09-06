@@ -99,4 +99,8 @@ pub struct AuthCode {
     pub authorization_details: Option<serde_json::Value>,
     /// RFC 8707 Resource Indicators — target resource server URIs.
     pub resource: Vec<String>,
+    /// Authentication context achieved before this code was issued.
+    pub auth_acr: Option<String>,
+    /// Authentication methods used before this code was issued.
+    pub auth_amr: Vec<String>,
 }

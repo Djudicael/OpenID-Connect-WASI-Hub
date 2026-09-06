@@ -432,6 +432,26 @@ pub async fn social_login_callback_handler(
     };
 
     // Issue local OIDC tokens for the browser session and create a local authorization code.
+    // Never let an upstream login bypass locally enrolled second factors.
+    let has_local_mfa = oidc_repository::repositories::mfa_repo::MfaRepo
+        .find_totp(&mut conn, user.id)
+        .await
+        .ok()
+        .flatten()
+        .is_some()
+        || oidc_repository::repositories::mfa_repo::MfaRepo
+            .list_webauthn(&mut conn, user.id)
+            .await
+            .map(|items| !items.is_empty())
+            .unwrap_or(true);
+    if has_local_mfa {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "This account requires multi-factor verification. Use the standard sign-in page.",
+        )
+            .into_response();
+    }
+
     let subject = user.id.to_string();
     let audience = local_client.client_id.clone();
 
@@ -583,6 +603,8 @@ pub async fn social_login_callback_handler(
         family_revoked: false,
         authorization_details: None,
         resource: vec![],
+        acr: oidc_core::utils::ACR_BRONZE.to_string(),
+        amr: vec![oidc_core::utils::AMR_SOCIAL.to_string()],
     };
 
     if let Err(e) = SessionRepo.create(&mut conn, &session).await {
@@ -639,6 +661,8 @@ pub async fn social_login_callback_handler(
         response_mode: None,
         authorization_details: None,
         resource: vec![],
+        auth_acr: Some(oidc_core::utils::ACR_BRONZE.to_string()),
+        auth_amr: vec![oidc_core::utils::AMR_SOCIAL.to_string()],
     };
 
     if let Err(e) = AuthCodeRepo.create(&mut conn, &auth_code).await {

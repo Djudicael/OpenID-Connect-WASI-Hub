@@ -1003,6 +1003,8 @@ mod tests {
             family_revoked: false,
             authorization_details: None,
             resource: vec![],
+            acr: crate::utils::ACR_BRONZE.to_string(),
+            amr: vec![crate::utils::AMR_PWD.to_string()],
         }
     }
 
@@ -1046,6 +1048,8 @@ mod tests {
             response_mode: None,
             authorization_details: None,
             resource: vec![],
+            auth_acr: Some(crate::utils::ACR_BRONZE.to_string()),
+            auth_amr: vec![crate::utils::AMR_PWD.to_string()],
         }
     }
 

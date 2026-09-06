@@ -112,10 +112,18 @@ impl AuthorizationCodeFlow {
             let at_hash = oidc_core::utils::compute_at_hash(&access_token);
             let c_hash = oidc_core::utils::compute_c_hash(code);
 
-            // Resolve ACR/AMR based on the authentication method and requested ACR values
-            // For authorization_code flow, the user authenticated via password (pwd)
-            let resolved_acr_amr = oidc_core::utils::resolve_acr_amr("pwd", &auth_code.acr_values)
-                .map_err(OidcError::LoginRequired)?;
+            // Use the assurance established before the code was issued.
+            let resolved_acr_amr = oidc_core::utils::ResolvedAcrAmr {
+                acr: auth_code
+                    .auth_acr
+                    .clone()
+                    .unwrap_or_else(|| oidc_core::utils::ACR_BRONZE.to_string()),
+                amr: if auth_code.auth_amr.is_empty() {
+                    vec![oidc_core::utils::AMR_PWD.to_string()]
+                } else {
+                    auth_code.auth_amr.clone()
+                },
+            };
 
             // Resolve claims locale based on user preference and requested claims_locales
             let resolved_locale =
@@ -221,6 +229,8 @@ impl AuthorizationCodeFlow {
                 family_revoked: false,
                 authorization_details: auth_code.authorization_details.clone(),
                 resource: auth_code.resource.clone(),
+                acr: resolved_acr_amr.acr.clone(),
+                amr: resolved_acr_amr.amr.clone(),
             };
 
             SessionRepo.create(&mut conn, &session).await?;

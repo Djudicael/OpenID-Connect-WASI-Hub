@@ -939,19 +939,13 @@ async fn authorize_inner(
     };
 
     // prompt=none: If the user is not authenticated, return login_required.
-    if prompt_values.contains(&"none")
-        && cookie_user.is_none()
-        && !params.contains_key("login_hint")
-        && id_token_hint_subject.is_none()
-    {
+    if prompt_values.contains(&"none") && cookie_user.is_none() {
         return Err((
             redirect_uri.clone(),
             "login_required".to_string(),
             "The Authorization Server requires End-User authentication.".to_string(),
         ));
     }
-    // If a valid session cookie, login_hint, or id_token_hint exists, we proceed.
-
     // prompt=consent: Pass-through — we auto-consent for now.
 
     // --- max_age parameter handling (OIDC Core §3.1.2.1) ---
@@ -983,96 +977,22 @@ async fn authorize_inner(
                 }
             }
         } else {
-            // No session cookie — if login_hint is provided, proceed.
-            // Otherwise, redirect to login.
-            let login_hint = params.get("login_hint");
-            if login_hint.is_none() {
-                let login_url = build_login_url(
-                    &format!(
-                        "/oidc/authorize?{}",
-                        serde_urlencoded::to_string(&params).unwrap_or_default()
-                    ),
-                    state_param.as_ref(),
-                );
-                return Ok(AuthorizeResult::Redirect(login_url));
-            }
+            let login_url = build_login_url(
+                &format!(
+                    "/oidc/authorize?{}",
+                    serde_urlencoded::to_string(&params).unwrap_or_default()
+                ),
+                state_param.as_ref(),
+            );
+            return Ok(AuthorizeResult::Redirect(login_url));
         }
     }
 
     // --- User authentication ---
-    // Priority: 1) session cookie  2) login_hint  3) id_token_hint  4) redirect to login
-    let login_hint = params.get("login_hint").cloned();
-    let user = if let Some(ref u) = cookie_user {
-        u.clone()
-    } else if let Some(email) = login_hint {
-        match UserRepo
-            .find_by_email(&mut conn, client.realm_id, &email)
-            .await
-        {
-            Ok(Some(u)) => u,
-            Ok(None) => {
-                return Err((
-                    redirect_uri.clone(),
-                    "access_denied".to_string(),
-                    "User not found".to_string(),
-                ));
-            }
-            Err(e) => {
-                tracing::error!("DB error finding user in authorize: {e}");
-                return Err((
-                    redirect_uri.clone(),
-                    "server_error".to_string(),
-                    "An internal error occurred".to_string(),
-                ));
-            }
-        }
-    } else if let Some(ref hint_subject) = id_token_hint_subject {
-        // Try to look up the user by the subject from id_token_hint
-        match uuid::Uuid::parse_str(hint_subject) {
-            Ok(user_id) => match UserRepo.find_by_id(&mut conn, user_id).await {
-                Ok(Some(u)) if u.enabled => u,
-                Ok(Some(_)) => {
-                    return Err((
-                        redirect_uri.clone(),
-                        "access_denied".to_string(),
-                        "User account is disabled".to_string(),
-                    ));
-                }
-                Ok(None) => {
-                    return Err((
-                        redirect_uri.clone(),
-                        "access_denied".to_string(),
-                        "User not found for id_token_hint subject".to_string(),
-                    ));
-                }
-                Err(e) => {
-                    tracing::error!("DB error finding user from id_token_hint: {e}");
-                    return Err((
-                        redirect_uri.clone(),
-                        "server_error".to_string(),
-                        "An internal error occurred".to_string(),
-                    ));
-                }
-            },
-            Err(_) => {
-                // Subject is not a UUID — try email lookup as fallback
-                match UserRepo
-                    .find_by_email(&mut conn, client.realm_id, hint_subject)
-                    .await
-                {
-                    Ok(Some(u)) => u,
-                    Ok(None) | Err(_) => {
-                        return Err((
-                            redirect_uri.clone(),
-                            "access_denied".to_string(),
-                            "User not found for id_token_hint subject".to_string(),
-                        ));
-                    }
-                }
-            }
-        }
+    // Account hints do not authenticate a user. A valid server session is required.
+    let user = if let Some(ref user) = cookie_user {
+        user.clone()
     } else {
-        // No session cookie or login_hint: redirect to login page with return URL
         let login_url = build_login_url(
             &format!(
                 "/oidc/authorize?{}",
@@ -1082,7 +1002,6 @@ async fn authorize_inner(
         );
         return Ok(AuthorizeResult::Redirect(login_url));
     };
-
     if !user.enabled {
         return Err((
             redirect_uri.clone(),
@@ -1180,10 +1099,24 @@ async fn authorize_inner(
     }
 
     // --- acr_values validation and resolution (OIDC Core §3.1.2.1 / §3.1.2.2) ---
-    // Determine the authentication method used. For the authorize endpoint,
-    // the user authenticated via session cookie or login_hint (password-based).
-    let auth_method = "pwd";
-    let resolved_acr_amr = match oidc_core::utils::resolve_acr_amr(auth_method, &acr_values) {
+    // Retain the assurance established by the authenticated browser session.
+    let assurance_session = if let Some(ref id) = cookie_session_id {
+        match uuid::Uuid::parse_str(id) {
+            Ok(id) => SessionRepo.find_by_id(&mut conn, id).await.ok().flatten(),
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+    let auth_method = if assurance_session
+        .as_ref()
+        .is_some_and(|session| session.acr == oidc_core::utils::ACR_SILVER)
+    {
+        "mfa"
+    } else {
+        "pwd"
+    };
+    let mut resolved_acr_amr = match oidc_core::utils::resolve_acr_amr(auth_method, &acr_values) {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!("ACR resolution failed: {e}");
@@ -1196,6 +1129,10 @@ async fn authorize_inner(
             ));
         }
     };
+
+    if let Some(session) = assurance_session {
+        resolved_acr_amr.amr = session.amr;
+    }
 
     // --- claims_locales resolution (OIDC Core §5.2) ---
     // Select the best matching locale for the user's claims.
@@ -1238,6 +1175,8 @@ async fn authorize_inner(
             response_mode: response_mode_param.clone(),
             authorization_details: authorization_details.clone(),
             resource: resource_params.clone(),
+            auth_acr: Some(resolved_acr_amr.acr.clone()),
+            auth_amr: resolved_acr_amr.amr.clone(),
         };
 
         match oidc_repository::repositories::auth_code_repo::AuthCodeRepo
@@ -1367,6 +1306,8 @@ async fn authorize_inner(
                 family_revoked: false,
                 authorization_details: authorization_details.clone(),
                 resource: resource_params.clone(),
+                acr: resolved_acr_amr.acr.clone(),
+                amr: resolved_acr_amr.amr.clone(),
             };
 
             if let Err(e) = oidc_repository::repositories::session_repo::SessionRepo

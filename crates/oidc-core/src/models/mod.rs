@@ -12,6 +12,7 @@ pub mod email_verification_token;
 pub mod federated_identity;
 pub mod group;
 pub mod identity_provider;
+pub mod mfa;
 pub mod organization;
 pub mod password_policy;
 pub mod password_reset_token;
@@ -39,6 +40,7 @@ pub use email_verification_token::EmailVerificationToken;
 pub use federated_identity::FederatedIdentity;
 pub use group::Group;
 pub use identity_provider::{IdentityProvider, IdentityProviderType};
+pub use mfa::{MfaCeremony, RecoveryCode, TotpCredential, WebauthnCredential};
 pub use organization::{
     Organization, OrganizationDomain, OrganizationDomainKind, OrganizationGroupLink,
     OrganizationIdentityProviderLink, OrganizationInvitation, OrganizationInvitationStatus,

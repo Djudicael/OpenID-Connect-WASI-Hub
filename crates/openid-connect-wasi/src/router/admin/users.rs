@@ -11,7 +11,9 @@ use oidc_core::models::audit_event::ActorType;
 use oidc_core::utils::{generate_uuid_v7, is_strong_password, is_valid_email, is_valid_username};
 use oidc_repository::repositories::account_recovery_token_repo::AccountRecoveryTokenRepo;
 use oidc_repository::repositories::audit_event_repo::AuditEventRepo;
+use oidc_repository::repositories::mfa_repo::MfaRepo;
 use oidc_repository::repositories::role_repo::RoleRepo;
+use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::repositories::user_group_repo::UserGroupRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 use oidc_repository::repositories::user_role_repo::UserRoleRepo;
@@ -160,6 +162,98 @@ pub async fn get(
             internal_error()
         }
     }
+}
+
+pub async fn get_mfa(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    match UserRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return not_found(),
+        Err(e) => {
+            tracing::error!("find user before MFA status error: {e}");
+            return internal_error();
+        }
+    }
+    let totp = match MfaRepo.find_totp(&mut conn, id).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("get user MFA error: {e}");
+            return internal_error();
+        }
+    };
+    let passkeys = match MfaRepo.list_webauthn(&mut conn, id).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!("get user passkeys error: {e}");
+            return internal_error();
+        }
+    };
+    let recovery = MfaRepo
+        .recovery_code_count(&mut conn, id)
+        .await
+        .unwrap_or(0);
+    Json(json!({"totp_enabled":totp.is_some(),"passkeys":passkeys,"recovery_codes_remaining":recovery})).into_response()
+}
+
+pub async fn reset_mfa(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let user = match UserRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(user)) => user,
+        Ok(None) => return not_found(),
+        Err(e) => {
+            tracing::error!("find user before MFA reset error: {e}");
+            return internal_error();
+        }
+    };
+    if let Err(e) = MfaRepo.reset_user(&mut conn, id).await {
+        tracing::error!("reset user MFA error: {e}");
+        return internal_error();
+    }
+    if let Err(e) = SessionRepo.revoke_by_user_id(&mut conn, id).await {
+        tracing::error!("revoke sessions after MFA reset error: {e}");
+        return internal_error();
+    }
+    let audit = oidc_core::models::AuditEvent {
+        id: generate_uuid_v7(),
+        realm_id: Some(user.realm_id),
+        event_type: "user.mfa_reset".to_string(),
+        actor_id: Uuid::parse_str(&auth.subject).ok(),
+        actor_type: if auth.is_api_key {
+            ActorType::ApiKey
+        } else {
+            ActorType::User
+        },
+        target_type: Some("user".to_string()),
+        target_id: Some(id),
+        details: json!({"sessions_revoked": true}),
+        ip_address: None,
+        user_agent: None,
+        created_at: chrono::Utc::now(),
+    };
+    if let Err(e) = AuditEventRepo.create(&mut conn, &audit).await {
+        tracing::warn!("failed to write MFA reset audit event: {e}");
+    }
+    (StatusCode::OK, Json(json!({"reset":true}))).into_response()
 }
 
 #[derive(Deserialize)]

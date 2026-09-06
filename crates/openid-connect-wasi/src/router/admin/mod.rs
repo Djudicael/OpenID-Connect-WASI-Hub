@@ -48,6 +48,8 @@ pub fn router() -> Router<AppState> {
         .route("/api/users/{id}", get(users::get))
         .route("/api/users/{id}", put(users::update))
         .route("/api/users/{id}", delete(users::delete))
+        .route("/api/users/{id}/mfa", get(users::get_mfa))
+        .route("/api/users/{id}/mfa", delete(users::reset_mfa))
         .route("/api/clients", get(clients::list))
         .route("/api/clients", post(clients::create))
         .route("/api/clients/{id}", get(clients::get))

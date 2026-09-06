@@ -71,6 +71,8 @@ impl ClientCredentialsFlow {
                 family_revoked: false,
                 authorization_details: None,
                 resource: vec![],
+                acr: oidc_core::utils::ACR_BRONZE.to_string(),
+                amr: vec!["client_secret".to_string()],
             };
 
             SessionRepo.create(&mut conn, &session).await?;

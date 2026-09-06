@@ -5,7 +5,8 @@ import { authService } from '../auth/auth-service.js';
 class LoginPage extends BaseComponent {
   constructor() {
     super();
-    this._state = { error: null, loading: false, mode: 'password', realm: 'master' };
+    this._state = { error: null, loading: false, mode: 'password', realm: 'master', mfa: null, mfaMethod: null };
+    this._primary = null;
   }
 
   connectedCallback() {
@@ -34,11 +35,61 @@ class LoginPage extends BaseComponent {
 
     this.setState({ loading: true, error: null });
     try {
-      await authService.loginWithPassword(email, password, realm);
+      const result = await authService.loginWithPassword(email, password, realm);
+      if (result.mfa_required) {
+        this._primary = { email, password, realm };
+        const methods = result.challenge.methods;
+        this.setState({ loading: false, mfa: result.challenge, mfaMethod: methods.includes('webauthn') ? 'webauthn' : methods[0] });
+        if (methods.includes('webauthn')) await this._completePasskey();
+        return;
+      }
       window.location.href = '/';
     } catch (err) {
       this.setState({ error: err.message || 'Login failed', loading: false });
     }
+  }
+
+  _b64urlToBytes(value) {
+    const padded = value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4);
+    return Uint8Array.from(atob(padded), c => c.charCodeAt(0));
+  }
+
+  _bytesToB64url(value) {
+    let binary = ''; for (const byte of new Uint8Array(value)) binary += String.fromCharCode(byte);
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  async _completePasskey() {
+    const options = structuredClone(this._state.mfa.webauthn);
+    options.challenge = this._b64urlToBytes(options.challenge);
+    options.allowCredentials = (options.allowCredentials || []).map(c => ({ ...c, id: this._b64urlToBytes(c.id) }));
+    this.setState({ loading: true, error: null, mfaMethod: 'webauthn' });
+    try {
+      const credential = await navigator.credentials.get({ publicKey: options });
+      await this._finishMfa({ webauthn_response: {
+        id: credential.id,
+        authenticatorData: this._bytesToB64url(credential.response.authenticatorData),
+        signature: this._bytesToB64url(credential.response.signature),
+        clientDataJSON: this._bytesToB64url(credential.response.clientDataJSON),
+        userHandle: credential.response.userHandle ? this._bytesToB64url(credential.response.userHandle) : null,
+      }});
+    } catch (err) { this.setState({ loading: false, error: err.message || 'Passkey verification was cancelled' }); }
+  }
+
+  async _submitMfa(e) {
+    e.preventDefault();
+    const value = this.shadowRoot.querySelector('#mfa-code')?.value?.trim();
+    if (!value) return;
+    await this._finishMfa(this._state.mfaMethod === 'recovery_code' ? { recovery_code: value } : { totp_code: value });
+  }
+
+  async _finishMfa(proof) {
+    this.setState({ loading: true, error: null });
+    try {
+      const result = await authService.loginWithPassword(this._primary.email, this._primary.password, this._primary.realm, { ceremony_token: this._state.mfa.ceremony_token, ...proof });
+      if (result.mfa_required) throw new Error('A new MFA challenge was requested');
+      this._primary = null; window.location.href = '/';
+    } catch (err) { this.setState({ loading: false, error: err.message || 'Verification failed' }); }
   }
 
   _togglePassword(e) {
@@ -55,13 +106,24 @@ class LoginPage extends BaseComponent {
   }
 
   template() {
-    const { error, loading, mode, realm } = this._state;
+    const { error, loading, mode, realm, mfa, mfaMethod } = this._state;
     return html`
       <div class="login-box">
         <h1 class="login-title">OpenID Connect Hub</h1>
         <p class="login-subtitle">Admin Console</p>
 
-        ${mode === 'password' ? html`
+        ${mfa ? html`
+          <p class="login-subtitle">Complete your sign in with a second factor.</p>
+          <div class="mfa-methods">
+            ${mfa.methods.includes('webauthn') ? html`<button class="toggle-link" @click=${() => this._completePasskey()} ?disabled=${loading}>Use a passkey</button>` : ''}
+            ${mfa.methods.includes('totp') ? html`<button class="toggle-link" @click=${() => this.setState({mfaMethod:'totp',error:null})}>Authenticator code</button>` : ''}
+            ${mfa.methods.includes('recovery_code') ? html`<button class="toggle-link" @click=${() => this.setState({mfaMethod:'recovery_code',error:null})}>Recovery code</button>` : ''}
+          </div>
+          ${mfaMethod !== 'webauthn' ? html`<form class="login-form" @submit=${e=>this._submitMfa(e)}>
+            <div class="form-group"><label for="mfa-code">${mfaMethod === 'recovery_code' ? 'Recovery code' : '6-digit code'}</label><input id="mfa-code" autocomplete="one-time-code" required ?disabled=${loading}></div>
+            <button class="login-btn" type="submit" ?disabled=${loading}>${loading?'Verifying...':'Verify'}</button>
+          </form>` : html`<p class="login-subtitle">Follow your browser’s passkey prompt.</p>`}
+        ` : mode === 'password' ? html`
           <form class="login-form" @submit=${(e) => this._loginWithPassword(e)}>
             <div class="form-group">
               <label for="realm">Realm</label>
@@ -94,11 +156,11 @@ class LoginPage extends BaseComponent {
           </button>
         `}
 
-        <div class="divider">or</div>
+        ${!mfa ? html`<div class="divider">or</div>
 
         <button class="toggle-link" @click=${() => this._toggleMode()}>
           ${mode === 'password' ? 'Sign in with OIDC instead' : 'Sign in with password instead'}
-        </button>
+        </button>` : ''}
 
         ${error ? html`<div class="error">${error}</div>` : ''}
       </div>

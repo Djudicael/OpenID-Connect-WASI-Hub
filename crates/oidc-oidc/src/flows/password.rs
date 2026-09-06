@@ -9,12 +9,14 @@ use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, is_valid_email, 
 use oidc_repository::mapper::pg_err;
 use oidc_repository::repositories::audit_event_repo::AuditEventRepo;
 use oidc_repository::repositories::client_repo::ClientRepo;
+use oidc_repository::repositories::mfa_repo::MfaRepo;
 use oidc_repository::repositories::organization_repo::OrganizationRepo;
 use oidc_repository::repositories::realm_repo::RealmRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 use oidc_repository::with_transaction;
 
+use crate::endpoints::mfa::{self, LoginMfaChallenge, LoginMfaProof};
 use crate::state::OidcState;
 
 /// Result of a successful password flow execution.
@@ -30,6 +32,12 @@ pub struct PasswordFlowResult {
     pub user_username: Option<String>,
     pub user_given_name: Option<String>,
     pub user_family_name: Option<String>,
+}
+
+pub enum PasswordFlowOutcome {
+    Authenticated(PasswordFlowResult),
+    MfaRequired(LoginMfaChallenge),
+    MfaRejected,
 }
 
 /// Resource Owner Password Credentials flow handler.
@@ -50,7 +58,8 @@ impl PasswordFlow {
         client_id: Option<&str>,
         realm_name: Option<&str>,
         dpop_jkt: Option<&str>,
-    ) -> Result<PasswordFlowResult, OidcError> {
+        mfa_proof: Option<&LoginMfaProof>,
+    ) -> Result<PasswordFlowOutcome, OidcError> {
         // --- Input validation ---
         if !is_valid_email(email) {
             return Err(OidcError::AuthenticationFailed(
@@ -175,6 +184,34 @@ impl PasswordFlow {
                 }
             };
 
+            let has_mfa = MfaRepo.find_totp(&mut conn, user.id).await?.is_some()
+                || !MfaRepo.list_webauthn(&mut conn, user.id).await?.is_empty();
+            let (acr, amr) = if has_mfa {
+                match mfa_proof {
+                    Some(proof) => {
+                        let Some(verified) = mfa::verify_login(
+                            &mut conn, state, user.id, realm.id, client.id, proof,
+                        )
+                        .await?
+                        else {
+                            return Ok(PasswordFlowOutcome::MfaRejected);
+                        };
+                        (oidc_core::utils::ACR_SILVER.to_string(), verified.amr)
+                    }
+                    None => {
+                        let challenge =
+                            mfa::begin_login(&mut conn, state, user.id, realm.id, client.id)
+                                .await?;
+                        return Ok(PasswordFlowOutcome::MfaRequired(challenge));
+                    }
+                }
+            } else {
+                (
+                    oidc_core::utils::ACR_BRONZE.to_string(),
+                    vec![oidc_core::utils::AMR_PWD.to_string()],
+                )
+            };
+
             // Issue tokens
             // Compute subject based on client's subject_type
             let subject = if client.subject_type == "pairwise" {
@@ -233,8 +270,8 @@ impl PasswordFlow {
                 phone_number: user.phone_number.clone(),
                 phone_number_verified: user.phone_number_verified,
                 updated_at: Some(user.updated_at.timestamp()),
-                acr: Some(oidc_core::utils::ACR_BRONZE.to_string()),
-                amr: Some(vec![oidc_core::utils::AMR_PWD.to_string()]),
+                acr: Some(acr.clone()),
+                amr: Some(amr.clone()),
                 azp: None, // Password flow does not currently support resource indicators
                 address: None,
                 roles: None,
@@ -276,13 +313,15 @@ impl PasswordFlow {
                 family_revoked: false,
                 authorization_details: None,
                 resource: vec![],
+                acr,
+                amr,
             };
 
             SessionRepo.create(&mut conn, &session).await?;
 
             let token_type = if dpop_jkt.is_some() { "DPoP" } else { "Bearer" };
 
-            Ok(PasswordFlowResult {
+            Ok(PasswordFlowOutcome::Authenticated(PasswordFlowResult {
                 access_token,
                 refresh_token,
                 id_token,
@@ -294,7 +333,7 @@ impl PasswordFlow {
                 user_username: user.username,
                 user_given_name: user.given_name,
                 user_family_name: user.family_name,
-            })
+            }))
         })
     }
 }

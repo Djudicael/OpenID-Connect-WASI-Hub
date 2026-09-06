@@ -4,7 +4,7 @@ use axum::Json;
 use axum::Router;
 use axum::extract::{Form, Path, Query, State};
 use axum::response::{Html, IntoResponse};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use std::collections::HashMap;
 
 use crate::middleware::admin_auth::AdminAuth;
@@ -70,6 +70,30 @@ pub fn router() -> Router<AppState> {
         // Backward-compatible admin login
         .route("/oidc/login", post(|State(state): State<AppState>, json: Json<oidc_oidc::endpoints::login::LoginRequest>| async move {
             oidc_oidc::endpoints::login::login_handler(State(state.oidc_state()), json).await
+        }))
+        .route("/oidc/account/mfa", get(|State(state): State<AppState>, headers: axum::http::HeaderMap| async move {
+            match oidc_oidc::endpoints::mfa::status_handler(state.oidc_state(), headers).await { Ok(v)=>v.into_response(), Err(e)=>oidc_oidc::errors::from_oidc_error(&e).into_response() }
+        }))
+        .route("/oidc/account/mfa/totp/start", post(|State(state): State<AppState>, headers: axum::http::HeaderMap| async move {
+            match oidc_oidc::endpoints::mfa::totp_start_handler(state.oidc_state(), headers).await { Ok(v)=>v.into_response(), Err(e)=>oidc_oidc::errors::from_oidc_error(&e).into_response() }
+        }))
+        .route("/oidc/account/mfa/totp/finish", post(|State(state): State<AppState>, headers: axum::http::HeaderMap, Json(req): Json<oidc_oidc::endpoints::mfa::TotpFinishRequest>| async move {
+            match oidc_oidc::endpoints::mfa::totp_finish_handler(state.oidc_state(), headers, req).await { Ok(v)=>v.into_response(), Err(e)=>oidc_oidc::errors::from_oidc_error(&e).into_response() }
+        }))
+        .route("/oidc/account/mfa/totp", delete(|State(state): State<AppState>, headers: axum::http::HeaderMap| async move {
+            match oidc_oidc::endpoints::mfa::delete_totp_handler(state.oidc_state(), headers).await { Ok(v)=>v.into_response(), Err(e)=>oidc_oidc::errors::from_oidc_error(&e).into_response() }
+        }))
+        .route("/oidc/account/mfa/passkeys/start", post(|State(state): State<AppState>, headers: axum::http::HeaderMap| async move {
+            match oidc_oidc::endpoints::mfa::webauthn_start_handler(state.oidc_state(), headers).await { Ok(v)=>v.into_response(), Err(e)=>oidc_oidc::errors::from_oidc_error(&e).into_response() }
+        }))
+        .route("/oidc/account/mfa/passkeys/finish", post(|State(state): State<AppState>, headers: axum::http::HeaderMap, Json(req): Json<oidc_oidc::endpoints::mfa::WebauthnFinishRequest>| async move {
+            match oidc_oidc::endpoints::mfa::webauthn_finish_handler(state.oidc_state(), headers, req).await { Ok(v)=>v.into_response(), Err(e)=>oidc_oidc::errors::from_oidc_error(&e).into_response() }
+        }))
+        .route("/oidc/account/mfa/passkeys", delete(|State(state): State<AppState>, headers: axum::http::HeaderMap, Json(req): Json<oidc_oidc::endpoints::mfa::DeleteCredentialRequest>| async move {
+            match oidc_oidc::endpoints::mfa::delete_webauthn_handler(state.oidc_state(), headers, req).await { Ok(v)=>v.into_response(), Err(e)=>oidc_oidc::errors::from_oidc_error(&e).into_response() }
+        }))
+        .route("/oidc/account/mfa/recovery-codes", post(|State(state): State<AppState>, headers: axum::http::HeaderMap| async move {
+            match oidc_oidc::endpoints::mfa::recovery_regenerate_handler(state.oidc_state(), headers).await { Ok(v)=>v.into_response(), Err(e)=>oidc_oidc::errors::from_oidc_error(&e).into_response() }
         }))
         // Password reset
         .route("/oidc/password-reset/request", post(|State(state): State<AppState>, Json(req): Json<oidc_oidc::endpoints::password_reset::PasswordResetRequestRequest>| async move {

@@ -52,6 +52,10 @@ pub struct Session {
     pub authorization_details: Option<serde_json::Value>,
     /// RFC 8707 Resource Indicators — target resource server URIs.
     pub resource: Vec<String>,
+    /// Authentication Context Class Reference achieved for this session.
+    pub acr: String,
+    /// Authentication methods used to establish this session.
+    pub amr: Vec<String>,
 }
 
 impl std::fmt::Debug for Session {
