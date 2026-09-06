@@ -109,7 +109,7 @@ pub async fn device_authorization_handler(
 
     // Validate requested scopes against client's allowed scopes
     for s in &scopes {
-        if !client.allowed_scopes.contains(s) {
+        if !crate::organization_claims::is_scope_allowed(s, &client.allowed_scopes) {
             return Err(OidcError::InvalidScope(format!(
                 "Client not authorized for scope: {}",
                 s

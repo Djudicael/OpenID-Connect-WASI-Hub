@@ -5,6 +5,8 @@
 
 #![allow(missing_docs)]
 
+pub mod dns_verifier;
+pub mod email_sender;
 pub mod error;
 pub mod middleware;
 pub mod router;

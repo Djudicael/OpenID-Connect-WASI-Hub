@@ -133,6 +133,12 @@ pub async fn introspect_handler(
             obj.insert("authorization_details".to_string(), auth_details);
         }
 
+        if let Some(organization) = claims.organization
+            && let Some(obj) = response.as_object_mut()
+        {
+            obj.insert("organization".to_string(), organization);
+        }
+
         Ok(Json(response))
     });
 

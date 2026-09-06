@@ -14,6 +14,7 @@ use crate::state::AppState;
 
 pub mod audit;
 pub mod clients;
+pub mod organizations;
 pub mod realms;
 pub mod users;
 
@@ -57,6 +58,75 @@ pub fn router() -> Router<AppState> {
         .route("/api/realms/{id}", get(realms::get))
         .route("/api/realms/{id}", put(realms::update))
         .route("/api/realms/{id}", delete(realms::delete))
+        .route("/api/organizations", get(organizations::list))
+        .route("/api/organizations", post(organizations::create))
+        .route("/api/organizations/{id}", get(organizations::get))
+        .route("/api/organizations/{id}", put(organizations::update))
+        .route("/api/organizations/{id}", delete(organizations::delete))
+        .route(
+            "/api/organizations/{id}/domains",
+            get(organizations::list_domains),
+        )
+        .route(
+            "/api/organizations/{id}/domains",
+            post(organizations::add_domain),
+        )
+        .route(
+            "/api/organizations/{id}/domains/{domain_id}",
+            delete(organizations::delete_domain),
+        )
+        .route(
+            "/api/organizations/{id}/domains/{domain_id}/verify",
+            post(organizations::verify_domain),
+        )
+        .route(
+            "/api/organizations/{id}/members",
+            get(organizations::list_members),
+        )
+        .route(
+            "/api/organizations/{id}/members",
+            post(organizations::add_member),
+        )
+        .route(
+            "/api/organizations/{id}/members/{user_id}",
+            delete(organizations::remove_member),
+        )
+        .route(
+            "/api/organizations/{id}/identity-providers",
+            get(organizations::list_identity_providers),
+        )
+        .route(
+            "/api/organizations/{id}/identity-providers",
+            post(organizations::link_identity_provider),
+        )
+        .route(
+            "/api/organizations/{id}/identity-providers/{identity_provider_id}",
+            delete(organizations::unlink_identity_provider),
+        )
+        .route(
+            "/api/organizations/{id}/invitations",
+            get(organizations::list_invitations),
+        )
+        .route(
+            "/api/organizations/{id}/invitations",
+            post(organizations::create_invitation),
+        )
+        .route(
+            "/api/organizations/{id}/invitations/{invitation_id}",
+            delete(organizations::revoke_invitation),
+        )
+        .route(
+            "/api/organizations/{id}/groups",
+            get(organizations::list_groups),
+        )
+        .route(
+            "/api/organizations/{id}/groups",
+            post(organizations::link_group),
+        )
+        .route(
+            "/api/organizations/{id}/groups/{group_id}",
+            delete(organizations::unlink_group),
+        )
         .route("/api/sessions", get(audit::list_sessions))
         .route("/api/sessions/{id}/revoke", post(audit::revoke_session))
         .route("/api/audit/events", get(audit::list))
@@ -136,8 +206,9 @@ pub fn router() -> Router<AppState> {
         ))
 }
 
-pub fn admin_or_forbidden(_auth: &AdminAuth) -> Option<Response> {
-    None
+pub fn admin_or_forbidden(auth: &AdminAuth) -> Option<Response> {
+    (!auth.route_authorized)
+        .then(|| (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))).into_response())
 }
 
 pub async fn connect(state: &AppState) -> Result<Connection, Response> {

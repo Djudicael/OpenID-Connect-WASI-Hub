@@ -12,6 +12,8 @@ const routes = [
   { path: '/roles/:id', component: 'role-detail-page' },
   { path: '/groups', component: 'groups-page' },
   { path: '/groups/:id', component: 'group-detail-page' },
+  { path: '/organizations', component: 'organizations-page' },
+  { path: '/organizations/:id', component: 'organization-detail-page' },
   { path: '/clients', component: 'clients-page' },
   { path: '/clients/:id', component: 'client-detail-page' },
   { path: '/realms', component: 'realms-page' },

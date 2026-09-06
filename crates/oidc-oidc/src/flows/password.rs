@@ -9,6 +9,7 @@ use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, is_valid_email, 
 use oidc_repository::mapper::pg_err;
 use oidc_repository::repositories::audit_event_repo::AuditEventRepo;
 use oidc_repository::repositories::client_repo::ClientRepo;
+use oidc_repository::repositories::organization_repo::OrganizationRepo;
 use oidc_repository::repositories::realm_repo::RealmRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
@@ -108,6 +109,14 @@ impl PasswordFlow {
             if !user.enabled {
                 return Err(OidcError::AuthorizationDenied(
                     "Account disabled".to_string(),
+                ));
+            }
+            if OrganizationRepo
+                .is_managed_user_blocked(&mut conn, user.id)
+                .await?
+            {
+                return Err(OidcError::AuthorizationDenied(
+                    "Account organization is disabled".to_string(),
                 ));
             }
 
@@ -230,6 +239,7 @@ impl PasswordFlow {
                 address: None,
                 roles: None,
                 groups: None,
+                organization: None,
             };
 
             let id_token = token_svc

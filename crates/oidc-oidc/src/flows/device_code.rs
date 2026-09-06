@@ -105,12 +105,25 @@ impl DeviceCodeFlow {
             };
             let audience = client.client_id.clone();
             let scopes = dc.scope.clone();
+            let organization =
+                crate::organization_claims::resolve_organization_claim(&mut conn, user.id, &scopes)
+                    .await?;
 
             let sid = oidc_core::utils::generate_sid().unwrap_or_default();
 
             let token_svc = state.token_service_for_realm(dc.realm_id).await?;
             let access_token = token_svc
-                .issue_access_token(&subject, &audience, &scopes, dpop_jkt, None, None)
+                .issue_access_token_with_extra(
+                    &subject,
+                    &audience,
+                    &scopes,
+                    dpop_jkt,
+                    None,
+                    None,
+                    Some(oidc_core::traits::token_service::AccessTokenExtraClaims {
+                        organization: organization.clone(),
+                    }),
+                )
                 .await?;
 
             let at_hash = oidc_core::utils::compute_at_hash(&access_token);
@@ -145,6 +158,7 @@ impl DeviceCodeFlow {
                 address: None,
                 roles: None,
                 groups: None,
+                organization,
             };
 
             let id_token = token_svc

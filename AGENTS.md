@@ -5,6 +5,7 @@
 Repository-local skills live in `.agents/skills/` and are plain Markdown so any coding agent (including Codex, Claude Code, and OpenCode) can use them. Before a matching task, read the complete skill instructions and follow them together with this file.
 
 - Dependency, Rust toolchain, Cargo lockfile, or npm package updates: read `.agents/skills/update-dependencies/SKILL.md`.
+- Feature, API, configuration, deployment, UI, or security documentation updates: read `.agents/skills/update-project-docs/SKILL.md`.
 
 ## Project Context
 

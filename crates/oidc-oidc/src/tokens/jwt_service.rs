@@ -1,7 +1,7 @@
 use ed25519_dalek::SigningKey;
 use oidc_core::errors::OidcError;
 use oidc_core::traits::Clock;
-use oidc_core::traits::token_service::{IdTokenExtraClaims, TokenService};
+use oidc_core::traits::token_service::{AccessTokenExtraClaims, IdTokenExtraClaims, TokenService};
 use oidc_core::utils::generate_opaque_token;
 use rsa::traits::PublicKeyParts;
 use rsa::{RsaPrivateKey, RsaPublicKey};
@@ -96,6 +96,8 @@ pub struct AccessTokenClaims {
     /// RFC 9396 RAR authorization details granted to this token.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authorization_details: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organization: Option<serde_json::Value>,
 }
 
 /// JWT claims for an ID token.
@@ -170,6 +172,9 @@ pub struct IdTokenClaims {
     /// User groups. Included in ID tokens when available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub groups: Option<Vec<String>>,
+    /// Organizations selected by the granted organization scope.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organization: Option<serde_json::Value>,
 }
 
 /// A JWK (JSON Web Key) entry for JWKS endpoint — supports RSA and OKP (Ed25519).
@@ -1005,6 +1010,28 @@ impl TokenService for JwtTokenService {
         authorization_details: Option<&serde_json::Value>,
         resource: Option<&[String]>,
     ) -> Result<String, OidcError> {
+        self.issue_access_token_with_extra(
+            subject,
+            audience,
+            scopes,
+            dpop_jkt,
+            authorization_details,
+            resource,
+            None,
+        )
+        .await
+    }
+
+    async fn issue_access_token_with_extra(
+        &self,
+        subject: &str,
+        audience: &str,
+        scopes: &[String],
+        dpop_jkt: Option<&str>,
+        authorization_details: Option<&serde_json::Value>,
+        resource: Option<&[String]>,
+        extra: Option<AccessTokenExtraClaims>,
+    ) -> Result<String, OidcError> {
         let now = self.now();
         let cnf = dpop_jkt.map(|jkt| serde_json::json!({"jkt": jkt}));
 
@@ -1041,6 +1068,7 @@ impl TokenService for JwtTokenService {
             azp,
             cnf,
             authorization_details: authorization_details.cloned(),
+            organization: extra.and_then(|value| value.organization),
         };
         self.encode_jwt(&claims)
     }
@@ -1078,6 +1106,7 @@ impl TokenService for JwtTokenService {
             scope: claims.scope,
             cnf: claims.cnf,
             authorization_details: claims.authorization_details,
+            organization: claims.organization,
         })
     }
 
@@ -1136,6 +1165,7 @@ impl TokenService for JwtTokenService {
             address: extra.address,
             roles: extra.roles,
             groups: extra.groups,
+            organization: extra.organization,
         };
         self.encode_jwt(&claims)
     }
@@ -1425,6 +1455,7 @@ mod tests {
             azp: None,
             cnf: None,
             authorization_details: None,
+            organization: None,
         };
 
         let token = service.sign_eddsa(&claims).unwrap();
@@ -1454,6 +1485,7 @@ mod tests {
             azp: None,
             cnf: None,
             authorization_details: None,
+            organization: None,
         };
 
         let token = service.sign_eddsa(&claims).unwrap();
@@ -1481,6 +1513,30 @@ mod tests {
 
         let subject = service.verify_access_token(&token).await.unwrap();
         assert_eq!(subject, "user-rs256");
+    }
+
+    #[tokio::test]
+    async fn access_token_includes_organization_claim() {
+        let service = test_token_service();
+        let organization = serde_json::json!({
+            "acme": {"id": "01900000-0000-7000-8000-000000000001", "name": "Acme"}
+        });
+        let token = service
+            .issue_access_token_with_extra(
+                "user-1",
+                "client-1",
+                &["openid".into(), "organization:acme".into()],
+                None,
+                None,
+                None,
+                Some(AccessTokenExtraClaims {
+                    organization: Some(organization.clone()),
+                }),
+            )
+            .await
+            .unwrap();
+        let claims: AccessTokenClaims = service.decode_jwt(&token).unwrap();
+        assert_eq!(claims.organization, Some(organization));
     }
 
     #[tokio::test]
@@ -1568,6 +1624,7 @@ mod tests {
             address: None,
             roles: None,
             groups: None,
+            organization: None,
         };
 
         let token = service.sign_eddsa(&claims).unwrap();
@@ -1591,6 +1648,7 @@ mod tests {
             azp: None,
             cnf: None,
             authorization_details: None,
+            organization: None,
         };
 
         let token = service.sign_eddsa(&claims).unwrap();
@@ -1619,6 +1677,7 @@ mod tests {
             azp: None,
             cnf: None,
             authorization_details: None,
+            organization: None,
         };
 
         // Sign with RS256

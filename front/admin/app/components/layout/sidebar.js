@@ -6,6 +6,7 @@ const links = [
   { path: '/users', label: 'Users' },
   { path: '/roles', label: 'Roles' },
   { path: '/groups', label: 'Groups' },
+  { path: '/organizations', label: 'Organizations' },
   { path: '/clients', label: 'Clients' },
   { path: '/realms', label: 'Realms' },
   // TODO: Add when backend admin CRUD endpoints exist for identity providers

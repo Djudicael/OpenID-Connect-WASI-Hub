@@ -97,6 +97,13 @@ pub fn router() -> Router<AppState> {
                 Err(e) => oidc_oidc::errors::from_oidc_error(&e).into_response(),
             }
         }))
+        .route("/oidc/organization-invitations/accept", post(|State(state): State<AppState>, headers: axum::http::HeaderMap, Json(req): Json<oidc_oidc::endpoints::organization_invitations::AcceptOrganizationInvitationRequest>| async move {
+            match oidc_oidc::endpoints::organization_invitations::accept_organization_invitation(State(state.oidc_state()), headers, Json(req)).await {
+                Ok(json) => json.into_response(),
+                Err(e) => oidc_oidc::errors::from_oidc_error(&e).into_response(),
+            }
+        }))
+        .route("/accept-invitation", get(organization_invitation_page_handler))
         // Account Recovery (public endpoint)
         .route("/oidc/account-recovery/confirm", post(|State(state): State<AppState>, Json(req): Json<oidc_oidc::endpoints::account_recovery::AccountRecoveryConfirmRequest>| async move {
             oidc_oidc::endpoints::account_recovery::confirm_account_recovery(State(state.oidc_state()), Json(req)).await
@@ -131,6 +138,12 @@ pub fn router() -> Router<AppState> {
         .route("/realms/{realm}/protocol/openid-connect/certs", get(per_realm_certs_handler))
         .route("/realms/{realm}/login", get(per_realm_login_page_handler))
         .route("/realms/{realm}/login", post(per_realm_login_handler))
+        .route("/realms/{realm}/organization/identity-provider", get(|State(state): State<AppState>, Path(realm): Path<String>, Query(query): Query<oidc_oidc::endpoints::organizations::OrganizationIdentityProviderQuery>| async move {
+            match oidc_oidc::endpoints::organizations::discover_identity_provider(State(state.oidc_state()), Path(realm), Query(query)).await {
+                Ok(json) => json.into_response(),
+                Err(error) => oidc_oidc::errors::from_oidc_error(&error).into_response(),
+            }
+        }))
         // Social login / federation
         .route("/realms/{realm}/protocol/openid-connect/social", get(per_realm_list_identity_providers_handler))
         .route("/realms/{realm}/protocol/openid-connect/social/{provider}", get(per_realm_social_login_initiate_handler))
@@ -446,6 +459,39 @@ async fn error_handler(Query(params): Query<HashMap<String, String>>) -> Html<St
     Html(html)
 }
 
+async fn organization_invitation_page_handler(
+    Query(params): Query<HashMap<String, String>>,
+) -> axum::response::Response {
+    let Some(token) = params.get("token").filter(|token| !token.is_empty()) else {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "Invitation token is required",
+        )
+            .into_response();
+    };
+    let token_json = serde_json::to_string(token).unwrap_or_else(|_| "null".into());
+    Html(format!(
+        r#"<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Accept invitation</title><style>
+body{{font-family:system-ui,sans-serif;background:#f8fafc;min-height:100vh;margin:0;display:grid;place-items:center}}
+main{{background:white;width:min(26rem,calc(100% - 2rem));padding:2rem;border-radius:.75rem;box-shadow:0 4px 18px #0001}}
+h1{{margin-top:0}}label{{display:block;margin-top:1rem;font-weight:600}}input{{box-sizing:border-box;width:100%;padding:.7rem;margin-top:.3rem;border:1px solid #cbd5e1;border-radius:.4rem}}
+button{{width:100%;margin-top:1.25rem;padding:.75rem;border:0;border-radius:.4rem;background:#2563eb;color:white;font-weight:600;cursor:pointer}}
+#message{{margin-top:1rem}}.error{{color:#b91c1c}}.success{{color:#166534}}
+</style></head><body><main><h1>Accept organization invitation</h1>
+<p>If you are already signed in, confirm the invitation. Otherwise enter your password. For a new account, choose a strong password.</p>
+<form id="form"><label for="username">Username (optional for new accounts)</label><input id="username" autocomplete="username">
+<label for="password">Password (optional when signed in)</label><input id="password" type="password" autocomplete="current-password">
+<button id="submit" type="submit">Accept invitation</button></form><div id="message" role="status"></div></main>
+<script>const invitationToken={token_json};const form=document.getElementById('form');const message=document.getElementById('message');
+form.addEventListener('submit',async(event)=>{{event.preventDefault();const button=document.getElementById('submit');button.disabled=true;message.textContent='';
+try{{const response=await fetch('/oidc/organization-invitations/accept',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{token:invitationToken,password:document.getElementById('password').value||null,username:document.getElementById('username').value||null}})}});const data=await response.json();if(!response.ok)throw new Error(data.error_description||'Unable to accept invitation');form.hidden=true;message.className='success';message.textContent='Invitation accepted.';if(data.redirect_url)setTimeout(()=>location.assign(data.redirect_url),800);}}
+catch(error){{message.className='error';message.textContent=error.message;button.disabled=false;}}}});</script></body></html>"#
+    ))
+    .into_response()
+}
+
 /// Serve a branded HTML login page for a realm.
 ///
 /// Reads theme configuration from `realm.config.theme` and renders
@@ -600,6 +646,7 @@ async fn per_realm_login_page_handler(
             const pwInput = document.getElementById('password');
             const returnTo = {};
             const stateParam = {};
+            const realmName = '{}';
 
             togglePw.addEventListener('click', function() {{
                 const isPw = pwInput.type === 'password';
@@ -614,6 +661,26 @@ async fn per_realm_login_page_handler(
                 errorBox.style.display = 'none';
 
                 try {{
+                    const email = document.getElementById('email').value;
+                    const discoveryResponse = await fetch('/realms/' + encodeURIComponent(realmName) +
+                        '/organization/identity-provider?email=' + encodeURIComponent(email));
+                    if (discoveryResponse.ok) {{
+                        const discovery = await discoveryResponse.json();
+                        if (discovery.identity_provider) {{
+                            const social = new URL('/realms/' + encodeURIComponent(realmName) +
+                                '/protocol/openid-connect/social/' + encodeURIComponent(discovery.identity_provider.alias), window.location.origin);
+                            if (returnTo) {{
+                                const authorize = new URL(decodeURIComponent(returnTo), window.location.origin);
+                                ['client_id', 'redirect_uri', 'state', 'nonce', 'code_challenge',
+                                 'code_challenge_method', 'scope'].forEach(function(name) {{
+                                    const value = authorize.searchParams.get(name);
+                                    if (value) social.searchParams.set(name, value);
+                                }});
+                            }}
+                            window.location.href = social.toString();
+                            return;
+                        }}
+                    }}
                     const res = await fetch('/realms/{}/login', {{
                         method: 'POST',
                         headers: {{ 'Content-Type': 'application/json' }},
@@ -670,6 +737,7 @@ async fn per_realm_login_page_handler(
         } else {
             format!("'{}'", html_escape(&state_param))
         },
+        html_escape(&realm),
         html_escape(&realm),
         html_escape(&realm)
     );

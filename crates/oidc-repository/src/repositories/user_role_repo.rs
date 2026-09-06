@@ -24,6 +24,28 @@ const USER_COLUMNS: &str = r#"
 pub struct UserRoleRepo;
 
 impl UserRoleRepo {
+    /// Return permissions from roles assigned directly or through groups.
+    pub async fn find_effective_permissions(
+        &self,
+        conn: &mut Connection,
+        user_id: Uuid,
+    ) -> Result<Vec<String>, OidcError> {
+        conn.query_params(
+            "SELECT DISTINCT permission FROM (\
+               SELECT jsonb_array_elements_text(r.permissions) AS permission FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = $1 AND r.deleted_at IS NULL \
+               UNION \
+               SELECT jsonb_array_elements_text(r.permissions) AS permission FROM roles r JOIN group_roles gr ON gr.role_id = r.id JOIN user_groups ug ON ug.group_id = gr.group_id WHERE ug.user_id = $1 AND r.deleted_at IS NULL\
+             ) permissions ORDER BY permission",
+            &[&user_id],
+        )
+        .await
+        .map_err(mapper::pg_err)?
+        .into_rows()
+        .iter()
+        .map(|row| mapper::string(row, 0))
+        .collect()
+    }
+
     /// Assign a role to a user.
     pub async fn assign(
         &self,

@@ -74,11 +74,6 @@ pub async fn userinfo_handler(
         }
     }
 
-    let user_id = match claims.sub.parse() {
-        Ok(id) => id,
-        Err(_) => return unauthorized_response(None),
-    };
-
     let mut conn = match state.connect().await {
         Ok(c) => c,
         Err(_) => return internal_error_response(),
@@ -99,6 +94,11 @@ pub async fn userinfo_handler(
         return unauthorized_response(None);
     }
 
+    // The public `sub` can be pairwise and therefore is not necessarily a UUID.
+    // The server-side session always carries the internal user identifier.
+    let Some(user_id) = session.user_id else {
+        return unauthorized_response(None);
+    };
     let user = match UserRepo.find_by_id(&mut conn, user_id).await {
         Ok(Some(u)) => u,
         Ok(None) => return unauthorized_response(None),
@@ -108,7 +108,7 @@ pub async fn userinfo_handler(
     let scopes: std::collections::HashSet<String> = session.scope.into_iter().collect();
 
     let mut claims = json!({
-        "sub": user.id.to_string(),
+        "sub": claims.sub,
     });
 
     if scopes.contains("email")
@@ -200,6 +200,20 @@ pub async fn userinfo_handler(
             "groups".to_string(),
             json!(groups.iter().map(|g| g.name.clone()).collect::<Vec<_>>()),
         );
+    }
+
+    if scopes
+        .iter()
+        .any(|scope| scope == "organization" || scope.starts_with("organization:"))
+        && let Ok(Some(organization)) = crate::organization_claims::resolve_organization_claim(
+            &mut conn,
+            user.id,
+            &scopes.iter().cloned().collect::<Vec<_>>(),
+        )
+        .await
+        && let Some(obj) = claims.as_object_mut()
+    {
+        obj.insert("organization".to_string(), organization);
     }
 
     let _ = conn.close().await;

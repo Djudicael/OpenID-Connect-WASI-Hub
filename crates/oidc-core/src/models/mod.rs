@@ -12,6 +12,7 @@ pub mod email_verification_token;
 pub mod federated_identity;
 pub mod group;
 pub mod identity_provider;
+pub mod organization;
 pub mod password_policy;
 pub mod password_reset_token;
 pub mod pushed_authorization_request;
@@ -38,6 +39,11 @@ pub use email_verification_token::EmailVerificationToken;
 pub use federated_identity::FederatedIdentity;
 pub use group::Group;
 pub use identity_provider::{IdentityProvider, IdentityProviderType};
+pub use organization::{
+    Organization, OrganizationDomain, OrganizationDomainKind, OrganizationGroupLink,
+    OrganizationIdentityProviderLink, OrganizationInvitation, OrganizationInvitationStatus,
+    OrganizationMember, OrganizationMembership, OrganizationMembershipKind,
+};
 pub use password_policy::{PasswordPolicy, PasswordPolicyViolation};
 pub use password_reset_token::PasswordResetToken;
 pub use pushed_authorization_request::PushedAuthorizationRequest;

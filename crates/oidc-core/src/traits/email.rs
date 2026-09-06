@@ -17,4 +17,12 @@ pub trait EmailSender: Send + Sync {
         to: &str,
         verification_url: &str,
     ) -> Result<(), OidcError>;
+
+    /// Send an invitation to join an organization.
+    async fn send_organization_invitation(
+        &self,
+        to: &str,
+        organization_name: &str,
+        invitation_url: &str,
+    ) -> Result<(), OidcError>;
 }

@@ -2,7 +2,7 @@
 
 use oidc_core::OidcError;
 use oidc_core::models::Session;
-use oidc_core::traits::token_service::{IdTokenExtraClaims, TokenService};
+use oidc_core::traits::token_service::{AccessTokenExtraClaims, IdTokenExtraClaims, TokenService};
 use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, sha2_256_hex, verify_s256};
 use oidc_repository::mapper::pg_err;
 use oidc_repository::repositories::auth_code_repo::AuthCodeRepo;
@@ -87,19 +87,25 @@ impl AuthorizationCodeFlow {
             };
             let audience = client.client_id.clone();
             let scopes = auth_code.scope.clone();
+            let organization =
+                crate::organization_claims::resolve_organization_claim(&mut conn, user.id, &scopes)
+                    .await?;
 
             // Generate sid early so it can be included in both the ID token and session
             let sid = oidc_core::utils::generate_sid().unwrap_or_default();
 
             let token_svc = state.token_service_for_realm(auth_code.realm_id).await?;
             let access_token = token_svc
-                .issue_access_token(
+                .issue_access_token_with_extra(
                     &subject,
                     &audience,
                     &scopes,
                     dpop_jkt,
                     auth_code.authorization_details.as_ref(),
                     Some(auth_code.resource.as_slice()),
+                    Some(AccessTokenExtraClaims {
+                        organization: organization.clone(),
+                    }),
                 )
                 .await?;
 
@@ -175,6 +181,7 @@ impl AuthorizationCodeFlow {
                         Some(groups.iter().map(|g| g.name.clone()).collect())
                     }
                 },
+                organization,
             };
 
             let id_token = token_svc

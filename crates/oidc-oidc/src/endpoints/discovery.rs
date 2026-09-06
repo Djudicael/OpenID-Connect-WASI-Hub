@@ -47,7 +47,7 @@ pub async fn discovery_handler(state: OidcState) -> Json<Value> {
         "frontchannel_logout_session_supported" => json!(true),
         "backchannel_logout_supported" => json!(true),
         "backchannel_logout_session_supported" => json!(true),
-        "scopes_supported" => json!(["openid", "profile", "email", "phone", "address", "offline_access"]),
+        "scopes_supported" => json!(["openid", "profile", "email", "phone", "address", "offline_access", "organization"]),
         "response_types_supported" => json!(response_types),
         "grant_types_supported" => json!([
             "authorization_code", "client_credentials", "refresh_token",
@@ -67,7 +67,7 @@ pub async fn discovery_handler(state: OidcState) -> Json<Value> {
         "account_recovery_endpoint" => json!(format!("{issuer}/oidc/account-recovery/confirm")),
         "claims_supported" => json!([
             "sub", "iss", "aud", "exp", "iat", "auth_time", "nonce", "at_hash", "c_hash",
-            "sid", "acr", "amr", "azp", "roles", "groups",
+            "sid", "acr", "amr", "azp", "roles", "groups", "organization",
             "name", "given_name", "family_name", "middle_name", "nickname", "preferred_username",
             "profile", "picture", "website", "gender", "birthdate", "zoneinfo", "locale",
             "email", "email_verified",
@@ -130,7 +130,7 @@ pub async fn realm_discovery_handler(state: OidcState, realm: String) -> Json<Va
         "frontchannel_logout_session_supported" => json!(true),
         "backchannel_logout_supported" => json!(true),
         "backchannel_logout_session_supported" => json!(true),
-        "scopes_supported" => json!(["openid", "profile", "email", "phone", "address", "offline_access"]),
+        "scopes_supported" => json!(["openid", "profile", "email", "phone", "address", "offline_access", "organization"]),
         "response_types_supported" => json!(response_types),
         "grant_types_supported" => json!([
             "authorization_code", "client_credentials", "refresh_token",
@@ -150,7 +150,7 @@ pub async fn realm_discovery_handler(state: OidcState, realm: String) -> Json<Va
         "account_recovery_endpoint" => json!(format!("{realm_base}/protocol/openid-connect/account-recovery/confirm")),
         "claims_supported" => json!([
             "sub", "iss", "aud", "exp", "iat", "auth_time", "nonce", "at_hash", "c_hash",
-            "sid", "acr", "amr", "azp", "roles", "groups",
+            "sid", "acr", "amr", "azp", "roles", "groups", "organization",
             "name", "given_name", "family_name", "middle_name", "nickname", "preferred_username",
             "profile", "picture", "website", "gender", "birthdate", "zoneinfo", "locale",
             "email", "email_verified",

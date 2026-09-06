@@ -20,4 +20,19 @@ impl EmailSender for NoOpEmailSender {
         tracing::info!("Email verification to {}: {}", to, verification_url);
         Ok(())
     }
+
+    async fn send_organization_invitation(
+        &self,
+        to: &str,
+        organization_name: &str,
+        invitation_url: &str,
+    ) -> Result<(), OidcError> {
+        tracing::info!(
+            "Organization invitation to {} for {}: {}",
+            to,
+            organization_name,
+            invitation_url
+        );
+        Ok(())
+    }
 }

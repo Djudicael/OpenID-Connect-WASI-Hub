@@ -2,10 +2,11 @@
 
 use oidc_core::OidcError;
 use oidc_core::models::Session;
-use oidc_core::traits::token_service::{IdTokenExtraClaims, TokenService};
+use oidc_core::traits::token_service::{AccessTokenExtraClaims, IdTokenExtraClaims, TokenService};
 use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, sha2_256_hex};
 use oidc_repository::mapper::pg_err;
 use oidc_repository::repositories::client_repo::ClientRepo;
+use oidc_repository::repositories::organization_repo::OrganizationRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 use oidc_repository::with_transaction;
@@ -103,6 +104,19 @@ impl RefreshTokenFlow {
                 Some(u) => u,
                 None => return Err(OidcError::NotFound("user".into())),
             };
+            if !user.enabled {
+                return Err(OidcError::AuthorizationDenied(
+                    "Account disabled".to_string(),
+                ));
+            }
+            if OrganizationRepo
+                .is_managed_user_blocked(&mut conn, user.id)
+                .await?
+            {
+                return Err(OidcError::AuthorizationDenied(
+                    "Account organization is disabled".to_string(),
+                ));
+            }
 
             // --- Issue new tokens ---
             // Compute subject based on client's subject_type
@@ -129,13 +143,26 @@ impl RefreshTokenFlow {
             };
             let audience = session.client_id.to_string();
             let scopes = session.scope.clone();
+            let organization =
+                crate::organization_claims::resolve_organization_claim(&mut conn, user_id, &scopes)
+                    .await?;
 
             // Generate sid early so it can be included in both the ID token and session
             let sid = oidc_core::utils::generate_sid().unwrap_or_default();
 
             let token_svc = state.token_service_for_realm(session.realm_id).await?;
             let access_token = token_svc
-                .issue_access_token(&subject, &audience, &scopes, dpop_jkt, None, None)
+                .issue_access_token_with_extra(
+                    &subject,
+                    &audience,
+                    &scopes,
+                    dpop_jkt,
+                    None,
+                    None,
+                    Some(AccessTokenExtraClaims {
+                        organization: organization.clone(),
+                    }),
+                )
                 .await?;
 
             let at_hash = oidc_core::utils::compute_at_hash(&access_token);
@@ -151,6 +178,7 @@ impl RefreshTokenFlow {
                 family_name: user.family_name.clone(),
                 acr: Some(oidc_core::utils::ACR_BRONZE.to_string()),
                 amr: Some(vec![oidc_core::utils::AMR_PWD.to_string()]),
+                organization,
                 ..Default::default()
             };
 

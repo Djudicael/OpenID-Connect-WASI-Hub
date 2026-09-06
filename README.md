@@ -10,6 +10,7 @@ A multi-tenant OpenID Connect / OAuth2 identity provider built in Rust with firs
 - **Admin Console** — Native Web Components management UI (no React/Vue/Angular), primarily tested behind a same-origin proxy deployment
 - **Security** — Argon2id password hashing, HMAC-protected session cookies, brute-force protection, CSRF tokens
 - **PostgreSQL** — All state persisted in PostgreSQL via `wasi-pg-client`
+- **Organizations** — B2B tenants with invitations, verified domains, identity providers, groups, roles, and OIDC claims. See the [organization guide](docs/organizations.md).
 
 ## Request correlation and tracing
 
@@ -128,6 +129,10 @@ cargo build --release -p openid-connect-wasi --target wasm32-wasip2
 | `OIDC_SIGNING_KID` | `key-1` | Key ID for the global RSA signing key |
 | `OIDC_ED25519_KEY` | *(auto-generated)* | Ed25519 private key in PKCS#8 PEM format (global fallback; per-realm keys preferred in production) |
 | `OIDC_ED25519_KID` | `ed-key-1` | Key ID for the global Ed25519 signing key |
+| `OIDC_RESEND_API_KEY` | *(none)* | Resend API key; requires `OIDC_EMAIL_FROM` to enable delivery |
+| `OIDC_EMAIL_FROM` | *(none)* | Verified sender for reset, verification, and organization invitation email |
+| `OIDC_RESEND_ENDPOINT` | `https://api.resend.com/emails` | Resend-compatible email API URL |
+| `OIDC_DNS_OVER_HTTPS_URL` | `https://cloudflare-dns.com/dns-query` | JSON DNS-over-HTTPS endpoint used to verify organization domains |
 
 ### Dev / E2E
 
@@ -184,8 +189,10 @@ cargo build --release -p openid-connect-wasi --target wasm32-wasip2
 
 The server accepts **two** authentication methods on protected admin endpoints:
 
-1. **Bearer Token** — OIDC access token with `admin` scope in the `Authorization: Bearer <token>` header
+1. **Bearer Token** — OIDC access token authenticated in the realm. The broad `admin` scope grants full administration; role permissions can grant delegated organization access.
 2. **API Key** — `X-API-Key: <key>` or `Authorization: Bearer <api_key>` header
+
+Organization administration supports the realm-wide permissions `organizations:view`, `organizations:manage`, and `organizations:members`, plus resource-scoped forms such as `organizations:<organization-uuid>:view`. The three actions are independent.
 
 ## Deployment Posture
 

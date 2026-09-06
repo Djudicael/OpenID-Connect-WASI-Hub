@@ -68,6 +68,15 @@ pub struct IdTokenExtraClaims {
     pub roles: Option<Vec<String>>,
     /// User groups. Included when the client has `groups` scope or always for ID tokens.
     pub groups: Option<Vec<String>>,
+    /// Organizations selected by the granted `organization` scope.
+    pub organization: Option<serde_json::Value>,
+}
+
+/// Optional claims to include in an access token.
+#[derive(Debug, Clone, Default)]
+pub struct AccessTokenExtraClaims {
+    /// Organizations selected by the granted `organization` scope.
+    pub organization: Option<serde_json::Value>,
 }
 
 /// Verified access token claims returned by the token service.
@@ -91,6 +100,8 @@ pub struct VerifiedAccessToken {
     pub cnf: Option<serde_json::Value>,
     /// RFC 9396 RAR authorization details granted to this token.
     pub authorization_details: Option<serde_json::Value>,
+    /// Organizations selected when the token was issued.
+    pub organization: Option<serde_json::Value>,
 }
 
 /// Abstract token issuance and verification service.
@@ -110,6 +121,28 @@ pub trait TokenService: Send + Sync {
         authorization_details: Option<&serde_json::Value>,
         resource: Option<&[String]>,
     ) -> Result<String, OidcError>;
+
+    /// Issue an access token with optional application claims.
+    async fn issue_access_token_with_extra(
+        &self,
+        subject: &str,
+        audience: &str,
+        scopes: &[String],
+        dpop_jkt: Option<&str>,
+        authorization_details: Option<&serde_json::Value>,
+        resource: Option<&[String]>,
+        _extra: Option<AccessTokenExtraClaims>,
+    ) -> Result<String, OidcError> {
+        self.issue_access_token(
+            subject,
+            audience,
+            scopes,
+            dpop_jkt,
+            authorization_details,
+            resource,
+        )
+        .await
+    }
 
     /// Verify an access token and return the subject.
     async fn verify_access_token(&self, token: &str) -> Result<String, OidcError>;

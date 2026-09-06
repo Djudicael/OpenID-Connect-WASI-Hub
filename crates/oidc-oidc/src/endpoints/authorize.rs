@@ -99,6 +99,8 @@ enum AuthorizeResult {
     Redirect(String),
     /// HTML auto-submitting form (form_post mode).
     FormPost { html: String },
+    /// Interactive server-rendered page used to select an organization.
+    Page { html: String },
 }
 
 impl IntoResponse for AuthorizeResult {
@@ -106,6 +108,7 @@ impl IntoResponse for AuthorizeResult {
         match self {
             Self::Redirect(url) => Redirect::temporary(&url).into_response(),
             Self::FormPost { html, .. } => Html(html).into_response(),
+            Self::Page { html } => Html(html).into_response(),
         }
     }
 }
@@ -845,7 +848,7 @@ async fn authorize_inner(
 
     // Validate requested scopes against client's allowed scopes
     for s in &requested_scopes {
-        if !client.allowed_scopes.contains(s) {
+        if !crate::organization_claims::is_scope_allowed(s, &client.allowed_scopes) {
             return Err((
                 redirect_uri.clone(),
                 "invalid_scope".to_string(),
@@ -1087,6 +1090,62 @@ async fn authorize_inner(
             "User account is disabled".to_string(),
         ));
     }
+    if oidc_repository::repositories::organization_repo::OrganizationRepo
+        .is_managed_user_blocked(&mut conn, user.id)
+        .await
+        .map_err(|error| {
+            tracing::error!("Failed to validate managed organization membership: {error}");
+            (
+                redirect_uri.clone(),
+                "server_error".to_string(),
+                "An internal error occurred".to_string(),
+            )
+        })?
+    {
+        return Err((
+            redirect_uri.clone(),
+            "access_denied".to_string(),
+            "The account organization is disabled".to_string(),
+        ));
+    }
+
+    if let Err(error) = crate::organization_claims::resolve_organization_claim(
+        &mut conn,
+        user.id,
+        &requested_scopes,
+    )
+    .await
+    {
+        if matches!(error, oidc_core::OidcError::AccountSelectionRequired(_))
+            && !prompt_values.contains(&"none")
+        {
+            let organizations = oidc_repository::repositories::organization_repo::OrganizationRepo
+                .find_enabled_by_user_id(&mut conn, user.id)
+                .await
+                .map_err(|error| {
+                    tracing::error!("Failed to list organizations for selection: {error}");
+                    (
+                        redirect_uri.clone(),
+                        "server_error".to_string(),
+                        "An internal error occurred".to_string(),
+                    )
+                })?;
+            return Ok(AuthorizeResult::Page {
+                html: render_organization_selection_html(&params, &organizations),
+            });
+        }
+        let (code, description) = match error {
+            oidc_core::OidcError::InvalidScope(message) => ("invalid_scope", message),
+            oidc_core::OidcError::AccountSelectionRequired(message) => {
+                ("account_selection_required", message)
+            }
+            error => {
+                tracing::error!("Failed to validate organization scope: {error}");
+                ("server_error", "An internal error occurred".to_string())
+            }
+        };
+        return Err((redirect_uri.clone(), code.to_string(), description));
+    }
 
     // --- id_token_hint validation (OIDC Core §3.1.2.1) ---
     // If id_token_hint was provided, check if the authenticated user matches the hint.
@@ -1230,16 +1289,46 @@ async fn authorize_inner(
             user.id.to_string()
         };
         let audience = client.client_id.clone();
+        let organization = match crate::organization_claims::resolve_organization_claim(
+            &mut conn,
+            user.id,
+            &requested_scopes,
+        )
+        .await
+        {
+            Ok(value) => value,
+            Err(oidc_core::OidcError::InvalidScope(message)) => {
+                return Err((redirect_uri.clone(), "invalid_scope".to_string(), message));
+            }
+            Err(oidc_core::OidcError::AccountSelectionRequired(message)) => {
+                return Err((
+                    redirect_uri.clone(),
+                    "account_selection_required".to_string(),
+                    message,
+                ));
+            }
+            Err(error) => {
+                tracing::error!("Failed to resolve organization claim: {error}");
+                return Err((
+                    redirect_uri.clone(),
+                    "server_error".to_string(),
+                    "An internal error occurred".to_string(),
+                ));
+            }
+        };
 
         if response_type.has_token() {
             let access_token = match token_svc
-                .issue_access_token(
+                .issue_access_token_with_extra(
                     &subject,
                     &audience,
                     &requested_scopes,
                     None,
                     authorization_details.as_ref(),
                     Some(resource_params.as_slice()),
+                    Some(oidc_core::traits::token_service::AccessTokenExtraClaims {
+                        organization: organization.clone(),
+                    }),
                 )
                 .await
             {
@@ -1350,6 +1439,7 @@ async fn authorize_inner(
                 },
                 roles: None,
                 groups: None,
+                organization,
             };
 
             let id_token = match token_svc
@@ -1490,6 +1580,45 @@ async fn authorize_inner(
             }
         }
     }
+}
+
+fn render_organization_selection_html(
+    params: &HashMap<String, String>,
+    organizations: &[oidc_core::models::Organization],
+) -> String {
+    let hidden = params
+        .iter()
+        .filter(|(name, _)| name.as_str() != "scope")
+        .map(|(name, value)| {
+            format!(
+                "<input type=\"hidden\" name=\"{}\" value=\"{}\">",
+                html_escape(name),
+                html_escape(value)
+            )
+        })
+        .collect::<String>();
+    let base_scopes: Vec<String> = params
+        .get("scope")
+        .map(String::as_str)
+        .unwrap_or("")
+        .split_whitespace()
+        .filter(|scope| *scope != "organization")
+        .map(str::to_string)
+        .collect();
+    let choices = organizations.iter().map(|organization| {
+        let mut scopes = base_scopes.clone();
+        let organization_scope = format!("organization:{}", organization.alias);
+        scopes.push(organization_scope);
+        format!(
+            "<button type=\"submit\" name=\"scope\" value=\"{}\"><strong>{}</strong><span>{}</span></button>",
+            html_escape(&scopes.join(" ")), html_escape(&organization.name), html_escape(&organization.alias)
+        )
+    }).collect::<String>();
+    format!(
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Select organization</title><style>
+body{{font-family:system-ui,sans-serif;background:#f8fafc;min-height:100vh;margin:0;display:grid;place-items:center}}main{{background:#fff;width:min(30rem,calc(100% - 2rem));padding:2rem;border-radius:.75rem;box-shadow:0 4px 18px #0001}}h1{{margin-top:0}}p{{color:#475569}}button{{display:flex;flex-direction:column;gap:.25rem;width:100%;text-align:left;padding:1rem;margin:.75rem 0;border:1px solid #cbd5e1;border-radius:.5rem;background:#fff;cursor:pointer}}button:hover{{border-color:#2563eb;background:#eff6ff}}span{{color:#64748b}}
+</style></head><body><main><h1>Select an organization</h1><p>Choose the organization to use for this sign-in.</p><form method="get">{hidden}{choices}</form></main></body></html>"#
+    )
 }
 
 fn generate_auth_code() -> Result<String, OidcError> {

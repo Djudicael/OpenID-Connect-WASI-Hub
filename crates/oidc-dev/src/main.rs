@@ -443,6 +443,8 @@ async fn cmd_wasm() -> Result<()> {
 
     let encryption_key =
         "2a3131371e4b5559606b70777e858f969da4acb3babec5ccc3cdd5dddbe3e9f0".to_string();
+    let dev_keys = oidc_oidc::tokens::keygen::generate_realm_keys(uuid::Uuid::nil())
+        .map_err(|error| anyhow::anyhow!("failed to generate development signing keys: {error}"))?;
 
     let wasm_path = "target/wasm32-wasip2/release/openid_connect_wasi.wasm";
     info!("Starting WASM component via wasmtime on port {port}...");
@@ -465,6 +467,12 @@ async fn cmd_wasm() -> Result<()> {
         .arg(format!("OIDC_SERVER_BIND_ADDRESS={}", BIND_ADDRESS))
         .arg("--env")
         .arg(format!("OIDC_ENCRYPTION_KEY={}", &encryption_key))
+        .arg("--env")
+        .arg(format!("OIDC_SIGNING_KEY={}", dev_keys.rsa_private_pem))
+        .arg("--env")
+        .arg(format!("OIDC_ED25519_KEY={}", dev_keys.ed25519_private_pem))
+        .arg("--env")
+        .arg("OIDC_PAIRWISE_SALT=oidc-hub-local-development-pairwise-salt")
         .arg("--env")
         .arg(format!("OIDC_ISSUER=http://localhost:{}", port))
         .arg("--env")
@@ -1346,6 +1354,8 @@ async fn start_backend(state: &Arc<Mutex<DevState>>, db_url: &str) -> Result<()>
     // Not for production — fixed seed, just for local development
     let encryption_key =
         "2a3131371e4b5559606b70777e858f969da4acb3babec5ccc3cdd5dddbe3e9f0".to_string();
+    let dev_keys = oidc_oidc::tokens::keygen::generate_realm_keys(uuid::Uuid::nil())
+        .map_err(|error| anyhow::anyhow!("failed to generate development signing keys: {error}"))?;
 
     // Note: OIDC_SIGNING_KEY and OIDC_ED25519_KEY are NOT set here.
     // The backend auto-generates RSA + Ed25519 keypairs on startup.
@@ -1363,6 +1373,12 @@ async fn start_backend(state: &Arc<Mutex<DevState>>, db_url: &str) -> Result<()>
         .env("OIDC_ISSUER", format!("http://localhost:{proxy_port}"))
         .env("OIDC_SERVER_BIND_ADDRESS", BIND_ADDRESS)
         .env("OIDC_ENCRYPTION_KEY", &encryption_key)
+        .env("OIDC_SIGNING_KEY", dev_keys.rsa_private_pem)
+        .env("OIDC_ED25519_KEY", dev_keys.ed25519_private_pem)
+        .env(
+            "OIDC_PAIRWISE_SALT",
+            "oidc-hub-local-development-pairwise-salt",
+        )
         .env(
             "OIDC_CORS_ORIGINS",
             format!("http://localhost:{proxy_port}"),

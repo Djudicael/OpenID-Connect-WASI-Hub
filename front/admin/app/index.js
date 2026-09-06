@@ -22,6 +22,8 @@ import './pages/roles-page.js';
 import './pages/role-detail-page.js';
 import './pages/groups-page.js';
 import './pages/group-detail-page.js';
+import './pages/organizations-page.js';
+import './pages/organization-detail-page.js';
 import './pages/clients-page.js';
 import './pages/client-detail-page.js';
 import './pages/realms-page.js';
