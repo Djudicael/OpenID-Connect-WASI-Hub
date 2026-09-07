@@ -106,3 +106,26 @@
   .account-form { grid-template-columns: 1fr; }
   .account-list article { align-items: flex-start; flex-direction: column; }
 }
+.terms-box {
+  max-height: 14rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  text-align: left;
+  padding: 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subtle);
+  line-height: 1.5;
+}
+
+.setup-secret {
+  display: block;
+  overflow-wrap: anywhere;
+  padding: .75rem;
+  border-radius: var(--radius-md);
+  background: var(--color-surface-subtle);
+  font-size: .85rem;
+  user-select: all;
+}
+.checkbox-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: .55rem 1rem; margin: .75rem 0 1rem; }
+.checkbox-grid .checkbox-row { display: flex; align-items: center; gap: .45rem; }

@@ -1130,6 +1130,38 @@ async fn authorize_inner(
             "User account is disabled".to_string(),
         ));
     }
+    if let Ok(Some(user_realm)) = RealmRepo.find_by_id(&mut conn, user.realm_id).await {
+        match crate::endpoints::required_actions::pending_actions(&mut conn, &user, &user_realm)
+            .await
+        {
+            Ok(actions) if !actions.is_empty() => {
+                if prompt_values.contains(&"none") {
+                    return Err((
+                        redirect_uri.clone(),
+                        "interaction_required".into(),
+                        "The user must complete required account actions".into(),
+                    ));
+                }
+                let login_url = build_login_url(
+                    &format!(
+                        "/oidc/authorize?{}",
+                        serde_urlencoded::to_string(&params).unwrap_or_default()
+                    ),
+                    state_param.as_ref(),
+                );
+                return Ok(AuthorizeResult::Redirect(login_url));
+            }
+            Err(error) => {
+                tracing::error!("Failed to evaluate required actions: {error}");
+                return Err((
+                    redirect_uri.clone(),
+                    "server_error".into(),
+                    "An internal error occurred".into(),
+                ));
+            }
+            _ => {}
+        }
+    }
     if oidc_repository::repositories::organization_repo::OrganizationRepo
         .is_managed_user_blocked(&mut conn, user.id)
         .await
@@ -1319,6 +1351,51 @@ async fn authorize_inner(
     } else {
         None
     };
+    let auth_flow = RealmRepo
+        .find_by_id(&mut conn, user.realm_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|realm| oidc_core::models::AuthenticationFlowConfig::from_realm_config(&realm.config))
+        .unwrap_or_default();
+    let step_up = auth_flow.enabled
+        && auth_flow.step_up.enabled
+        && (auth_flow.step_up.client_ids.is_empty()
+            || auth_flow
+                .step_up
+                .client_ids
+                .iter()
+                .any(|v| v == &client.client_id))
+        && (auth_flow.step_up.scopes.is_empty()
+            || auth_flow
+                .step_up
+                .scopes
+                .iter()
+                .any(|v| requested_scopes.contains(v)));
+    let step_up_satisfied = assurance_session.as_ref().is_some_and(|session| {
+        session.acr == oidc_core::utils::ACR_SILVER
+            && auth_flow
+                .step_up
+                .max_auth_age_seconds
+                .is_none_or(|max| (chrono::Utc::now() - session.created_at).num_seconds() <= max)
+    });
+    if step_up && !step_up_satisfied {
+        if prompt_values.contains(&"none") {
+            return Err((
+                redirect_uri.clone(),
+                "interaction_required".into(),
+                "Multi-factor authentication is required for this request".into(),
+            ));
+        }
+        let login_url = build_login_url(
+            &format!(
+                "/oidc/authorize?{}",
+                serde_urlencoded::to_string(&params).unwrap_or_default()
+            ),
+            state_param.as_ref(),
+        );
+        return Ok(AuthorizeResult::Redirect(login_url));
+    }
     let auth_method = if assurance_session
         .as_ref()
         .is_some_and(|session| session.acr == oidc_core::utils::ACR_SILVER)

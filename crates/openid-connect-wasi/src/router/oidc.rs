@@ -72,6 +72,21 @@ pub fn router() -> Router<AppState> {
         .route("/oidc/login", post(|State(state): State<AppState>, json: Json<oidc_oidc::endpoints::login::LoginRequest>| async move {
             oidc_oidc::endpoints::login::login_handler(State(state.oidc_state()), json).await
         }))
+        .route("/oidc/required-actions/status", post(|State(state): State<AppState>, Json(req): Json<oidc_oidc::endpoints::required_actions::ActionTokenRequest>| async move {
+            match oidc_oidc::endpoints::required_actions::status_handler(state.oidc_state(), req).await { Ok(v)=>v.into_response(), Err(e)=>oidc_oidc::errors::from_oidc_error(&e).into_response() }
+        }))
+        .route("/oidc/required-actions/password", post(|State(state): State<AppState>, Json(req): Json<oidc_oidc::endpoints::required_actions::PasswordRequest>| async move {
+            match oidc_oidc::endpoints::required_actions::password_handler(state.oidc_state(), req).await { Ok(v)=>v.into_response(), Err(e)=>oidc_oidc::errors::from_oidc_error(&e).into_response() }
+        }))
+        .route("/oidc/required-actions/profile", post(|State(state): State<AppState>, Json(req): Json<oidc_oidc::endpoints::required_actions::ProfileRequest>| async move {
+            match oidc_oidc::endpoints::required_actions::profile_handler(state.oidc_state(), req).await { Ok(v)=>v.into_response(), Err(e)=>oidc_oidc::errors::from_oidc_error(&e).into_response() }
+        }))
+        .route("/oidc/required-actions/terms", post(|State(state): State<AppState>, Json(req): Json<oidc_oidc::endpoints::required_actions::TermsRequest>| async move {
+            match oidc_oidc::endpoints::required_actions::terms_handler(state.oidc_state(), req).await { Ok(v)=>v.into_response(), Err(e)=>oidc_oidc::errors::from_oidc_error(&e).into_response() }
+        }))
+        .route("/oidc/required-actions/mfa", post(|State(state): State<AppState>, Json(req): Json<oidc_oidc::endpoints::required_actions::ActionTokenRequest>| async move {
+            match oidc_oidc::endpoints::required_actions::complete_mfa_handler(state.oidc_state(), req).await { Ok(v)=>v.into_response(), Err(e)=>oidc_oidc::errors::from_oidc_error(&e).into_response() }
+        }))
         .route("/oidc/account/mfa", get(|State(state): State<AppState>, headers: axum::http::HeaderMap| async move {
             match oidc_oidc::endpoints::mfa::status_handler(state.oidc_state(), headers).await { Ok(v)=>v.into_response(), Err(e)=>oidc_oidc::errors::from_oidc_error(&e).into_response() }
         }))
@@ -838,6 +853,13 @@ async fn per_realm_login_page_handler(
                     const data = await res.json();
                     if (!res.ok) {{
                         throw new Error(data.error_description || data.error || 'Login failed');
+                    }}
+                    if (data.mfa_required || data.required_actions_pending) {{
+                        const login = new URL('/login', window.location.origin);
+                        login.searchParams.set('realm', realmName);
+                        if (returnTo) login.searchParams.set('return_to', decodeURIComponent(returnTo));
+                        window.location.href = login.toString();
+                        return;
                     }}
                     // Store tokens in sessionStorage for SPA usage
                     sessionStorage.setItem('access_token', data.access_token);

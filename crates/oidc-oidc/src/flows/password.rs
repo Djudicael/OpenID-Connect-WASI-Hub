@@ -18,6 +18,7 @@ use oidc_repository::repositories::user_repo::UserRepo;
 use oidc_repository::with_transaction;
 
 use crate::endpoints::mfa::{self, LoginMfaChallenge, LoginMfaProof};
+use crate::endpoints::required_actions::{self, RequiredActionChallenge};
 use crate::state::OidcState;
 
 /// Result of a successful password flow execution.
@@ -38,6 +39,7 @@ pub struct PasswordFlowResult {
 pub enum PasswordFlowOutcome {
     Authenticated(PasswordFlowResult),
     MfaRequired(LoginMfaChallenge),
+    RequiredActions(RequiredActionChallenge),
     MfaRejected,
 }
 
@@ -60,6 +62,8 @@ impl PasswordFlow {
         realm_name: Option<&str>,
         dpop_jkt: Option<&str>,
         mfa_proof: Option<&LoginMfaProof>,
+        requested_scopes: &[String],
+        requested_acr_values: &[String],
     ) -> Result<PasswordFlowOutcome, OidcError> {
         // --- Input validation ---
         if !is_valid_email(email) {
@@ -212,6 +216,40 @@ impl PasswordFlow {
                     vec![oidc_core::utils::AMR_PWD.to_string()],
                 )
             };
+
+            let mut actions = required_actions::pending_actions(&mut conn, &user, &realm).await?;
+            let flow =
+                oidc_core::models::AuthenticationFlowConfig::from_realm_config(&realm.config);
+            let step_up = requested_acr_values
+                .iter()
+                .any(|v| v == oidc_core::utils::ACR_SILVER)
+                || (flow.enabled
+                    && flow.step_up.enabled
+                    && (flow.step_up.client_ids.is_empty()
+                        || flow
+                            .step_up
+                            .client_ids
+                            .iter()
+                            .any(|v| v == &client.client_id))
+                    && (flow.step_up.scopes.is_empty()
+                        || flow
+                            .step_up
+                            .scopes
+                            .iter()
+                            .any(|v| requested_scopes.contains(v))));
+            if step_up
+                && !has_mfa
+                && !actions.contains(&oidc_core::models::RequiredActionKind::ConfigureMfa)
+            {
+                actions.push(oidc_core::models::RequiredActionKind::ConfigureMfa);
+            }
+            if !actions.is_empty() {
+                let challenge = required_actions::create_challenge(
+                    &mut conn, &user, &realm, client.id, actions,
+                )
+                .await?;
+                return Ok(PasswordFlowOutcome::RequiredActions(challenge));
+            }
 
             // Issue tokens
             // Compute subject based on client's subject_type

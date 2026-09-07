@@ -32,6 +32,9 @@ pub mod apikey_tests;
 pub mod account_tests;
 
 #[cfg(test)]
+pub mod required_actions_tests;
+
+#[cfg(test)]
 pub mod db_tests;
 
 #[cfg(test)]

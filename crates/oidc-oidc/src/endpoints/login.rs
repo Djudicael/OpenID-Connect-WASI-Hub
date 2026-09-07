@@ -22,6 +22,10 @@ pub struct LoginRequest {
     /// Optional realm name for authentication.
     /// When omitted, defaults to "master" (backward-compatible).
     pub realm: Option<String>,
+    #[serde(default)]
+    pub requested_scopes: Vec<String>,
+    #[serde(default)]
+    pub requested_acr_values: Vec<String>,
     #[serde(flatten)]
     pub mfa: Option<LoginMfaProof>,
 }
@@ -63,6 +67,8 @@ pub async fn login_handler(
         req.realm.as_deref(),
         None, // DPoP not supported at the login endpoint
         req.mfa.as_ref(),
+        &req.requested_scopes,
+        &req.requested_acr_values,
     )
     .await
     .map_err(|e| from_oidc_error(&e))?;
@@ -74,6 +80,21 @@ pub async fn login_handler(
                 Json(serde_json::json!({
                     "mfa_required": true,
                     "challenge": challenge
+                })),
+            )
+                .into_response());
+        }
+        PasswordFlowOutcome::RequiredActions(challenge) => {
+            return Ok((
+                axum::http::StatusCode::ACCEPTED,
+                Json(serde_json::json!({
+                    "required_actions_pending": true,
+                    "required_actions": challenge.required_actions,
+                    "action_token": challenge.action_token,
+                    "expires_in": challenge.expires_in,
+                    "terms": challenge.terms,
+                    "user_email": challenge.user_email,
+                    "realm": challenge.realm,
                 })),
             )
                 .into_response());

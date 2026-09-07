@@ -17,6 +17,7 @@ pub mod organizations;
 pub mod par;
 pub mod password_reset;
 pub mod registration;
+pub mod required_actions;
 pub mod revoke;
 pub mod session;
 pub mod social_login;

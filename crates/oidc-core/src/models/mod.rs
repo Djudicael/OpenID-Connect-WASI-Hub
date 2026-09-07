@@ -20,6 +20,7 @@ pub mod pushed_authorization_request;
 
 pub mod realm;
 pub mod realm_signing_keys;
+pub mod required_action;
 pub mod response_type;
 pub mod role;
 pub mod scope;
@@ -53,6 +54,9 @@ pub use pushed_authorization_request::PushedAuthorizationRequest;
 
 pub use realm::Realm;
 pub use realm_signing_keys::RealmSigningKeys;
+pub use required_action::{
+    AuthenticationFlowConfig, RequiredActionKind, RequiredActionSession, StepUpPolicy, TermsPolicy,
+};
 pub use response_type::ResponseType;
 pub use role::Role;
 pub use scope::Scope;

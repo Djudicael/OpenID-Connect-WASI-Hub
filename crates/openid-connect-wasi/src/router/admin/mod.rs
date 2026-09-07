@@ -50,6 +50,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/users/{id}", delete(users::delete))
         .route("/api/users/{id}/mfa", get(users::get_mfa))
         .route("/api/users/{id}/mfa", delete(users::reset_mfa))
+        .route(
+            "/api/users/{id}/required-actions",
+            get(users::get_required_actions).put(users::replace_required_actions),
+        )
         .route("/api/clients", get(clients::list))
         .route("/api/clients", post(clients::create))
         .route("/api/clients/{id}", get(clients::get))

@@ -12,6 +12,7 @@ use oidc_core::utils::{generate_uuid_v7, is_strong_password, is_valid_email, is_
 use oidc_repository::repositories::account_recovery_token_repo::AccountRecoveryTokenRepo;
 use oidc_repository::repositories::audit_event_repo::AuditEventRepo;
 use oidc_repository::repositories::mfa_repo::MfaRepo;
+use oidc_repository::repositories::required_action_repo::RequiredActionRepo;
 use oidc_repository::repositories::role_repo::RoleRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::repositories::user_group_repo::UserGroupRepo;
@@ -208,6 +209,91 @@ pub async fn get_mfa(
         .await
         .unwrap_or(0);
     Json(json!({"totp_enabled":totp.is_some(),"passkeys":passkeys,"recovery_codes_remaining":recovery})).into_response()
+}
+
+pub async fn get_required_actions(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let user = match UserRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(v)) => v,
+        Ok(None) => return not_found(),
+        Err(_) => return internal_error(),
+    };
+    if let Some(r) = realm_or_forbidden(&auth, user.realm_id) {
+        return r;
+    }
+    match RequiredActionRepo.list(&mut conn, id).await {
+        Ok(actions) => {
+            Json(json!({"required_actions":actions.iter().map(|v|v.as_str()).collect::<Vec<_>>()}))
+                .into_response()
+        }
+        Err(e) => {
+            tracing::error!("get required actions error: {e}");
+            internal_error()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct RequiredActionsRequest {
+    required_actions: Vec<String>,
+}
+
+pub async fn replace_required_actions(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+    Json(req): Json<RequiredActionsRequest>,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let user = match UserRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(v)) => v,
+        Ok(None) => return not_found(),
+        Err(_) => return internal_error(),
+    };
+    if let Some(r) = realm_or_forbidden(&auth, user.realm_id) {
+        return r;
+    }
+    let actions = match req
+        .required_actions
+        .iter()
+        .map(|v| v.parse())
+        .collect::<Result<Vec<oidc_core::models::RequiredActionKind>, _>>()
+    {
+        Ok(v) => v,
+        Err(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error":"Unknown required action"})),
+            )
+                .into_response();
+        }
+    };
+    match RequiredActionRepo.replace(&mut conn, id, &actions).await {
+        Ok(()) => {
+            Json(json!({"required_actions":actions.iter().map(|v|v.as_str()).collect::<Vec<_>>()}))
+                .into_response()
+        }
+        Err(e) => {
+            tracing::error!("replace required actions error: {e}");
+            internal_error()
+        }
+    }
 }
 
 pub async fn reset_mfa(

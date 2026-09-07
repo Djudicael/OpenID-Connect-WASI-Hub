@@ -40,7 +40,8 @@ class RealmDetailPage extends BaseComponent {
       realm.name !== savedRealm.name ||
       realm.display_name !== savedRealm.display_name ||
       realm.enabled !== savedRealm.enabled ||
-      themeDirty
+      themeDirty ||
+      JSON.stringify(realm.config?.authentication_flow || {}) !== JSON.stringify(savedRealm.config?.authentication_flow || {})
     );
   }
 
@@ -59,6 +60,15 @@ class RealmDetailPage extends BaseComponent {
       // Ensure config/theme objects exist for binding
       if (!realm.config) realm.config = {};
       if (!realm.config.theme) realm.config.theme = {};
+      if (!realm.config.authentication_flow) realm.config.authentication_flow = {
+        enabled: false,
+        action_order: ['update_password', 'verify_email', 'update_profile', 'configure_mfa', 'accept_terms'],
+        require_verified_email: false,
+        require_complete_profile: false,
+        require_mfa: false,
+        terms: { enabled: false, version: '', text: '' },
+        step_up: { enabled: false, client_ids: [], scopes: [], max_auth_age_seconds: null },
+      };
       this.setState({ realm, savedRealm: JSON.parse(JSON.stringify(realm)), loading: false, dirty: false });
     } catch (err) {
       if (err.name === "AbortError") return;
@@ -99,6 +109,26 @@ class RealmDetailPage extends BaseComponent {
     realm.config.theme = { ...realm.config.theme, [key]: value };
     const dirty = this._computeDirty(realm);
     this.setState({ realm, dirty });
+  }
+
+  _updateFlowField(key, value) {
+    const realm = structuredClone(this._state.realm);
+    realm.config.authentication_flow[key] = value;
+    this.setState({ realm, dirty: this._computeDirty(realm) });
+  }
+
+  _updateNestedFlow(section, key, value) {
+    const realm = structuredClone(this._state.realm);
+    realm.config.authentication_flow[section] = { ...realm.config.authentication_flow[section], [key]: value };
+    this.setState({ realm, dirty: this._computeDirty(realm) });
+  }
+
+  _moveAction(index, offset) {
+    const order = [...this._state.realm.config.authentication_flow.action_order];
+    const next = index + offset;
+    if (next < 0 || next >= order.length) return;
+    [order[index], order[next]] = [order[next], order[index]];
+    this._updateFlowField('action_order', order);
   }
 
   _navigateAway(path) {
@@ -159,6 +189,34 @@ class RealmDetailPage extends BaseComponent {
                     <label class="field-label">Background Color</label>
                     <input class="field-input" type="color" .value=${this._getThemeValue(realm, 'bg_color') || '#f8fafc'} @input=${(e) => this._updateThemeField('bg_color', e.target.value)} />
                     <div class="hint">Login page background color</div>
+                  </div>
+                  <hr style="border:none;border-top:1px solid #e2e8f0;margin:1.5rem 0;" />
+                  <div data-doc-section="authentication-flow">
+                  <h3 style="font-size:1rem;font-weight:600;margin:0 0 1rem 0;">Authentication flow</h3>
+                  <label class="checkbox-row"><input type="checkbox" ?checked=${realm.config.authentication_flow.enabled} @change=${e=>this._updateFlowField('enabled',e.target.checked)} /> Enable realm authentication flow</label>
+                  <p class="hint">Complete enabled checks before an application receives tokens.</p>
+                  <div class="checkbox-grid">
+                    <label class="checkbox-row"><input type="checkbox" ?checked=${realm.config.authentication_flow.require_verified_email} @change=${e=>this._updateFlowField('require_verified_email',e.target.checked)} /> Require a verified email address</label>
+                    <label class="checkbox-row"><input type="checkbox" ?checked=${realm.config.authentication_flow.require_complete_profile} @change=${e=>this._updateFlowField('require_complete_profile',e.target.checked)} /> Require first and last name</label>
+                    <label class="checkbox-row"><input type="checkbox" ?checked=${realm.config.authentication_flow.require_mfa} @change=${e=>this._updateFlowField('require_mfa',e.target.checked)} /> Require MFA enrollment</label>
+                  </div>
+                  <div class="section">
+                    <div class="section-title">Action order</div>
+                    <ul class="item-list">${realm.config.authentication_flow.action_order.map((action,index)=>html`<li><span class="item-name">${action.replaceAll('_',' ')}</span><span><button class="btn-icon" @click=${()=>this._moveAction(index,-1)} ?disabled=${index===0} aria-label="Move up">↑</button><button class="btn-icon" @click=${()=>this._moveAction(index,1)} ?disabled=${index===realm.config.authentication_flow.action_order.length-1} aria-label="Move down">↓</button></span></li>`)}</ul>
+                  </div>
+                  <div class="section">
+                    <div class="section-title">Terms acceptance</div>
+                    <label class="checkbox-row"><input type="checkbox" ?checked=${realm.config.authentication_flow.terms.enabled} @change=${e=>this._updateNestedFlow('terms','enabled',e.target.checked)} /> Require acceptance</label>
+                    <div class="field"><label class="field-label">Terms version</label><input class="field-input" .value=${realm.config.authentication_flow.terms.version||''} @input=${e=>this._updateNestedFlow('terms','version',e.target.value)} placeholder="2026-09" /></div>
+                    <div class="field"><label class="field-label">Terms shown to users</label><textarea class="field-textarea" .value=${realm.config.authentication_flow.terms.text||''} @input=${e=>this._updateNestedFlow('terms','text',e.target.value)}></textarea><div class="hint">Changing the version asks users to accept the new terms.</div></div>
+                  </div>
+                  <div class="section">
+                    <div class="section-title">Step-up authentication</div>
+                    <label class="checkbox-row"><input type="checkbox" ?checked=${realm.config.authentication_flow.step_up.enabled} @change=${e=>this._updateNestedFlow('step_up','enabled',e.target.checked)} /> Require MFA for matching requests</label>
+                    <div class="field"><label class="field-label">Client IDs</label><input class="field-input" .value=${(realm.config.authentication_flow.step_up.client_ids||[]).join(', ')} @input=${e=>this._updateNestedFlow('step_up','client_ids',e.target.value.split(',').map(v=>v.trim()).filter(Boolean))} /><div class="hint">Comma-separated. Leave empty to match any client.</div></div>
+                    <div class="field"><label class="field-label">Scopes</label><input class="field-input" .value=${(realm.config.authentication_flow.step_up.scopes||[]).join(', ')} @input=${e=>this._updateNestedFlow('step_up','scopes',e.target.value.split(',').map(v=>v.trim()).filter(Boolean))} /><div class="hint">A matching requested scope triggers step-up.</div></div>
+                    <div class="field"><label class="field-label">Maximum authentication age (seconds)</label><input class="field-input" type="number" min="0" .value=${realm.config.authentication_flow.step_up.max_auth_age_seconds??''} @input=${e=>this._updateNestedFlow('step_up','max_auth_age_seconds',e.target.value===''?null:Number(e.target.value))} /></div>
+                  </div>
                   </div>
                   <div class="actions">
                     <c-button variant="primary" ?disabled=${saving || !dirty} @click=${() => this._save()}>

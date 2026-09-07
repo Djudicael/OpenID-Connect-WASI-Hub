@@ -128,8 +128,13 @@ class AuthService {
     return this.tokens.access_token;
   }
 
-  async loginWithPassword(email, password, realm, mfa = null) {
-    const body = { email, password, client_id: this.config.client_id };
+  async loginWithPassword(email, password, realm, mfa = null, context = {}) {
+    const body = {
+      email, password,
+      client_id: context.client_id || this.config.client_id,
+      requested_scopes: context.requested_scopes || [],
+      requested_acr_values: context.requested_acr_values || [],
+    };
     if (realm && realm !== 'master') {
       body.realm = realm;
     }
@@ -146,7 +151,7 @@ class AuthService {
     }
 
     const data = await response.json();
-    if (data.mfa_required) return data;
+    if (data.mfa_required || data.required_actions_pending) return data;
     this.tokens = {
       access_token: data.access_token,
       refresh_token: data.refresh_token,
@@ -157,6 +162,26 @@ class AuthService {
     this._saveTokens();
     await this._loadAdministrationAccess(data.access_token);
 
+    return data;
+  }
+
+  async requiredAction(path, payload) {
+    const response = await fetch(`${this.config.authority}/required-actions/${path}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error_description || data.error || 'Could not complete the required action');
+    return data;
+  }
+
+  async mfaEnrollment(path, actionToken, payload = null) {
+    const response = await fetch(`${this.config.authority}/account/mfa/${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${actionToken}` },
+      ...(payload ? { body: JSON.stringify(payload) } : {}),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error_description || data.error || 'Could not configure MFA');
     return data;
   }
 

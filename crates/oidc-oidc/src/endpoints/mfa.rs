@@ -178,6 +178,27 @@ async fn current_user(state: &OidcState, headers: &HeaderMap) -> Result<User, Oi
     ))
 }
 
+async fn enrollment_user(state: &OidcState, headers: &HeaderMap) -> Result<User, OidcError> {
+    if let Ok(user) = current_user(state, headers).await {
+        return Ok(user);
+    }
+    let raw = headers
+        .get(AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or_else(|| OidcError::AuthenticationFailed("Authentication required".into()))?;
+    let (_, user, realm) = crate::endpoints::required_actions::action_user(state, raw).await?;
+    let mut conn = state.connect().await?;
+    let pending =
+        crate::endpoints::required_actions::pending_actions(&mut conn, &user, &realm).await?;
+    if !pending.contains(&oidc_core::models::RequiredActionKind::ConfigureMfa) {
+        return Err(OidcError::AuthorizationDenied(
+            "MFA enrollment is not required".into(),
+        ));
+    }
+    Ok(user)
+}
+
 async fn current_mfa_user(state: &OidcState, headers: &HeaderMap) -> Result<User, OidcError> {
     let raw = headers
         .get(AUTHORIZATION)
@@ -260,7 +281,7 @@ pub async fn totp_start_handler(
     state: OidcState,
     headers: HeaderMap,
 ) -> Result<Json<Value>, OidcError> {
-    let user = current_user(&state, &headers).await?;
+    let user = enrollment_user(&state, &headers).await?;
     let mut secret = [0u8; 20];
     getrandom::fill(&mut secret).map_err(|e| OidcError::Internal(e.to_string()))?;
     let shown = base32(&secret);
@@ -297,7 +318,7 @@ pub async fn totp_finish_handler(
     headers: HeaderMap,
     req: TotpFinishRequest,
 ) -> Result<Json<Value>, OidcError> {
-    let user = current_user(&state, &headers).await?;
+    let user = enrollment_user(&state, &headers).await?;
     let mut conn = state.connect().await?;
     let hash = sha2_256_hex(&req.ceremony_token);
     let c = MfaRepo
@@ -337,7 +358,7 @@ pub async fn webauthn_start_handler(
     state: OidcState,
     headers: HeaderMap,
 ) -> Result<Json<Value>, OidcError> {
-    let user = current_user(&state, &headers).await?;
+    let user = enrollment_user(&state, &headers).await?;
     let mut conn = state.connect().await?;
     let existing = MfaRepo.list_webauthn(&mut conn, user.id).await?;
     let credentials: Vec<PasskeyCredential> = existing
@@ -381,7 +402,7 @@ pub async fn webauthn_finish_handler(
     headers: HeaderMap,
     req: WebauthnFinishRequest,
 ) -> Result<Json<Value>, OidcError> {
-    let user = current_user(&state, &headers).await?;
+    let user = enrollment_user(&state, &headers).await?;
     let mut conn = state.connect().await?;
     let c = MfaRepo
         .find_ceremony_for_update(&mut conn, &sha2_256_hex(&req.ceremony_token))

@@ -46,6 +46,8 @@ class UserDetailPage extends BaseComponent {
       addRoleLoading: false,
       addGroupLoading: false,
       mfa: null,
+      requiredActions: [],
+      requiredActionsSaving: false,
     };
     this._onBeforeUnload = this._onBeforeUnload.bind(this);
   }
@@ -86,6 +88,7 @@ class UserDetailPage extends BaseComponent {
       this._loadUserRoles(id);
       this._loadUserGroups(id);
       this._loadMfa(id);
+      this._loadRequiredActions(id);
     } catch (err) {
       if (err.name === 'AbortError') return;
       handleApiError(err, 'Failed to load user');
@@ -96,6 +99,29 @@ class UserDetailPage extends BaseComponent {
   async _loadMfa(id) {
     try { this.setState({ mfa: await get(`/api/users/${id}/mfa`, this.signal) }); }
     catch (err) { if (err.name !== 'AbortError') this.setState({ mfa: null }); }
+  }
+
+  async _loadRequiredActions(id) {
+    try {
+      const data = await get(`/api/users/${id}/required-actions`, this.signal);
+      this.setState({ requiredActions: data.required_actions || [] });
+    } catch (err) { if (err.name !== 'AbortError') handleApiError(err, 'Failed to load required actions'); }
+  }
+
+  _toggleRequiredAction(action, enabled) {
+    const next = new Set(this._state.requiredActions);
+    enabled ? next.add(action) : next.delete(action);
+    this.setState({ requiredActions: [...next] });
+  }
+
+  async _saveRequiredActions() {
+    const user = this._state.user; if (!user) return;
+    this.setState({ requiredActionsSaving: true });
+    try {
+      await http(`/api/users/${user.id}/required-actions`, { method: 'PUT', body: JSON.stringify({ required_actions: this._state.requiredActions }) });
+      showToast('Required actions updated', 'success');
+    } catch (err) { handleApiError(err, 'Failed to update required actions'); }
+    finally { this.setState({ requiredActionsSaving: false }); }
   }
 
   async _resetMfa() {
@@ -498,6 +524,17 @@ class UserDetailPage extends BaseComponent {
                       <p>Passkeys: <strong>${this._state.mfa.passkeys.length}</strong> · Recovery codes remaining: <strong>${this._state.mfa.recovery_codes_remaining}</strong></p>
                       <c-button variant="danger" size="sm" @click=${()=>this._resetMfa()} ?disabled=${!this._state.mfa.totp_enabled&&!this._state.mfa.passkeys.length}>Reset MFA</c-button>
                     ` : html`<div class="empty-state">Loading MFA status...</div>`}
+                  </div>
+
+                  <div class="section" data-doc-section="required-actions">
+                    <div class="section-title">Required actions</div>
+                    <p class="hint">The user must complete selected actions at their next sign-in.</p>
+                    <div class="checkbox-grid">
+                      ${[
+                        ['update_password','Update password'],['verify_email','Verify email'],['update_profile','Complete profile'],['configure_mfa','Configure MFA'],['accept_terms','Accept current terms']
+                      ].map(([value,label])=>html`<label class="checkbox-row"><input type="checkbox" ?checked=${this._state.requiredActions.includes(value)} @change=${e=>this._toggleRequiredAction(value,e.target.checked)} /> ${label}</label>`)}
+                    </div>
+                    <c-button size="sm" variant="secondary" ?disabled=${this._state.requiredActionsSaving} @click=${()=>this._saveRequiredActions()}>${this._state.requiredActionsSaving?'Saving...':'Save required actions'}</c-button>
                   </div>
 
                   <!-- Roles Section -->

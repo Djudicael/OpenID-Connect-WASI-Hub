@@ -150,6 +150,11 @@ pub async fn create(State(state): State<AppState>, auth: AdminAuth, body: String
     let config = req
         .config
         .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+    if let Err(message) =
+        oidc_core::models::AuthenticationFlowConfig::from_realm_config(&config).validate()
+    {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error":message}))).into_response();
+    }
     let realm = oidc_core::models::Realm {
         id: realm_id,
         name: req.name,
@@ -266,6 +271,11 @@ pub async fn update(
         realm.enabled = v;
     }
     if let Some(v) = req.config {
+        if let Err(message) =
+            oidc_core::models::AuthenticationFlowConfig::from_realm_config(&v).validate()
+        {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error":message}))).into_response();
+        }
         realm.config = v;
     }
     match RealmRepo.update(&mut conn, &realm).await {
