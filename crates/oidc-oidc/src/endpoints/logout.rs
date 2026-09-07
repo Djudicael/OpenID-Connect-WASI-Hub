@@ -62,8 +62,10 @@ pub async fn logout_handler(
                     }
                 }
 
-                // Revoke all sessions for the user
-                let _ = SessionRepo.revoke_by_user_id(&mut conn, user_id).await;
+                // Browser logout preserves grants explicitly approved for offline access.
+                let _ = SessionRepo
+                    .revoke_online_by_user_id(&mut conn, user_id)
+                    .await;
             }
             let _ = conn.commit().await;
         }
@@ -94,7 +96,7 @@ pub async fn logout_handler(
                     }
                 }
             }
-            let _ = SessionRepo.revoke_by_user_id(&mut conn, uid).await;
+            let _ = SessionRepo.revoke_online_by_user_id(&mut conn, uid).await;
         } else {
             let _ = SessionRepo.revoke(&mut conn, session.id).await;
         }

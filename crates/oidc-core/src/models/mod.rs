@@ -13,6 +13,7 @@ pub mod federated_identity;
 pub mod group;
 pub mod identity_provider;
 pub mod mfa;
+pub mod offline_session;
 pub mod organization;
 pub mod password_policy;
 pub mod password_reset_token;
@@ -44,6 +45,7 @@ pub use federated_identity::FederatedIdentity;
 pub use group::Group;
 pub use identity_provider::{IdentityProvider, IdentityProviderType};
 pub use mfa::{MfaCeremony, RecoveryCode, TotpCredential, WebauthnCredential};
+pub use offline_session::OfflineSessionPolicy;
 pub use organization::{
     Organization, OrganizationDomain, OrganizationDomainKind, OrganizationGroupLink,
     OrganizationIdentityProviderLink, OrganizationInvitation, OrganizationInvitationStatus,

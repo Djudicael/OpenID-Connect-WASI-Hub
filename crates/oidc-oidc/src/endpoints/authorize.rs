@@ -981,6 +981,16 @@ async fn authorize_inner(
             "The 'openid' scope is required".to_string(),
         ));
     }
+    let offline_access_requested = requested_scopes
+        .iter()
+        .any(|scope| scope == "offline_access");
+    if offline_access_requested && !response_type.has_code() {
+        return Err((
+            redirect_uri.clone(),
+            "invalid_scope".to_string(),
+            "The 'offline_access' scope requires an authorization code flow".to_string(),
+        ));
+    }
 
     // --- prompt parameter handling (OIDC Core §3.1.2.1) ---
     let prompt_values: Vec<&str> = params
@@ -1312,14 +1322,14 @@ async fn authorize_inner(
                     )
                 })?;
         }
-        _ if prompt_values.contains(&"none") && !already_granted => {
+        _ if prompt_values.contains(&"none") && (offline_access_requested || !already_granted) => {
             return Err((
                 redirect_uri.clone(),
                 "consent_required".to_string(),
                 "The user has not approved the requested access".to_string(),
             ));
         }
-        _ if prompt_values.contains(&"consent") || !already_granted => {
+        _ if offline_access_requested || prompt_values.contains(&"consent") || !already_granted => {
             let token = create_consent_token(&state, user.id, client.id, &requested_scopes)
                 .map_err(|error| {
                     tracing::error!("Failed to create consent token: {error}");
@@ -1624,6 +1634,8 @@ async fn authorize_inner(
                 revoked: false,
                 expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
                 refresh_expires_at: None,
+                offline_session: false,
+                offline_max_expires_at: None,
                 created_at: chrono::Utc::now(),
                 last_used_at: None,
                 token_family_id: None,

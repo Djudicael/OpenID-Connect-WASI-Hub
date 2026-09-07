@@ -41,6 +41,7 @@ class RealmDetailPage extends BaseComponent {
       realm.display_name !== savedRealm.display_name ||
       realm.enabled !== savedRealm.enabled ||
       themeDirty ||
+      JSON.stringify(realm.config?.offline_sessions || {}) !== JSON.stringify(savedRealm.config?.offline_sessions || {}) ||
       JSON.stringify(realm.config?.authentication_flow || {}) !== JSON.stringify(savedRealm.config?.authentication_flow || {})
     );
   }
@@ -60,6 +61,10 @@ class RealmDetailPage extends BaseComponent {
       // Ensure config/theme objects exist for binding
       if (!realm.config) realm.config = {};
       if (!realm.config.theme) realm.config.theme = {};
+      if (!realm.config.offline_sessions) realm.config.offline_sessions = {
+        idle_seconds: 2592000,
+        max_seconds: 7776000,
+      };
       if (!realm.config.authentication_flow) realm.config.authentication_flow = {
         enabled: false,
         action_order: ['update_password', 'verify_email', 'update_profile', 'configure_mfa', 'accept_terms'],
@@ -114,6 +119,13 @@ class RealmDetailPage extends BaseComponent {
   _updateFlowField(key, value) {
     const realm = structuredClone(this._state.realm);
     realm.config.authentication_flow[key] = value;
+    this.setState({ realm, dirty: this._computeDirty(realm) });
+  }
+
+  _updateOfflineDays(key, value) {
+    const realm = structuredClone(this._state.realm);
+    const days = Math.max(1, Number(value) || 1);
+    realm.config.offline_sessions[key] = Math.round(days * 86400);
     this.setState({ realm, dirty: this._computeDirty(realm) });
   }
 
@@ -189,6 +201,21 @@ class RealmDetailPage extends BaseComponent {
                     <label class="field-label">Background Color</label>
                     <input class="field-input" type="color" .value=${this._getThemeValue(realm, 'bg_color') || '#f8fafc'} @input=${(e) => this._updateThemeField('bg_color', e.target.value)} />
                     <div class="hint">Login page background color</div>
+                  </div>
+                  <hr style="border:none;border-top:1px solid #e2e8f0;margin:1.5rem 0;" />
+                  <div data-doc-section="offline-sessions">
+                    <h3 style="font-size:1rem;font-weight:600;margin:0 0 1rem 0;">Offline access</h3>
+                    <p class="hint">Set how long approved applications can refresh access while a user is signed out.</p>
+                    <div class="field">
+                      <label class="field-label">Idle timeout (days)</label>
+                      <input class="field-input" type="number" min="1" step="1" .value=${realm.config.offline_sessions.idle_seconds / 86400} @input=${e => this._updateOfflineDays('idle_seconds', e.target.value)} />
+                      <div class="hint">The grant expires when the application does not use it for this long.</div>
+                    </div>
+                    <div class="field">
+                      <label class="field-label">Maximum lifetime (days)</label>
+                      <input class="field-input" type="number" min="1" step="1" .value=${realm.config.offline_sessions.max_seconds / 86400} @input=${e => this._updateOfflineDays('max_seconds', e.target.value)} />
+                      <div class="hint">The grant expires after this time even when it is used regularly.</div>
+                    </div>
                   </div>
                   <hr style="border:none;border-top:1px solid #e2e8f0;margin:1.5rem 0;" />
                   <div data-doc-section="authentication-flow">

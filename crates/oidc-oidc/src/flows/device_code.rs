@@ -105,6 +105,11 @@ impl DeviceCodeFlow {
             };
             let audience = client.client_id.clone();
             let scopes = dc.scope.clone();
+            if scopes.iter().any(|scope| scope == "offline_access") {
+                return Err(OidcError::InvalidScope(
+                    "offline_access requires an interactive authorization code flow".into(),
+                ));
+            }
             let organization =
                 crate::organization_claims::resolve_organization_claim(&mut conn, user.id, &scopes)
                     .await?;
@@ -210,6 +215,8 @@ impl DeviceCodeFlow {
                 revoked: false,
                 expires_at: now + chrono::Duration::minutes(15),
                 refresh_expires_at: Some(now + chrono::Duration::days(7)),
+                offline_session: false,
+                offline_max_expires_at: None,
                 created_at: now,
                 last_used_at: None,
                 token_family_id: Some(token_family_id),

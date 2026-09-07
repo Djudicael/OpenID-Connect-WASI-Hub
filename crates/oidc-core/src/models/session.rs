@@ -34,6 +34,10 @@ pub struct Session {
     pub expires_at: chrono::DateTime<chrono::Utc>,
     /// When the refresh token expires.
     pub refresh_expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Whether this token family was issued for the `offline_access` scope.
+    pub offline_session: bool,
+    /// Absolute expiry shared by every token in an offline token family.
+    pub offline_max_expires_at: Option<chrono::DateTime<chrono::Utc>>,
     /// When the session was created.
     pub created_at: chrono::DateTime<chrono::Utc>,
     /// When the session was last used.
@@ -72,6 +76,8 @@ impl std::fmt::Debug for Session {
             .field("revoked", &self.revoked)
             .field("family_revoked", &self.family_revoked)
             .field("expires_at", &self.expires_at)
+            .field("offline_session", &self.offline_session)
+            .field("offline_max_expires_at", &self.offline_max_expires_at)
             .finish_non_exhaustive()
     }
 }

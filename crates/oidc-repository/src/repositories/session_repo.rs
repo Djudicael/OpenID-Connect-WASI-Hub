@@ -11,7 +11,7 @@ pub struct SessionRepo;
 const SESSION_COLUMNS: &str = r#"
     id, sid, user_id, realm_id, client_id, grant_type,
     access_token_hash, refresh_token_hash, id_token_jti,
-    scope, revoked, expires_at, refresh_expires_at,
+    scope, revoked, expires_at, refresh_expires_at, offline_session, offline_max_expires_at,
     created_at, last_used_at,
     token_family_id, previous_session_id, rotated_at, reused_at, family_revoked,
     authorization_details, resource, acr, amr
@@ -54,10 +54,10 @@ impl SessionRepo {
             INSERT INTO sessions (
                 id, sid, user_id, realm_id, client_id, grant_type,
                 access_token_hash, refresh_token_hash, id_token_jti,
-                scope, revoked, expires_at, refresh_expires_at,
+                scope, revoked, expires_at, refresh_expires_at, offline_session, offline_max_expires_at,
                 token_family_id, previous_session_id, rotated_at, reused_at, family_revoked,
                 authorization_details, resource, acr, amr
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
         "#;
         conn.execute_params(
             sql,
@@ -75,6 +75,8 @@ impl SessionRepo {
                 &entity.revoked,
                 &entity.expires_at,
                 &entity.refresh_expires_at,
+                &entity.offline_session,
+                &entity.offline_max_expires_at,
                 &entity.token_family_id,
                 &entity.previous_session_id,
                 &entity.rotated_at,
@@ -114,7 +116,7 @@ impl SessionRepo {
         hash: &str,
     ) -> Result<Option<Session>, OidcError> {
         let sql = &format!(
-            "SELECT {SESSION_COLUMNS} FROM sessions WHERE refresh_token_hash = $1 AND NOT revoked AND refresh_expires_at > NOW() FOR UPDATE"
+            "SELECT {SESSION_COLUMNS} FROM sessions WHERE refresh_token_hash = $1 AND NOT revoked AND refresh_expires_at > NOW() AND (NOT offline_session OR offline_max_expires_at > NOW()) FOR UPDATE"
         );
         let row = conn
             .query_one_params(sql, &[&hash])
@@ -154,6 +156,19 @@ impl SessionRepo {
         Ok(())
     }
 
+    /// Revoke browser and regular refresh sessions while preserving offline grants.
+    pub async fn revoke_online_by_user_id(
+        &self,
+        conn: &mut Connection,
+        user_id: Uuid,
+    ) -> Result<(), OidcError> {
+        let sql = "UPDATE sessions SET revoked = TRUE WHERE user_id = $1 AND NOT offline_session AND NOT revoked";
+        conn.execute_params(sql, &[&user_id])
+            .await
+            .map_err(mapper::pg_err)?;
+        Ok(())
+    }
+
     /// Revoke every active session for one user and client application.
     pub async fn revoke_by_user_and_client(
         &self,
@@ -175,8 +190,7 @@ impl SessionRepo {
         user_id: Uuid,
         current_session_id: Uuid,
     ) -> Result<(), OidcError> {
-        let sql =
-            "UPDATE sessions SET revoked = TRUE WHERE user_id = $1 AND id <> $2 AND NOT revoked";
+        let sql = "UPDATE sessions SET revoked = TRUE WHERE user_id = $1 AND id <> $2 AND NOT offline_session AND NOT revoked";
         conn.execute_params(sql, &[&user_id, &current_session_id])
             .await
             .map_err(mapper::pg_err)?;
@@ -191,7 +205,7 @@ impl SessionRepo {
         user_id: Uuid,
     ) -> Result<Vec<Session>, OidcError> {
         let sql = &format!(
-            "SELECT {SESSION_COLUMNS} FROM sessions WHERE user_id = $1 AND NOT revoked AND expires_at > NOW()"
+            "SELECT {SESSION_COLUMNS} FROM sessions WHERE user_id = $1 AND NOT offline_session AND NOT revoked AND expires_at > NOW()"
         );
         let result = conn
             .query_params(sql, &[&user_id])
@@ -202,6 +216,26 @@ impl SessionRepo {
             .iter()
             .map(Self::map_row)
             .collect::<Result<Vec<_>, _>>()
+    }
+
+    /// Find the current active row for every online or offline token family.
+    pub async fn find_active_grants_by_user_id(
+        &self,
+        conn: &mut Connection,
+        user_id: Uuid,
+    ) -> Result<Vec<Session>, OidcError> {
+        let sql = &format!(
+            "SELECT {SESSION_COLUMNS} FROM sessions
+             WHERE user_id = $1 AND NOT revoked AND rotated_at IS NULL
+               AND ((offline_session AND refresh_expires_at > NOW() AND offline_max_expires_at > NOW())
+                    OR (NOT offline_session AND (expires_at > NOW() OR refresh_expires_at > NOW())))
+             ORDER BY created_at DESC"
+        );
+        let result = conn
+            .query_params(sql, &[&user_id])
+            .await
+            .map_err(mapper::pg_err)?;
+        result.into_rows().iter().map(Self::map_row).collect()
     }
 
     /// Find a session by its OIDC Session ID (`sid`).
@@ -220,7 +254,7 @@ impl SessionRepo {
 
     /// Mark a session as rotated (sets rotated_at to NOW()).
     pub async fn mark_rotated(&self, conn: &mut Connection, id: Uuid) -> Result<(), OidcError> {
-        let sql = "UPDATE sessions SET rotated_at = NOW() WHERE id = $1";
+        let sql = "UPDATE sessions SET rotated_at = NOW(), last_used_at = NOW() WHERE id = $1";
         conn.execute_params(sql, &[&id])
             .await
             .map_err(mapper::pg_err)?;
@@ -374,7 +408,9 @@ impl SessionRepo {
 
     /// Delete expired sessions.
     pub async fn cleanup_expired(&self, conn: &mut Connection) -> Result<u64, OidcError> {
-        let sql = "DELETE FROM sessions WHERE expires_at < NOW()";
+        let sql = "DELETE FROM sessions
+                   WHERE (offline_session AND offline_max_expires_at < NOW())
+                      OR (NOT offline_session AND COALESCE(refresh_expires_at, expires_at) < NOW())";
         let affected = conn
             .execute_params(sql, &[])
             .await
@@ -397,17 +433,19 @@ impl SessionRepo {
             revoked: mapper::bool_(row, 10)?,
             expires_at: mapper::datetime(row, 11)?,
             refresh_expires_at: mapper::opt_datetime(row, 12)?,
-            created_at: mapper::datetime(row, 13)?,
-            last_used_at: mapper::opt_datetime(row, 14)?,
-            token_family_id: mapper::opt_uuid(row, 15)?,
-            previous_session_id: mapper::opt_uuid(row, 16)?,
-            rotated_at: mapper::opt_datetime(row, 17)?,
-            reused_at: mapper::opt_datetime(row, 18)?,
-            family_revoked: mapper::bool_(row, 19)?,
-            authorization_details: row.get::<serde_json::Value>(20).ok(),
-            resource: mapper::json_string_vec(row, 21)?,
-            acr: mapper::string(row, 22)?,
-            amr: mapper::json_string_vec(row, 23)?,
+            offline_session: mapper::bool_(row, 13)?,
+            offline_max_expires_at: mapper::opt_datetime(row, 14)?,
+            created_at: mapper::datetime(row, 15)?,
+            last_used_at: mapper::opt_datetime(row, 16)?,
+            token_family_id: mapper::opt_uuid(row, 17)?,
+            previous_session_id: mapper::opt_uuid(row, 18)?,
+            rotated_at: mapper::opt_datetime(row, 19)?,
+            reused_at: mapper::opt_datetime(row, 20)?,
+            family_revoked: mapper::bool_(row, 21)?,
+            authorization_details: row.get::<serde_json::Value>(22).ok(),
+            resource: mapper::json_string_vec(row, 23)?,
+            acr: mapper::string(row, 24)?,
+            amr: mapper::json_string_vec(row, 25)?,
         })
     }
 }

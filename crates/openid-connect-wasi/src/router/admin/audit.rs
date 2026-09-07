@@ -168,6 +168,9 @@ pub async fn list_sessions(
                 "scope": s.scope,
                 "revoked": s.revoked,
                 "family_revoked": s.family_revoked,
+                "offline": s.offline_session,
+                "expires_at": s.refresh_expires_at.unwrap_or(s.expires_at),
+                "maximum_expires_at": s.offline_max_expires_at,
             })
         })
         .collect();
@@ -186,7 +189,20 @@ pub async fn revoke_session(
         Ok(c) => c,
         Err(r) => return r,
     };
-    match SessionRepo.revoke(&mut conn, id).await {
+    let session = match SessionRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(session)) => session,
+        Ok(None) => return not_found(),
+        Err(e) => {
+            tracing::error!("find session for revocation error: {e}");
+            return internal_error();
+        }
+    };
+    let result = if let Some(family_id) = session.token_family_id {
+        SessionRepo.revoke_family(&mut conn, family_id).await
+    } else {
+        SessionRepo.revoke(&mut conn, id).await
+    };
+    match result {
         Ok(()) => Json(json!({"revoked": true})).into_response(),
         Err(e) => {
             tracing::error!("revoke session error: {e}");

@@ -7,6 +7,7 @@ use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, sha2_256_hex, ve
 use oidc_repository::mapper::pg_err;
 use oidc_repository::repositories::auth_code_repo::AuthCodeRepo;
 use oidc_repository::repositories::client_repo::ClientRepo;
+use oidc_repository::repositories::realm_repo::RealmRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 use oidc_repository::with_transaction;
@@ -87,6 +88,18 @@ impl AuthorizationCodeFlow {
             };
             let audience = client.client_id.clone();
             let scopes = auth_code.scope.clone();
+            let offline_session = scopes.iter().any(|scope| scope == "offline_access");
+            let offline_policy = if offline_session {
+                let realm = RealmRepo
+                    .find_by_id(&mut conn, auth_code.realm_id)
+                    .await?
+                    .ok_or_else(|| OidcError::NotFound("realm".into()))?;
+                Some(oidc_core::models::OfflineSessionPolicy::from_realm_config(
+                    &realm.config,
+                ))
+            } else {
+                None
+            };
             let organization =
                 crate::organization_claims::resolve_organization_claim(&mut conn, user.id, &scopes)
                     .await?;
@@ -215,6 +228,11 @@ impl AuthorizationCodeFlow {
             let refresh_hash = Some(sha2_256_hex(&refresh_token_value));
             let token_family_id = generate_uuid_v7();
             let now = chrono::Utc::now();
+            let offline_max_expires_at =
+                offline_policy.map(|policy| now + chrono::Duration::seconds(policy.max_seconds));
+            let refresh_expires_at = offline_policy
+                .map(|policy| now + chrono::Duration::seconds(policy.idle_seconds))
+                .or_else(|| Some(now + chrono::Duration::days(7)));
 
             let session = Session {
                 id: generate_uuid_v7(),
@@ -229,7 +247,9 @@ impl AuthorizationCodeFlow {
                 scope: scopes.clone(),
                 revoked: false,
                 expires_at: now + chrono::Duration::minutes(15),
-                refresh_expires_at: Some(now + chrono::Duration::days(7)),
+                refresh_expires_at,
+                offline_session,
+                offline_max_expires_at,
                 created_at: now,
                 last_used_at: None,
                 token_family_id: Some(token_family_id),
@@ -252,6 +272,7 @@ impl AuthorizationCodeFlow {
                 "token_type": token_type,
                 "expires_in": 900,
                 "refresh_token": refresh_token_value,
+                "refresh_expires_in": refresh_expires_at.map(|expiry| (expiry - now).num_seconds()),
                 "id_token": id_token,
                 "scope": scopes.join(" "),
             }))

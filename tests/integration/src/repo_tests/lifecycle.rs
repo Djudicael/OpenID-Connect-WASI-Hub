@@ -125,6 +125,8 @@ fn make_session(user_id: Uuid, realm_id: Uuid, client_id: Uuid, hash: &str) -> S
         revoked: false,
         expires_at: now + chrono::Duration::minutes(15),
         refresh_expires_at: Some(now + chrono::Duration::days(7)),
+        offline_session: false,
+        offline_max_expires_at: None,
         created_at: now,
         last_used_at: None,
         token_family_id: None,

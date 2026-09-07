@@ -731,6 +731,212 @@ async fn test_admin_ui_authorization_code_flow_includes_admin_scope() {
 // ===================================================================
 
 #[tokio::test]
+async fn test_offline_access_rotates_survives_logout_and_revokes_as_a_family() {
+    let app = TestApp::new().await;
+    let client_id = "offline-client";
+    let client_secret = "OfflineClientSecret123!";
+    let redirect_uri = "https://offline.example.com/callback";
+    let client_db_id = app
+        .seed_client_with_secret(client_id, client_secret, &[redirect_uri])
+        .await;
+
+    let mut conn = app.db_conn().await;
+    let allowed_scopes = json!(["openid", "profile", "offline_access"]);
+    conn.execute_params(
+        "UPDATE clients SET allowed_scopes=$1 WHERE id=$2",
+        &[&allowed_scopes, &client_db_id],
+    )
+    .await
+    .expect("offline_access should be allowed for the test client");
+    let realm_config = json!({
+        "offline_sessions": {"idle_seconds": 864000, "max_seconds": 3456000}
+    });
+    conn.execute_params(
+        "UPDATE realms SET config=$1 WHERE id=$2",
+        &[&realm_config, &app.master_realm_id()],
+    )
+    .await
+    .expect("offline session policy should be configurable");
+
+    let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let challenge = pkce_s256_challenge(verifier);
+    let authorize_url = format!(
+        "{}/oidc/authorize?client_id={}&redirect_uri={}&response_type=code&scope=openid+profile+offline_access&prompt=consent&state=offline&code_challenge={}&code_challenge_method=S256&login_hint={}",
+        app.url(),
+        urlencoding::encode(client_id),
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(&challenge),
+        urlencoding::encode(fixtures::TEST_USER_EMAIL),
+    );
+    let authorize = app
+        .authorize_get(&authorize_url, None)
+        .await
+        .expect("offline authorization request failed");
+    assert_eq!(authorize.status(), StatusCode::TEMPORARY_REDIRECT);
+    let (code, _) = parse_redirect_params(
+        authorize
+            .headers()
+            .get("location")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+    );
+
+    let token_response = app
+        .client()
+        .post(format!("{}/oidc/token", app.url()))
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", code.as_str()),
+            ("redirect_uri", redirect_uri),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+            ("code_verifier", verifier),
+        ])
+        .send()
+        .await
+        .expect("offline code exchange failed");
+    assert_eq!(token_response.status(), StatusCode::OK);
+    let tokens: Value = token_response.json().await.unwrap();
+    assert_eq!(tokens["refresh_expires_in"], 864000);
+    let first_refresh = tokens["refresh_token"].as_str().unwrap().to_string();
+    let id_token = tokens["id_token"].as_str().unwrap().to_string();
+
+    let first_hash = oidc_core::utils::sha2_256_hex(&first_refresh);
+    let first_session = oidc_repository::repositories::session_repo::SessionRepo
+        .find_by_refresh_token_hash(&mut conn, &first_hash)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(first_session.offline_session);
+    let absolute_expiry = first_session.offline_max_expires_at.unwrap();
+    assert_eq!((absolute_expiry - first_session.created_at).num_days(), 40);
+
+    let logout = app
+        .client()
+        .get(format!(
+            "{}/oidc/logout?id_token_hint={}",
+            app.url(),
+            urlencoding::encode(&id_token)
+        ))
+        .send()
+        .await
+        .expect("logout failed");
+    assert!(logout.status().is_success() || logout.status().is_redirection());
+
+    let refresh_response = app
+        .client()
+        .post(format!("{}/oidc/token", app.url()))
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", first_refresh.as_str()),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+        ])
+        .send()
+        .await
+        .expect("offline refresh after logout failed");
+    assert_eq!(refresh_response.status(), StatusCode::OK);
+    let refreshed: Value = refresh_response.json().await.unwrap();
+    let second_refresh = refreshed["refresh_token"].as_str().unwrap().to_string();
+    let second_hash = oidc_core::utils::sha2_256_hex(&second_refresh);
+    let second_session = oidc_repository::repositories::session_repo::SessionRepo
+        .find_by_refresh_token_hash(&mut conn, &second_hash)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(second_session.offline_session);
+    assert_eq!(second_session.offline_max_expires_at, Some(absolute_expiry));
+    assert_eq!(
+        second_session.authorization_details,
+        first_session.authorization_details
+    );
+
+    let revoke = app
+        .client()
+        .post(format!("{}/oidc/revoke", app.url()))
+        .form(&[
+            ("token", second_refresh.as_str()),
+            ("token_type_hint", "refresh_token"),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+        ])
+        .send()
+        .await
+        .expect("offline token revocation failed");
+    assert_eq!(revoke.status(), StatusCode::OK);
+    let family = second_session.token_family_id.unwrap();
+    let family_rows = oidc_repository::repositories::session_repo::SessionRepo
+        .list(
+            &mut conn,
+            second_session.user_id,
+            Some(second_session.realm_id),
+            Some(true),
+            20,
+            0,
+        )
+        .await
+        .unwrap();
+    assert!(
+        family_rows
+            .iter()
+            .filter(|session| session.token_family_id == Some(family))
+            .all(|session| session.family_revoked)
+    );
+}
+
+#[tokio::test]
+async fn test_offline_access_requires_code_and_interactive_consent() {
+    let app = TestApp::new().await;
+    let client_id = "offline-consent-client";
+    let redirect_uri = "https://offline.example.com/callback";
+    let client_db_id = app.seed_public_client(client_id, &[redirect_uri]).await;
+    let mut conn = app.db_conn().await;
+    let allowed_scopes = json!(["openid", "offline_access"]);
+    conn.execute_params(
+        "UPDATE clients SET allowed_scopes=$1 WHERE id=$2",
+        &[&allowed_scopes, &client_db_id],
+    )
+    .await
+    .unwrap();
+
+    let implicit_url = format!(
+        "{}/oidc/authorize?client_id={}&redirect_uri={}&response_type=token&scope=openid+offline_access&nonce=n&login_hint={}",
+        app.url(),
+        client_id,
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(fixtures::TEST_USER_EMAIL)
+    );
+    let implicit = app.authorize_get(&implicit_url, None).await.unwrap();
+    let implicit_location = implicit
+        .headers()
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(
+        parse_redirect_query(implicit_location, "error").as_deref(),
+        Some("invalid_scope")
+    );
+
+    let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let silent_url = format!(
+        "{}/oidc/authorize?client_id={}&redirect_uri={}&response_type=code&scope=openid+offline_access&prompt=none&code_challenge={}&code_challenge_method=S256&login_hint={}",
+        app.url(),
+        client_id,
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(&pkce_s256_challenge(verifier)),
+        urlencoding::encode(fixtures::TEST_USER_EMAIL)
+    );
+    let silent = app.authorize_get(&silent_url, None).await.unwrap();
+    let silent_location = silent.headers().get("location").unwrap().to_str().unwrap();
+    assert_eq!(
+        parse_redirect_query(silent_location, "error").as_deref(),
+        Some("consent_required")
+    );
+}
+
+#[tokio::test]
 async fn test_refresh_token_rotation() {
     let app = TestApp::new().await;
 

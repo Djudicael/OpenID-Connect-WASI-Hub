@@ -56,7 +56,11 @@ pub async fn revoke_handler(
                 .await
         {
             if session.client_id == client.id {
-                let _ = SessionRepo.revoke(&mut conn, session.id).await;
+                if let Some(family_id) = session.token_family_id {
+                    let _ = SessionRepo.revoke_family(&mut conn, family_id).await;
+                } else {
+                    let _ = SessionRepo.revoke(&mut conn, session.id).await;
+                }
             }
             return Ok(Json(json!({})));
         }
@@ -67,7 +71,11 @@ pub async fn revoke_handler(
             .await
         {
             if session.client_id == client.id {
-                let _ = SessionRepo.revoke(&mut conn, session.id).await;
+                if let Some(family_id) = session.token_family_id {
+                    let _ = SessionRepo.revoke_family(&mut conn, family_id).await;
+                } else {
+                    let _ = SessionRepo.revoke(&mut conn, session.id).await;
+                }
             }
             return Ok(Json(json!({})));
         }
@@ -79,7 +87,11 @@ pub async fn revoke_handler(
                 .await
         {
             if session.client_id == client.id {
-                let _ = SessionRepo.revoke(&mut conn, session.id).await;
+                if let Some(family_id) = session.token_family_id {
+                    let _ = SessionRepo.revoke_family(&mut conn, family_id).await;
+                } else {
+                    let _ = SessionRepo.revoke(&mut conn, session.id).await;
+                }
             }
             return Ok(Json(json!({})));
         }

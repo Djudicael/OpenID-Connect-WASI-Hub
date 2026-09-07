@@ -7,6 +7,7 @@ use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, sha2_256_hex};
 use oidc_repository::mapper::pg_err;
 use oidc_repository::repositories::client_repo::ClientRepo;
 use oidc_repository::repositories::organization_repo::OrganizationRepo;
+use oidc_repository::repositories::realm_repo::RealmRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 use oidc_repository::with_transaction;
@@ -58,6 +59,23 @@ impl RefreshTokenFlow {
                 return Err(OidcError::InvalidRequest);
             }
 
+            let now = chrono::Utc::now();
+            let refresh_expired = session
+                .refresh_expires_at
+                .is_none_or(|expiry| expiry <= now);
+            let maximum_expired = session
+                .offline_max_expires_at
+                .is_some_and(|expiry| expiry <= now);
+            if refresh_expired || maximum_expired {
+                if let Some(family_id) = session.token_family_id {
+                    SessionRepo.revoke_family(&mut conn, family_id).await?;
+                } else {
+                    SessionRepo.revoke(&mut conn, session.id).await?;
+                }
+                conn.commit().await.map_err(pg_err)?;
+                return Err(OidcError::InvalidRequest);
+            }
+
             // --- Token theft detection ---
             // If this session was already rotated (has a successor), it's a reuse.
             // Commit the revocation before returning the error.
@@ -97,6 +115,16 @@ impl RefreshTokenFlow {
                 Some(_) => return Err(OidcError::InvalidRequest),
                 None => return Err(OidcError::InvalidRequest),
             };
+            let now = chrono::Utc::now();
+            if session
+                .refresh_expires_at
+                .is_none_or(|expiry| expiry <= now)
+                || session
+                    .offline_max_expires_at
+                    .is_some_and(|expiry| expiry <= now)
+            {
+                return Err(OidcError::InvalidRequest);
+            }
 
             // --- Fetch user for ID token claims ---
             let user_id = session.user_id.ok_or(OidcError::NotFound("user".into()))?;
@@ -125,6 +153,17 @@ impl RefreshTokenFlow {
                 Some(c) if c.enabled => c,
                 Some(_) => return Err(OidcError::InvalidClient),
                 None => return Err(OidcError::InvalidClient),
+            };
+            let offline_policy = if session.offline_session {
+                let realm = RealmRepo
+                    .find_by_id(&mut conn, session.realm_id)
+                    .await?
+                    .ok_or_else(|| OidcError::NotFound("realm".into()))?;
+                Some(oidc_core::models::OfflineSessionPolicy::from_realm_config(
+                    &realm.config,
+                ))
+            } else {
+                None
             };
 
             let subject = if client.subject_type == "pairwise" {
@@ -216,6 +255,17 @@ impl RefreshTokenFlow {
             let new_refresh_token_value = generate_opaque_token()?;
             let new_refresh_hash = Some(sha2_256_hex(&new_refresh_token_value));
             let now = chrono::Utc::now();
+            let refresh_expires_at = if let Some(policy) = offline_policy {
+                let maximum = session
+                    .offline_max_expires_at
+                    .ok_or(OidcError::InvalidRequest)?;
+                Some(std::cmp::min(
+                    now + chrono::Duration::seconds(policy.idle_seconds),
+                    maximum,
+                ))
+            } else {
+                Some(now + chrono::Duration::days(7))
+            };
 
             let new_session = Session {
                 id: generate_uuid_v7(),
@@ -230,7 +280,9 @@ impl RefreshTokenFlow {
                 scope: scopes.clone(),
                 revoked: false,
                 expires_at: now + chrono::Duration::minutes(15),
-                refresh_expires_at: Some(now + chrono::Duration::days(7)),
+                refresh_expires_at,
+                offline_session: session.offline_session,
+                offline_max_expires_at: session.offline_max_expires_at,
                 created_at: now,
                 last_used_at: None,
                 token_family_id: session.token_family_id,
@@ -238,8 +290,8 @@ impl RefreshTokenFlow {
                 rotated_at: None,
                 reused_at: None,
                 family_revoked: false,
-                authorization_details: None,
-                resource: vec![],
+                authorization_details: session.authorization_details.clone(),
+                resource: session.resource.clone(),
                 acr: session.acr.clone(),
                 amr: session.amr.clone(),
             };
@@ -256,6 +308,7 @@ impl RefreshTokenFlow {
                 "token_type": token_type,
                 "expires_in": 900,
                 "refresh_token": new_refresh_token_value,
+                "refresh_expires_in": refresh_expires_at.map(|expiry| (expiry - now).num_seconds()),
                 "id_token": id_token,
                 "scope": scopes.join(" "),
             }))

@@ -155,6 +155,11 @@ pub async fn create(State(state): State<AppState>, auth: AdminAuth, body: String
     {
         return (StatusCode::BAD_REQUEST, Json(json!({"error":message}))).into_response();
     }
+    if let Err(message) =
+        oidc_core::models::OfflineSessionPolicy::from_realm_config(&config).validate()
+    {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error":message}))).into_response();
+    }
     let realm = oidc_core::models::Realm {
         id: realm_id,
         name: req.name,
@@ -273,6 +278,11 @@ pub async fn update(
     if let Some(v) = req.config {
         if let Err(message) =
             oidc_core::models::AuthenticationFlowConfig::from_realm_config(&v).validate()
+        {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error":message}))).into_response();
+        }
+        if let Err(message) =
+            oidc_core::models::OfflineSessionPolicy::from_realm_config(&v).validate()
         {
             return (StatusCode::BAD_REQUEST, Json(json!({"error":message}))).into_response();
         }

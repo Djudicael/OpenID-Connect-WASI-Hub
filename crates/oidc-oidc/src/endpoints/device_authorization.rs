@@ -111,6 +111,11 @@ pub async fn device_authorization_handler(
     let scopes = oidc_repository::repositories::scope_repo::ScopeRepo
         .resolve_names_for_client(&mut conn, client.id, &scopes, &client.allowed_scopes)
         .await?;
+    if scopes.iter().any(|scope| scope == "offline_access") {
+        return Err(oidc_core::OidcError::InvalidScope(
+            "offline_access requires an interactive authorization code flow".into(),
+        ));
+    }
 
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(900); // 15 minutes

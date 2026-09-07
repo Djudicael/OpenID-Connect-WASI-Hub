@@ -278,6 +278,8 @@ impl JwtBearerFlow {
                 revoked: false,
                 expires_at: now_time + chrono::Duration::minutes(15),
                 refresh_expires_at: None,
+                offline_session: false,
+                offline_max_expires_at: None,
                 created_at: now_time,
                 last_used_at: None,
                 token_family_id: None,

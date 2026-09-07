@@ -250,14 +250,7 @@ pub async fn sessions_handler(
     let account = current_account(&state, &headers).await?;
     let mut conn = state.connect().await?;
     let sessions = SessionRepo
-        .list(
-            &mut conn,
-            Some(account.user.id),
-            Some(account.user.realm_id),
-            Some(false),
-            100,
-            0,
-        )
+        .find_active_grants_by_user_id(&mut conn, account.user.id)
         .await?;
     let mut items = Vec::with_capacity(sessions.len());
     for session in sessions {
@@ -269,6 +262,8 @@ pub async fn sessions_handler(
             "created_at": session.created_at,
             "last_used_at": session.last_used_at,
             "expires_at": session.refresh_expires_at.unwrap_or(session.expires_at),
+            "maximum_expires_at": session.offline_max_expires_at,
+            "offline": session.offline_session,
             "current": session.id == account.session_id,
             "authentication_methods": session.amr,
         }));
@@ -288,7 +283,11 @@ pub async fn revoke_session_handler(
         .await?
         .filter(|session| session.user_id == Some(account.user.id))
         .ok_or_else(|| OidcError::NotFound("session".into()))?;
-    SessionRepo.revoke(&mut conn, session.id).await?;
+    if let Some(family_id) = session.token_family_id {
+        SessionRepo.revoke_family(&mut conn, family_id).await?;
+    } else {
+        SessionRepo.revoke(&mut conn, session.id).await?;
+    }
     audit(
         &mut conn,
         &account.user,
@@ -372,7 +371,7 @@ pub async fn applications_handler(
         .list_by_user(&mut conn, account.user.id)
         .await?;
     let active_sessions = SessionRepo
-        .find_active_by_user_id(&mut conn, account.user.id)
+        .find_active_grants_by_user_id(&mut conn, account.user.id)
         .await?;
     let mut items = Vec::with_capacity(consents.len());
     for consent in consents {

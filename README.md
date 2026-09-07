@@ -400,6 +400,7 @@ Realms (tenants) are fully isolated:
 - **Users** — per-realm user directories with independent email namespaces
 - **Clients** — OAuth2/OIDC clients scoped to a single realm
 - **Sessions** — login sessions tied to a realm
+- **Offline access** — user-approved application grants with idle and maximum lifetimes
 - **Scopes** — realm-specific permission definitions
 - **API Keys** — realm-scoped admin keys
 - **Signing Keys** — each realm can have its own RSA + Ed25519 keypair for cryptographic isolation

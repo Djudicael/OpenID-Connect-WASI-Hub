@@ -31,9 +31,22 @@ impl ClientCredentialsFlow {
             if !client.enabled {
                 return Err(OidcError::InvalidClient);
             }
+            if requested_scopes
+                .iter()
+                .any(|scope| scope == "offline_access")
+            {
+                return Err(OidcError::InvalidScope(
+                    "offline_access requires an end-user authorization code flow".into(),
+                ));
+            }
 
             let requested = if requested_scopes.is_empty() {
-                client.allowed_scopes.clone()
+                client
+                    .allowed_scopes
+                    .iter()
+                    .filter(|scope| scope.as_str() != "offline_access")
+                    .cloned()
+                    .collect()
             } else {
                 requested_scopes.to_vec()
             };
@@ -80,6 +93,8 @@ impl ClientCredentialsFlow {
                 revoked: false,
                 expires_at: now + chrono::Duration::minutes(15),
                 refresh_expires_at: None,
+                offline_session: false,
+                offline_max_expires_at: None,
                 created_at: now,
                 last_used_at: None,
                 token_family_id: None,

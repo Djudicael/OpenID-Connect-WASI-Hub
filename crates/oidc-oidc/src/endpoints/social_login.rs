@@ -643,6 +643,8 @@ pub async fn social_login_callback_handler(
         revoked: false,
         expires_at: now + chrono::Duration::minutes(15),
         refresh_expires_at: Some(now + chrono::Duration::days(7)),
+        offline_session: false,
+        offline_max_expires_at: None,
         created_at: now,
         last_used_at: None,
         token_family_id: Some(generate_uuid_v7()),

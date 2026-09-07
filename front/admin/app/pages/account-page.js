@@ -73,11 +73,11 @@ class AccountPage extends BaseComponent {
   }
 
   async _revokeSession(session) {
-    if (!confirm('Sign out this session?')) return;
+    if (!confirm(session.offline ? 'Revoke offline access for this application?' : 'Sign out this session?')) return;
     try {
       const result = await revokeAccountSession(session.id);
       if (result.current) { authService.logout(); return; }
-      showToast('Session signed out', 'success'); await this._load();
+      showToast(session.offline ? 'Offline access revoked' : 'Session signed out', 'success'); await this._load();
     } catch (error) { handleApiError(error, 'Could not sign out the session'); }
   }
 
@@ -94,7 +94,7 @@ class AccountPage extends BaseComponent {
   }
 
   _nav() {
-    const sections = [['profile', 'Profile'], ['password', 'Password'], ['sessions', 'Sessions'], ['applications', 'Applications'], ['identities', 'Linked identities']];
+    const sections = [['profile', 'Profile'], ['password', 'Password'], ['sessions', 'Sessions'], ['offline', 'Offline access'], ['applications', 'Applications'], ['identities', 'Linked identities']];
     return html`<nav class="account-tabs" aria-label="Account sections">${sections.map(([id, label]) => html`<button class=${this._state.section === id ? 'active' : ''} @click=${() => this.setState({ section: id })}>${label}</button>`)}<a href="/security">Sign-in security</a></nav>`;
   }
 
@@ -114,7 +114,13 @@ class AccountPage extends BaseComponent {
   }
 
   _sessions() {
-    return html`<section class="card account-card"><h2>Active sessions</h2><p>Sign out devices or browsers you no longer use.</p><div class="account-list">${this._state.sessions.length ? this._state.sessions.map(session => html`<article><div><strong>${session.client_name}</strong>${session.current ? html` <span class="badge success">Current session</span>` : ''}<p>Started ${new Date(session.created_at).toLocaleString()} · ${session.authentication_methods.join(', ')}</p></div><button class="btn btn--danger btn--sm" @click=${() => this._revokeSession(session)}>Sign out</button></article>`) : html`<p>No active sessions.</p>`}</div></section>`;
+    const sessions = this._state.sessions.filter(session => !session.offline);
+    return html`<section class="card account-card"><h2>Active sessions</h2><p>Sign out devices or browsers you no longer use.</p><div class="account-list">${sessions.length ? sessions.map(session => html`<article><div><strong>${session.client_name}</strong>${session.current ? html` <span class="badge success">Current session</span>` : ''}<p>Started ${new Date(session.created_at).toLocaleString()} · ${session.authentication_methods.join(', ')}</p></div><button class="btn btn--danger btn--sm" @click=${() => this._revokeSession(session)}>Sign out</button></article>`) : html`<p>No active sessions.</p>`}</div></section>`;
+  }
+
+  _offline() {
+    const grants = this._state.sessions.filter(session => session.offline);
+    return html`<section class="card account-card" data-doc-section="offline-access"><h2>Offline access</h2><p>These applications can access your account while you are signed out.</p><div class="account-list">${grants.length ? grants.map(session => html`<article><div><strong>${session.client_name}</strong><p>Last used ${session.last_used_at ? new Date(session.last_used_at).toLocaleString() : 'Not yet'} · Expires if unused ${new Date(session.expires_at).toLocaleDateString()} · Ends ${new Date(session.maximum_expires_at).toLocaleDateString()}</p></div><button class="btn btn--danger btn--sm" @click=${() => this._revokeSession(session)}>Revoke access</button></article>`) : html`<p>No applications have offline access.</p>`}</div></section>`;
   }
 
   _applications() {
@@ -127,7 +133,7 @@ class AccountPage extends BaseComponent {
 
   template() {
     const { loading, profile, section } = this._state;
-    return html`<c-page-layout title="My account">${loading || !profile ? html`<p>Loading your account...</p>` : html`${this._nav()}${section === 'profile' ? this._profile() : section === 'password' ? this._password() : section === 'sessions' ? this._sessions() : section === 'applications' ? this._applications() : this._identities()}`}</c-page-layout>`;
+    return html`<c-page-layout title="My account">${loading || !profile ? html`<p>Loading your account...</p>` : html`${this._nav()}${section === 'profile' ? this._profile() : section === 'password' ? this._password() : section === 'sessions' ? this._sessions() : section === 'offline' ? this._offline() : section === 'applications' ? this._applications() : this._identities()}`}</c-page-layout>`;
   }
 }
 

@@ -1,6 +1,6 @@
 # Manage your account
 
-The account console lets you update the information associated with your account, change your password, review active sessions, remove application access, and manage linked sign-in methods.
+The account console lets you update the information associated with your account, change your password, review active sessions and offline access, remove application access, and manage linked sign-in methods.
 
 Open **My Account** after signing in.
 
@@ -34,6 +34,12 @@ Select **Sessions** to see the browsers and applications currently signed in to 
 ![Active sessions in My Account](assets/user-account-console/sessions.png)
 
 Select **Sign out** beside a session you no longer recognize or use. Signing out the current session returns you to the login page.
+
+## Review offline access
+
+Select **Offline access** to see applications that can continue accessing your account while you are signed out. Each entry shows its last use, idle expiry, and final end date. Select **Revoke access** to invalidate the application's complete offline grant.
+
+Browser sign-out does not remove an offline grant. See [Manage offline access](offline-access.md) for approval, lifetime, and recovery guidance.
 
 ## Review application access
 

@@ -997,6 +997,8 @@ mod tests {
             revoked: false,
             expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
             refresh_expires_at: Some(chrono::Utc::now() + chrono::Duration::days(30)),
+            offline_session: false,
+            offline_max_expires_at: None,
             created_at: chrono::Utc::now(),
             last_used_at: None,
             token_family_id: Some(Uuid::now_v7()),
