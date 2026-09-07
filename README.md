@@ -14,6 +14,8 @@ A multi-tenant OpenID Connect / OAuth2 identity provider built in Rust with firs
 - **PostgreSQL** — All state persisted in PostgreSQL via `wasi-pg-client`
 - **Organizations** — B2B tenants with invitations, verified domains, identity providers, groups, roles, and OIDC claims. See the [organization guide](docs/organizations.md).
 
+- **Client and Composite Roles** — Application-specific roles, nested role inheritance, group assignments, and structured token claims. See the [roles guide](docs/client-and-composite-roles.md).
+
 ## Request correlation and tracing
 
 The backend preserves a valid W3C `traceparent` trace ID or platform-provided

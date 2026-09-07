@@ -496,6 +496,18 @@ pub async fn social_login_callback_handler(
                     .into_response();
             }
         };
+    let role_claims = match crate::role_claims::resolve_role_claims(&mut conn, user.id).await {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::error!("Failed to resolve effective role claims: {error}");
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Token issuance failed",
+            )
+                .into_response();
+        }
+    };
+    let include_access_roles = scopes.iter().any(|scope| scope == "roles");
 
     let token_svc = match state.token_service_for_realm(realm.id).await {
         Ok(svc) => svc,
@@ -519,6 +531,12 @@ pub async fn social_login_callback_handler(
             None,
             Some(AccessTokenExtraClaims {
                 organization: organization.clone(),
+                realm_access: include_access_roles
+                    .then(|| role_claims.realm_access.clone())
+                    .flatten(),
+                resource_access: include_access_roles
+                    .then(|| role_claims.resource_access.clone())
+                    .flatten(),
             }),
         )
         .await
@@ -548,6 +566,9 @@ pub async fn social_login_callback_handler(
         name: user.username.clone(),
         given_name: user.given_name.clone(),
         family_name: user.family_name.clone(),
+        roles: role_claims.roles,
+        realm_access: role_claims.realm_access,
+        resource_access: role_claims.resource_access,
         organization,
         ..Default::default()
     };

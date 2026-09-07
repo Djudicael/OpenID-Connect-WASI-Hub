@@ -274,6 +274,7 @@ impl PasswordFlow {
                 "email".to_string(),
                 "admin".to_string(),
             ];
+            let role_claims = crate::role_claims::resolve_role_claims(&mut conn, user.id).await?;
 
             // Generate sid early so it can be included in both the ID token and session
             let sid = oidc_core::utils::generate_sid().unwrap_or_default();
@@ -313,7 +314,9 @@ impl PasswordFlow {
                 amr: Some(amr.clone()),
                 azp: None, // Password flow does not currently support resource indicators
                 address: None,
-                roles: None,
+                roles: role_claims.roles,
+                realm_access: role_claims.realm_access,
+                resource_access: role_claims.resource_access,
                 groups: None,
                 organization: None,
             };

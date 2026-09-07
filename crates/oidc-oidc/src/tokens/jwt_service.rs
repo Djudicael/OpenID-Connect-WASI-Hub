@@ -102,6 +102,10 @@ pub struct AccessTokenClaims {
     pub authorization_details: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub organization: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub realm_access: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resource_access: Option<serde_json::Value>,
 }
 
 /// JWT claims for an ID token.
@@ -179,6 +183,10 @@ pub struct IdTokenClaims {
     /// Organizations selected by the granted organization scope.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub organization: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub realm_access: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resource_access: Option<serde_json::Value>,
 }
 
 /// A JWK (JSON Web Key) entry for JWKS endpoint — supports RSA and OKP (Ed25519).
@@ -1038,6 +1046,7 @@ impl TokenService for JwtTokenService {
     ) -> Result<String, OidcError> {
         let now = self.now();
         let cnf = dpop_jkt.map(|jkt| serde_json::json!({"jkt": jkt}));
+        let extra = extra.unwrap_or_default();
 
         // Build `aud` per RFC 8707:
         //   - No resource indicators → aud = client_id (string, backward compatible)
@@ -1073,7 +1082,9 @@ impl TokenService for JwtTokenService {
             azp,
             cnf,
             authorization_details: authorization_details.cloned(),
-            organization: extra.and_then(|value| value.organization),
+            organization: extra.organization,
+            realm_access: extra.realm_access,
+            resource_access: extra.resource_access,
         };
         self.encode_jwt(&claims)
     }
@@ -1112,6 +1123,8 @@ impl TokenService for JwtTokenService {
             cnf: claims.cnf,
             authorization_details: claims.authorization_details,
             organization: claims.organization,
+            realm_access: claims.realm_access,
+            resource_access: claims.resource_access,
         })
     }
 
@@ -1169,6 +1182,8 @@ impl TokenService for JwtTokenService {
             azp: extra.azp,
             address: extra.address,
             roles: extra.roles,
+            realm_access: extra.realm_access,
+            resource_access: extra.resource_access,
             groups: extra.groups,
             organization: extra.organization,
         };
@@ -1462,6 +1477,8 @@ mod tests {
             cnf: None,
             authorization_details: None,
             organization: None,
+            realm_access: None,
+            resource_access: None,
         };
 
         let token = service.sign_eddsa(&claims).unwrap();
@@ -1493,6 +1510,8 @@ mod tests {
             cnf: None,
             authorization_details: None,
             organization: None,
+            realm_access: None,
+            resource_access: None,
         };
 
         let token = service.sign_eddsa(&claims).unwrap();
@@ -1538,12 +1557,39 @@ mod tests {
                 None,
                 Some(AccessTokenExtraClaims {
                     organization: Some(organization.clone()),
+                    ..Default::default()
                 }),
             )
             .await
             .unwrap();
         let claims: AccessTokenClaims = service.decode_jwt(&token).unwrap();
         assert_eq!(claims.organization, Some(organization));
+    }
+
+    #[tokio::test]
+    async fn access_token_includes_realm_and_client_role_claims() {
+        let service = test_token_service();
+        let realm_access = serde_json::json!({"roles": ["employee"]});
+        let resource_access = serde_json::json!({"portal": {"roles": ["operator"]}});
+        let token = service
+            .issue_access_token_with_extra(
+                "user-1",
+                "portal",
+                &["openid".into(), "roles".into()],
+                None,
+                None,
+                None,
+                Some(AccessTokenExtraClaims {
+                    realm_access: Some(realm_access.clone()),
+                    resource_access: Some(resource_access.clone()),
+                    ..Default::default()
+                }),
+            )
+            .await
+            .unwrap();
+        let claims: AccessTokenClaims = service.decode_jwt(&token).unwrap();
+        assert_eq!(claims.realm_access, Some(realm_access));
+        assert_eq!(claims.resource_access, Some(resource_access));
     }
 
     #[tokio::test]
@@ -1630,6 +1676,8 @@ mod tests {
             azp: None,
             address: None,
             roles: None,
+            realm_access: None,
+            resource_access: None,
             groups: None,
             organization: None,
         };
@@ -1657,6 +1705,8 @@ mod tests {
             cnf: None,
             authorization_details: None,
             organization: None,
+            realm_access: None,
+            resource_access: None,
         };
 
         let token = service.sign_eddsa(&claims).unwrap();
@@ -1687,6 +1737,8 @@ mod tests {
             cnf: None,
             authorization_details: None,
             organization: None,
+            realm_access: None,
+            resource_access: None,
         };
 
         // Sign with RS256

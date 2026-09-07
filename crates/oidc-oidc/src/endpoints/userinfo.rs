@@ -7,7 +7,6 @@ use axum::response::{IntoResponse, Response};
 use serde_json::json;
 
 use oidc_repository::repositories::group_repo::GroupRepo;
-use oidc_repository::repositories::role_repo::RoleRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 
@@ -182,15 +181,19 @@ pub async fn userinfo_handler(
         }
     }
 
-    // Always include roles and groups in UserInfo when available
-    if let Ok(roles) = RoleRepo.find_by_user_id(&mut conn, user.id).await
-        && !roles.is_empty()
+    // Include effective realm and client roles, including composite inheritance.
+    if let Ok(role_claims) = crate::role_claims::resolve_role_claims(&mut conn, user.id).await
         && let Some(obj) = claims.as_object_mut()
     {
-        obj.insert(
-            "roles".to_string(),
-            json!(roles.iter().map(|r| r.name.clone()).collect::<Vec<_>>()),
-        );
+        if let Some(roles) = role_claims.roles {
+            obj.insert("roles".to_string(), json!(roles));
+        }
+        if let Some(realm_access) = role_claims.realm_access {
+            obj.insert("realm_access".to_string(), realm_access);
+        }
+        if let Some(resource_access) = role_claims.resource_access {
+            obj.insert("resource_access".to_string(), resource_access);
+        }
     }
     if let Ok(groups) = GroupRepo.find_by_user_id(&mut conn, user.id).await
         && !groups.is_empty()

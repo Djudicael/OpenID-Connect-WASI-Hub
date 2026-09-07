@@ -108,6 +108,8 @@ impl DeviceCodeFlow {
             let organization =
                 crate::organization_claims::resolve_organization_claim(&mut conn, user.id, &scopes)
                     .await?;
+            let role_claims = crate::role_claims::resolve_role_claims(&mut conn, user.id).await?;
+            let include_access_roles = scopes.iter().any(|scope| scope == "roles");
 
             let sid = oidc_core::utils::generate_sid().unwrap_or_default();
 
@@ -122,6 +124,12 @@ impl DeviceCodeFlow {
                     None,
                     Some(oidc_core::traits::token_service::AccessTokenExtraClaims {
                         organization: organization.clone(),
+                        realm_access: include_access_roles
+                            .then(|| role_claims.realm_access.clone())
+                            .flatten(),
+                        resource_access: include_access_roles
+                            .then(|| role_claims.resource_access.clone())
+                            .flatten(),
                     }),
                 )
                 .await?;
@@ -156,7 +164,9 @@ impl DeviceCodeFlow {
                 amr: Some(vec![oidc_core::utils::AMR_DEVICE_CODE.to_string()]),
                 azp: None, // Device code flow does not currently support resource indicators
                 address: None,
-                roles: None,
+                roles: role_claims.roles,
+                realm_access: role_claims.realm_access,
+                resource_access: role_claims.resource_access,
                 groups: None,
                 organization,
             };

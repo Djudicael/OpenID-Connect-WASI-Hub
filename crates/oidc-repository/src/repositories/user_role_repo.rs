@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 /// Column list for role SELECT queries (order must match RoleRepo::map_row indices).
 const ROLE_COLUMNS: &str = r#"
-    r.id, r.realm_id, r.name, r.description, r.permissions, r.created_at, r.updated_at
+    r.id, r.realm_id, r.name, r.description, r.permissions, r.created_at, r.updated_at, r.client_id
 "#;
 
 /// Column list for user SELECT queries (order must match UserRepo::map_row indices).
@@ -31,11 +31,13 @@ impl UserRoleRepo {
         user_id: Uuid,
     ) -> Result<Vec<String>, OidcError> {
         conn.query_params(
-            "SELECT DISTINCT permission FROM (\
-               SELECT jsonb_array_elements_text(r.permissions) AS permission FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = $1 AND r.deleted_at IS NULL \
-               UNION \
-               SELECT jsonb_array_elements_text(r.permissions) AS permission FROM roles r JOIN group_roles gr ON gr.role_id = r.id JOIN user_groups ug ON ug.group_id = gr.group_id WHERE ug.user_id = $1 AND r.deleted_at IS NULL\
-             ) permissions ORDER BY permission",
+            "WITH RECURSIVE direct_roles(id) AS (\
+               SELECT role_id FROM user_roles WHERE user_id = $1 \
+               UNION SELECT gr.role_id FROM group_roles gr JOIN user_groups ug ON ug.group_id = gr.group_id WHERE ug.user_id = $1\
+             ), effective(id) AS (\
+               SELECT id FROM direct_roles \
+               UNION SELECT rc.child_role_id FROM role_composites rc JOIN effective e ON rc.parent_role_id = e.id\
+             ) SELECT DISTINCT jsonb_array_elements_text(r.permissions) AS permission FROM roles r JOIN effective e ON e.id = r.id WHERE r.deleted_at IS NULL ORDER BY permission",
             &[&user_id],
         )
         .await
@@ -128,6 +130,7 @@ impl UserRoleRepo {
             permissions: mapper::json_string_vec(row, 4)?,
             created_at: mapper::datetime(row, 5)?,
             updated_at: mapper::datetime(row, 6)?,
+            client_id: mapper::opt_uuid(row, 7)?,
         })
     }
 

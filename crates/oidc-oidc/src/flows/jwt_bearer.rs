@@ -223,14 +223,26 @@ impl JwtBearerFlow {
 
             // ── Step 5: Issue access token ──
             let token_svc = state.token_service_for_realm(client.realm_id).await?;
+            let role_claims = match user_id {
+                Some(uid) => crate::role_claims::resolve_role_claims(&mut conn, uid).await?,
+                None => Default::default(),
+            };
+            let include_roles = effective_scopes.iter().any(|scope| scope == "roles");
             let access_token = token_svc
-                .issue_access_token(
+                .issue_access_token_with_extra(
                     &subject,
                     &client.client_id,
                     &effective_scopes,
                     dpop_jkt,
                     None,
                     None,
+                    Some(oidc_core::traits::token_service::AccessTokenExtraClaims {
+                        realm_access: include_roles.then_some(role_claims.realm_access).flatten(),
+                        resource_access: include_roles
+                            .then_some(role_claims.resource_access)
+                            .flatten(),
+                        ..Default::default()
+                    }),
                 )
                 .await?;
 

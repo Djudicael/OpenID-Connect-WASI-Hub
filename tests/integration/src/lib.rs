@@ -35,6 +35,9 @@ pub mod account_tests;
 pub mod required_actions_tests;
 
 #[cfg(test)]
+pub mod client_roles_tests;
+
+#[cfg(test)]
 pub mod db_tests;
 
 #[cfg(test)]

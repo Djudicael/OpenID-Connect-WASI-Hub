@@ -21,6 +21,7 @@ use oidc_repository::repositories::par_repo::ParRepo;
 use oidc_repository::repositories::password_reset_token_repo::PasswordResetTokenRepo;
 use oidc_repository::repositories::realm_repo::RealmRepo;
 use oidc_repository::repositories::realm_signing_keys_repo::RealmSigningKeysRepo;
+use oidc_repository::repositories::role_composite_repo::RoleCompositeRepo;
 use oidc_repository::repositories::role_repo::RoleRepo;
 use oidc_repository::repositories::scope_repo::ScopeRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
@@ -532,6 +533,7 @@ pub async fn list_roles(
                 "name": r.name,
                 "description": r.description,
                 "permissions": r.permissions,
+                "client_id": r.client_id.map(|id| id.to_string()),
                 "created_at": r.created_at.to_rfc3339(),
                 "updated_at": r.updated_at.to_rfc3339(),
             })
@@ -545,7 +547,9 @@ pub struct CreateRoleRequest {
     realm_id: Uuid,
     name: String,
     description: Option<String>,
+    #[serde(default)]
     permissions: Vec<String>,
+    client_id: Option<Uuid>,
 }
 
 pub async fn create_role(State(state): State<AppState>, auth: AdminAuth, body: String) -> Response {
@@ -563,6 +567,16 @@ pub async fn create_role(State(state): State<AppState>, auth: AdminAuth, body: S
         Ok(c) => c,
         Err(r) => return r,
     };
+    if let Some(client_id) = req.client_id {
+        match ClientRepo.find_by_id(&mut conn, client_id).await {
+            Ok(Some(client)) if client.realm_id == req.realm_id => {}
+            Ok(_) => return bad_request(),
+            Err(error) => {
+                tracing::error!("client role validation error: {error}");
+                return internal_error();
+            }
+        }
+    }
     let now = chrono::Utc::now();
     let role = oidc_core::models::Role {
         id: generate_uuid_v7(),
@@ -572,6 +586,7 @@ pub async fn create_role(State(state): State<AppState>, auth: AdminAuth, body: S
         permissions: req.permissions.clone(),
         created_at: now,
         updated_at: now,
+        client_id: req.client_id,
     };
     if let Err(e) = role.validate() {
         return (
@@ -580,11 +595,25 @@ pub async fn create_role(State(state): State<AppState>, auth: AdminAuth, body: S
         )
             .into_response();
     }
-    if let Ok(Some(_)) = RoleRepo
-        .find_by_name(&mut conn, req.realm_id, &req.name)
-        .await
-    {
-        return conflict();
+    let duplicate = match req.client_id {
+        Some(client_id) => {
+            RoleRepo
+                .find_by_client_and_name(&mut conn, client_id, &req.name)
+                .await
+        }
+        None => {
+            RoleRepo
+                .find_by_name(&mut conn, req.realm_id, &req.name)
+                .await
+        }
+    };
+    match duplicate {
+        Ok(Some(_)) => return conflict(),
+        Ok(None) => {}
+        Err(error) => {
+            tracing::error!("role duplicate check error: {error}");
+            return internal_error();
+        }
     }
     match RoleRepo.create(&mut conn, &role).await {
         Ok(()) => {
@@ -614,9 +643,11 @@ pub async fn create_role(State(state): State<AppState>, auth: AdminAuth, body: S
                 "name": role.name,
                 "description": role.description,
                 "permissions": role.permissions,
+                "client_id": role.client_id.map(|id| id.to_string()),
             }))
             .into_response()
         }
+        Err(oidc_core::OidcError::Conflict(_)) => conflict(),
         Err(e) => {
             tracing::error!("create role error: {e}");
             internal_error()
@@ -643,6 +674,7 @@ pub async fn get_role(
             "name": r.name,
             "description": r.description,
             "permissions": r.permissions,
+            "client_id": r.client_id.map(|id| id.to_string()),
             "created_at": r.created_at.to_rfc3339(),
             "updated_at": r.updated_at.to_rfc3339(),
         }))
@@ -650,6 +682,109 @@ pub async fn get_role(
         Ok(None) => not_found(),
         Err(e) => {
             tracing::error!("get role error: {e}");
+            internal_error()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct CompositeRoleRequest {
+    role_id: Uuid,
+}
+
+pub async fn list_role_composites(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(response) = admin_or_forbidden(&auth) {
+        return response;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(conn) => conn,
+        Err(response) => return response,
+    };
+    if !matches!(RoleRepo.find_by_id(&mut conn, id).await, Ok(Some(_))) {
+        return not_found();
+    }
+    match RoleCompositeRepo.list_children(&mut conn, id).await {
+        Ok(roles) => Json(json!({"items": roles.into_iter().map(|role| json!({
+            "id": role.id.to_string(),
+            "realm_id": role.realm_id.to_string(),
+            "client_id": role.client_id.map(|value| value.to_string()),
+            "name": role.name,
+            "description": role.description,
+        })).collect::<Vec<_>>() }))
+        .into_response(),
+        Err(error) => {
+            tracing::error!("list composite roles error: {error}");
+            internal_error()
+        }
+    }
+}
+
+pub async fn add_role_composite(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+    body: String,
+) -> Response {
+    if let Some(response) = admin_or_forbidden(&auth) {
+        return response;
+    }
+    let req: CompositeRoleRequest = match serde_json::from_str(&body) {
+        Ok(value) => value,
+        Err(_) => return bad_request(),
+    };
+    let mut conn = match connect(&state).await {
+        Ok(conn) => conn,
+        Err(response) => return response,
+    };
+    let parent = match RoleRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(role)) => role,
+        Ok(None) => return not_found(),
+        Err(error) => {
+            tracing::error!("composite parent lookup error: {error}");
+            return internal_error();
+        }
+    };
+    let child = match RoleRepo.find_by_id(&mut conn, req.role_id).await {
+        Ok(Some(role)) if role.realm_id == parent.realm_id => role,
+        Ok(Some(_)) => return bad_request(),
+        Ok(None) => return not_found(),
+        Err(error) => {
+            tracing::error!("composite child lookup error: {error}");
+            return internal_error();
+        }
+    };
+    match RoleCompositeRepo.add(&mut conn, id, child.id).await {
+        Ok(()) => Json(json!({"added": true})).into_response(),
+        Err(oidc_core::OidcError::InvalidInput(message)) => {
+            (StatusCode::BAD_REQUEST, Json(json!({"error": message}))).into_response()
+        }
+        Err(error) => {
+            tracing::error!("add composite role error: {error}");
+            internal_error()
+        }
+    }
+}
+
+pub async fn remove_role_composite(
+    State(state): State<AppState>,
+    axum::extract::Path((id, child_id)): axum::extract::Path<(Uuid, Uuid)>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(response) = admin_or_forbidden(&auth) {
+        return response;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(conn) => conn,
+        Err(response) => return response,
+    };
+    match RoleCompositeRepo.remove(&mut conn, id, child_id).await {
+        Ok(()) => Json(json!({"removed": true})).into_response(),
+        Err(error) => {
+            tracing::error!("remove composite role error: {error}");
             internal_error()
         }
     }
@@ -703,6 +838,26 @@ pub async fn update_role(
         )
             .into_response();
     }
+    let duplicate = match role.client_id {
+        Some(client_id) => {
+            RoleRepo
+                .find_by_client_and_name(&mut conn, client_id, &role.name)
+                .await
+        }
+        None => {
+            RoleRepo
+                .find_by_name(&mut conn, role.realm_id, &role.name)
+                .await
+        }
+    };
+    match duplicate {
+        Ok(Some(existing)) if existing.id != role.id => return conflict(),
+        Ok(_) => {}
+        Err(error) => {
+            tracing::error!("role duplicate check error: {error}");
+            return internal_error();
+        }
+    }
     match RoleRepo.update(&mut conn, &role).await {
         Ok(()) => {
             let audit = oidc_core::models::AuditEvent {
@@ -727,6 +882,7 @@ pub async fn update_role(
             }
             Json(json!({"updated": true})).into_response()
         }
+        Err(oidc_core::OidcError::Conflict(_)) => conflict(),
         Err(e) => {
             tracing::error!("update role error: {e}");
             internal_error()
@@ -1132,6 +1288,7 @@ pub async fn list_group_roles(
                 "name": r.name,
                 "description": r.description,
                 "permissions": r.permissions,
+                "client_id": r.client_id.map(|value| value.to_string()),
             })
         })
         .collect();

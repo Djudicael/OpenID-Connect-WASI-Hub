@@ -3,7 +3,7 @@
 use base64::Engine;
 use oidc_core::OidcError;
 use oidc_core::models::Session;
-use oidc_core::traits::token_service::{IdTokenExtraClaims, TokenService};
+use oidc_core::traits::token_service::{AccessTokenExtraClaims, IdTokenExtraClaims, TokenService};
 use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, sha2_256_hex};
 use oidc_repository::mapper::pg_err;
 use oidc_repository::repositories::client_repo::ClientRepo;
@@ -390,14 +390,26 @@ impl TokenExchangeFlow {
     ) -> Result<Value, OidcError> {
         // Issue access token — `may_act` is included in the response metadata
         // per RFC 8693 §4.1 (not embedded in the JWT itself).
+        let role_claims = match user_id {
+            Some(uid) => crate::role_claims::resolve_role_claims(conn, uid).await?,
+            None => Default::default(),
+        };
+        let include_roles = scopes.iter().any(|scope| scope == "roles");
         let access_token = token_svc
-            .issue_access_token(
+            .issue_access_token_with_extra(
                 subject,
                 audience,
                 scopes,
                 dpop_jkt,
                 None,
                 resource.map(|r| vec![r.to_string()]).as_deref(),
+                Some(AccessTokenExtraClaims {
+                    realm_access: include_roles.then_some(role_claims.realm_access).flatten(),
+                    resource_access: include_roles
+                        .then_some(role_claims.resource_access)
+                        .flatten(),
+                    ..Default::default()
+                }),
             )
             .await?;
 
@@ -472,14 +484,26 @@ impl TokenExchangeFlow {
         resource: Option<&str>,
         dpop_jkt: Option<&str>,
     ) -> Result<Value, OidcError> {
+        let role_claims = match user_id {
+            Some(uid) => crate::role_claims::resolve_role_claims(conn, uid).await?,
+            None => Default::default(),
+        };
+        let include_roles = scopes.iter().any(|scope| scope == "roles");
         let access_token = token_svc
-            .issue_access_token(
+            .issue_access_token_with_extra(
                 subject,
                 audience,
                 scopes,
                 dpop_jkt,
                 None,
                 resource.map(|r| vec![r.to_string()]).as_deref(),
+                Some(AccessTokenExtraClaims {
+                    realm_access: include_roles.then_some(role_claims.realm_access).flatten(),
+                    resource_access: include_roles
+                        .then_some(role_claims.resource_access)
+                        .flatten(),
+                    ..Default::default()
+                }),
             )
             .await?;
 
@@ -557,15 +581,30 @@ impl TokenExchangeFlow {
         resource: Option<&str>,
         dpop_jkt: Option<&str>,
     ) -> Result<Value, OidcError> {
+        let role_claims = match user_id {
+            Some(uid) => crate::role_claims::resolve_role_claims(conn, uid).await?,
+            None => Default::default(),
+        };
+        let include_roles = scopes.iter().any(|scope| scope == "roles");
+
         // Also issue an access token for the session
         let access_token = token_svc
-            .issue_access_token(
+            .issue_access_token_with_extra(
                 subject,
                 audience,
                 scopes,
                 dpop_jkt,
                 None,
                 resource.map(|r| vec![r.to_string()]).as_deref(),
+                Some(AccessTokenExtraClaims {
+                    realm_access: include_roles
+                        .then(|| role_claims.realm_access.clone())
+                        .flatten(),
+                    resource_access: include_roles
+                        .then(|| role_claims.resource_access.clone())
+                        .flatten(),
+                    ..Default::default()
+                }),
             )
             .await?;
 
@@ -579,6 +618,9 @@ impl TokenExchangeFlow {
             amr: Some(vec![oidc_core::utils::AMR_TOKEN_EXCHANGE.to_string()]),
             // Set azp when resource indicator is present (OIDC Core §2, RFC 8707)
             azp: resource.map(|_| audience.to_string()),
+            roles: role_claims.roles,
+            realm_access: role_claims.realm_access,
+            resource_access: role_claims.resource_access,
             ..Default::default()
         };
 

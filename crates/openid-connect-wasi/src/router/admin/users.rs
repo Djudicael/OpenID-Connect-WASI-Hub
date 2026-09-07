@@ -704,6 +704,7 @@ pub async fn list_roles(
                 "name": r.name,
                 "description": r.description,
                 "permissions": r.permissions,
+                "client_id": r.client_id.map(|value| value.to_string()),
             })
         })
         .collect();

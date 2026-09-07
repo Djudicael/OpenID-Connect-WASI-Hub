@@ -551,7 +551,7 @@ class UserDetailPage extends BaseComponent {
                             ${this._state.userRoles.map(role => html`
                               <li>
                                 <span>
-                                  <span class="item-name">${role.name}</span>
+                                  <span class="item-name">${role.name} <span class="hint">(${role.client_id ? 'Client role' : 'Realm role'})</span></span>
                                   ${role.description ? html`<span class="item-desc">${role.description}</span>` : ''}
                                 </span>
                                 <c-button size="sm" variant="danger" @click=${() => this._removeRole(role.id)}>Remove</c-button>
@@ -609,7 +609,7 @@ class UserDetailPage extends BaseComponent {
               <label class="field-label">Select Role</label>
               <select class="field-select" .value=${selectedRoleId} @change=${(e) => this.setState({ selectedRoleId: e.target.value })}>
                 <option value="">-- Select a role --</option>
-                ${this._state.availableRoles.map(r => html`<option value=${r.id}>${r.name}${r.description ? ` - ${r.description}` : ''}</option>`)}
+                ${this._state.availableRoles.map(r => html`<option value=${r.id}>${r.name} (${r.client_id ? 'Client role' : 'Realm role'})${r.description ? ` - ${r.description}` : ''}</option>`)}
               </select>
               <div class="hint">Search and page through roles in this user's realm.</div>
             </div>

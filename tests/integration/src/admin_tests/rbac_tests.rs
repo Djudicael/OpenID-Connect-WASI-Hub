@@ -88,6 +88,113 @@ async fn test_create_role() {
 }
 
 #[tokio::test]
+async fn test_client_roles_and_composite_role_lifecycle() {
+    let app = TestApp::new().await;
+    let token = admin_login(&app).await;
+    let realm_id = get_master_realm_id(&app, &token).await;
+    let clients = app
+        .client()
+        .get(format!(
+            "{}/api/clients?realm_id={realm_id}&limit=1",
+            app.url()
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    let client_id = clients["items"][0]["id"].as_str().unwrap();
+
+    let parent = app
+        .client()
+        .post(format!("{}/api/roles", app.url()))
+        .bearer_auth(&token)
+        .json(&json!({"realm_id": realm_id, "name": "support-staff", "permissions": []}))
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    let child_response = app.client().post(format!("{}/api/roles", app.url())).bearer_auth(&token)
+        .json(&json!({"realm_id": realm_id, "client_id": client_id, "name": "ticket-editor", "permissions": ["tickets:write"]}))
+        .send().await.unwrap();
+    assert_eq!(child_response.status(), StatusCode::OK);
+    let child = child_response.json::<Value>().await.unwrap();
+    assert_eq!(child["client_id"], client_id);
+
+    let duplicate = app
+        .client()
+        .post(format!("{}/api/roles", app.url()))
+        .bearer_auth(&token)
+        .json(&json!({"realm_id": realm_id, "client_id": client_id, "name": "ticket-editor"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(duplicate.status(), StatusCode::CONFLICT);
+
+    let add = app
+        .client()
+        .post(format!(
+            "{}/api/roles/{}/composites",
+            app.url(),
+            parent["id"].as_str().unwrap()
+        ))
+        .bearer_auth(&token)
+        .json(&json!({"role_id": child["id"]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(add.status(), StatusCode::OK);
+    let listed = app
+        .client()
+        .get(format!(
+            "{}/api/roles/{}/composites",
+            app.url(),
+            parent["id"].as_str().unwrap()
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(listed["items"][0]["name"], "ticket-editor");
+    assert_eq!(listed["items"][0]["client_id"], client_id);
+
+    let cycle = app
+        .client()
+        .post(format!(
+            "{}/api/roles/{}/composites",
+            app.url(),
+            child["id"].as_str().unwrap()
+        ))
+        .bearer_auth(&token)
+        .json(&json!({"role_id": parent["id"]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cycle.status(), StatusCode::BAD_REQUEST);
+
+    let removed = app
+        .client()
+        .delete(format!(
+            "{}/api/roles/{}/composites/{}",
+            app.url(),
+            parent["id"].as_str().unwrap(),
+            child["id"].as_str().unwrap()
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(removed.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn test_list_roles() {
     let app = TestApp::new().await;
     let token = admin_login(&app).await;

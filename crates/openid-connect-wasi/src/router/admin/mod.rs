@@ -146,6 +146,18 @@ pub fn router() -> Router<AppState> {
         .route("/api/roles/{id}", get(audit::get_role))
         .route("/api/roles/{id}", put(audit::update_role))
         .route("/api/roles/{id}", delete(audit::delete_role))
+        .route(
+            "/api/roles/{id}/composites",
+            get(audit::list_role_composites),
+        )
+        .route(
+            "/api/roles/{id}/composites",
+            post(audit::add_role_composite),
+        )
+        .route(
+            "/api/roles/{id}/composites/{child_id}",
+            delete(audit::remove_role_composite),
+        )
         .route("/api/users/{id}/roles", get(users::list_roles))
         .route("/api/users/{id}/roles", post(users::assign_role))
         .route(

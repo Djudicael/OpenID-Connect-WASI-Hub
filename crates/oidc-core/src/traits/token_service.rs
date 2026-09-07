@@ -66,6 +66,10 @@ pub struct IdTokenExtraClaims {
     pub address: Option<crate::models::AddressClaim>,
     /// User roles (RBAC). Included when the client has `roles` scope or always for ID tokens.
     pub roles: Option<Vec<String>>,
+    /// Effective realm roles in Keycloak-compatible shape.
+    pub realm_access: Option<serde_json::Value>,
+    /// Effective client roles keyed by OAuth client identifier.
+    pub resource_access: Option<serde_json::Value>,
     /// User groups. Included when the client has `groups` scope or always for ID tokens.
     pub groups: Option<Vec<String>>,
     /// Organizations selected by the granted `organization` scope.
@@ -77,6 +81,10 @@ pub struct IdTokenExtraClaims {
 pub struct AccessTokenExtraClaims {
     /// Organizations selected by the granted `organization` scope.
     pub organization: Option<serde_json::Value>,
+    /// Effective realm roles in Keycloak-compatible shape.
+    pub realm_access: Option<serde_json::Value>,
+    /// Effective client roles keyed by OAuth client identifier.
+    pub resource_access: Option<serde_json::Value>,
 }
 
 /// Verified access token claims returned by the token service.
@@ -102,6 +110,10 @@ pub struct VerifiedAccessToken {
     pub authorization_details: Option<serde_json::Value>,
     /// Organizations selected when the token was issued.
     pub organization: Option<serde_json::Value>,
+    /// Effective realm roles.
+    pub realm_access: Option<serde_json::Value>,
+    /// Effective client roles.
+    pub resource_access: Option<serde_json::Value>,
 }
 
 /// Abstract token issuance and verification service.

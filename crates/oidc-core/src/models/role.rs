@@ -16,6 +16,7 @@ mod tests {
             permissions: vec!["users:read".into(), "users:write".into()],
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
+            client_id: None,
         }
     }
 
@@ -117,6 +118,9 @@ pub struct Role {
     pub created_at: chrono::DateTime<chrono::Utc>,
     /// When the role was last updated.
     pub updated_at: chrono::DateTime<chrono::Utc>,
+    /// Owning client for a client-scoped role. `None` identifies a realm role.
+    #[serde(default)]
+    pub client_id: Option<Uuid>,
 }
 
 impl Role {

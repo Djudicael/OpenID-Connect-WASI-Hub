@@ -505,6 +505,7 @@ async fn seed_baseline_data(conn: &mut oidc_repository::Connection) -> (Uuid, St
         permissions: vec!["admin".to_string()],
         created_at: now,
         updated_at: now,
+        client_id: None,
     };
     RoleRepo
         .create(conn, &admin_role)

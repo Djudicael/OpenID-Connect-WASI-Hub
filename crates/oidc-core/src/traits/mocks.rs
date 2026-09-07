@@ -818,6 +818,8 @@ impl TokenService for MockTokenService {
             cnf,
             authorization_details: _authorization_details.cloned(),
             organization: None,
+            realm_access: None,
+            resource_access: None,
         };
         self.access_tokens
             .write()

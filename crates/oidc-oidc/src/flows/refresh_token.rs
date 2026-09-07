@@ -146,6 +146,8 @@ impl RefreshTokenFlow {
             let organization =
                 crate::organization_claims::resolve_organization_claim(&mut conn, user_id, &scopes)
                     .await?;
+            let role_claims = crate::role_claims::resolve_role_claims(&mut conn, user_id).await?;
+            let include_access_roles = scopes.iter().any(|scope| scope == "roles");
 
             // Generate sid early so it can be included in both the ID token and session
             let sid = oidc_core::utils::generate_sid().unwrap_or_default();
@@ -161,6 +163,12 @@ impl RefreshTokenFlow {
                     None,
                     Some(AccessTokenExtraClaims {
                         organization: organization.clone(),
+                        realm_access: include_access_roles
+                            .then(|| role_claims.realm_access.clone())
+                            .flatten(),
+                        resource_access: include_access_roles
+                            .then(|| role_claims.resource_access.clone())
+                            .flatten(),
                     }),
                 )
                 .await?;
@@ -179,6 +187,9 @@ impl RefreshTokenFlow {
                 acr: Some(session.acr.clone()),
                 amr: Some(session.amr.clone()),
                 organization,
+                roles: role_claims.roles,
+                realm_access: role_claims.realm_access,
+                resource_access: role_claims.resource_access,
                 ..Default::default()
             };
 

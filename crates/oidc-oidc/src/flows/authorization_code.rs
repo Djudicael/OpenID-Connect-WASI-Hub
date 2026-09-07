@@ -90,6 +90,8 @@ impl AuthorizationCodeFlow {
             let organization =
                 crate::organization_claims::resolve_organization_claim(&mut conn, user.id, &scopes)
                     .await?;
+            let role_claims = crate::role_claims::resolve_role_claims(&mut conn, user.id).await?;
+            let include_access_roles = scopes.iter().any(|scope| scope == "roles");
 
             // Generate sid early so it can be included in both the ID token and session
             let sid = oidc_core::utils::generate_sid().unwrap_or_default();
@@ -105,6 +107,12 @@ impl AuthorizationCodeFlow {
                     Some(auth_code.resource.as_slice()),
                     Some(AccessTokenExtraClaims {
                         organization: organization.clone(),
+                        realm_access: include_access_roles
+                            .then(|| role_claims.realm_access.clone())
+                            .flatten(),
+                        resource_access: include_access_roles
+                            .then(|| role_claims.resource_access.clone())
+                            .flatten(),
                     }),
                 )
                 .await?;
@@ -166,18 +174,9 @@ impl AuthorizationCodeFlow {
                 } else {
                     None
                 },
-                // Fetch user roles and groups for ID token
-                roles: {
-                    let roles = oidc_repository::repositories::role_repo::RoleRepo
-                        .find_by_user_id(&mut conn, user.id)
-                        .await
-                        .unwrap_or_default();
-                    if roles.is_empty() {
-                        None
-                    } else {
-                        Some(roles.iter().map(|r| r.name.clone()).collect())
-                    }
-                },
+                roles: role_claims.roles,
+                realm_access: role_claims.realm_access,
+                resource_access: role_claims.resource_access,
                 groups: {
                     let groups = oidc_repository::repositories::group_repo::GroupRepo
                         .find_by_user_id(&mut conn, user.id)

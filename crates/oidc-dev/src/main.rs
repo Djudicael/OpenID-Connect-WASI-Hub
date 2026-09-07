@@ -1105,6 +1105,7 @@ async fn seed_data(db_url: &str, proxy_port: u16) -> Result<()> {
                     permissions: vec!["admin".into()],
                     created_at: now,
                     updated_at: now,
+                    client_id: None,
                 };
                 role_repo.create(&mut conn, &role).await?;
                 role

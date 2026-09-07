@@ -149,6 +149,7 @@ async fn test_role_crud() {
         permissions: vec!["users:read".to_string(), "users:write".to_string()],
         created_at: Utc::now(),
         updated_at: Utc::now(),
+        client_id: None,
     };
     RoleRepo.create(&mut conn, &role).await.expect("role create");
 
@@ -186,6 +187,7 @@ async fn test_role_list_and_count_with_realm_filter() {
             permissions: vec![],
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            client_id: None,
         };
         RoleRepo.create(&mut conn, &role).await.expect("role create");
     }
@@ -323,6 +325,7 @@ async fn test_user_role_assign_unassign() {
         permissions: vec![],
         created_at: Utc::now(),
         updated_at: Utc::now(),
+        client_id: None,
     };
     RoleRepo.create(&mut conn, &role).await.expect("role create");
 
@@ -360,6 +363,7 @@ async fn test_user_role_multiple_roles() {
             permissions: vec![],
             created_at: Utc::now(),
             updated_at: Utc::now(),
+            client_id: None,
         };
         RoleRepo.create(&mut conn, &role).await.expect("role create");
         UserRoleRepo.assign(&mut conn, user.id, role.id).await.expect("assign");
@@ -438,6 +442,7 @@ async fn test_group_role_assign_unassign() {
         permissions: vec!["read".to_string()],
         created_at: Utc::now(),
         updated_at: Utc::now(),
+        client_id: None,
     };
     RoleRepo.create(&mut conn, &role).await.expect("role create");
 

@@ -1543,6 +1543,18 @@ async fn authorize_inner(
                 ));
             }
         };
+        let role_claims = match crate::role_claims::resolve_role_claims(&mut conn, user.id).await {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::error!("Failed to resolve effective role claims: {error}");
+                return Err((
+                    redirect_uri.clone(),
+                    "server_error".to_string(),
+                    "An internal error occurred".to_string(),
+                ));
+            }
+        };
+        let include_access_roles = requested_scopes.iter().any(|scope| scope == "roles");
 
         if response_type.has_token() {
             let access_token = match token_svc
@@ -1555,6 +1567,12 @@ async fn authorize_inner(
                     Some(resource_params.as_slice()),
                     Some(oidc_core::traits::token_service::AccessTokenExtraClaims {
                         organization: organization.clone(),
+                        realm_access: include_access_roles
+                            .then(|| role_claims.realm_access.clone())
+                            .flatten(),
+                        resource_access: include_access_roles
+                            .then(|| role_claims.resource_access.clone())
+                            .flatten(),
                     }),
                 )
                 .await
@@ -1666,7 +1684,9 @@ async fn authorize_inner(
                 } else {
                     None
                 },
-                roles: None,
+                roles: role_claims.roles,
+                realm_access: role_claims.realm_access,
+                resource_access: role_claims.resource_access,
                 groups: None,
                 organization,
             };

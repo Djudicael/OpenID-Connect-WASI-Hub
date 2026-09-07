@@ -138,6 +138,16 @@ pub async fn introspect_handler(
         {
             obj.insert("organization".to_string(), organization);
         }
+        if let Some(realm_access) = claims.realm_access
+            && let Some(obj) = response.as_object_mut()
+        {
+            obj.insert("realm_access".to_string(), realm_access);
+        }
+        if let Some(resource_access) = claims.resource_access
+            && let Some(obj) = response.as_object_mut()
+        {
+            obj.insert("resource_access".to_string(), resource_access);
+        }
 
         Ok(Json(response))
     });
