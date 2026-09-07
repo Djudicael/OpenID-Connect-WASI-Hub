@@ -83,27 +83,18 @@ impl TokenExchangeFlow {
             }
 
             // ── 6. Resolve scopes ────────────────────────────────────────
-            let resolved_scopes: Vec<String> = match scopes {
-                Some(s) if !s.is_empty() => {
-                    // Validate requested scopes are allowed for the client
-                    let invalid: Vec<&String> = s
-                        .iter()
-                        .filter(|sc| !client.allowed_scopes.contains(sc))
-                        .collect();
-                    if !invalid.is_empty() {
-                        return Err(OidcError::InvalidScope(format!(
-                            "Scopes not allowed: {}",
-                            invalid
-                                .iter()
-                                .map(|s| s.as_str())
-                                .collect::<Vec<_>>()
-                                .join(" ")
-                        )));
-                    }
-                    s.to_vec()
-                }
-                _ => client.allowed_scopes.clone(),
-            };
+            let requested_scopes = scopes
+                .filter(|value| !value.is_empty())
+                .map(<[String]>::to_vec)
+                .unwrap_or_else(|| client.allowed_scopes.clone());
+            let resolved_scopes = oidc_repository::repositories::scope_repo::ScopeRepo
+                .resolve_names_for_client(
+                    &mut conn,
+                    client.id,
+                    &requested_scopes,
+                    &client.allowed_scopes,
+                )
+                .await?;
 
             // ── 7. Compute audience ──────────────────────────────────────
             let resolved_audience = audience
@@ -249,7 +240,7 @@ impl TokenExchangeFlow {
                 let realm_id = Self::resolve_realm_id_from_issuer_or_audience(
                     state,
                     &claims.iss,
-                    Some(&serde_json::Value::String(claims.aud.clone())),
+                    Some(&claims.aud),
                 )
                 .await?;
                 let user_id = uuid::Uuid::parse_str(&sub).ok();
@@ -395,6 +386,17 @@ impl TokenExchangeFlow {
             None => Default::default(),
         };
         let include_roles = scopes.iter().any(|scope| scope == "roles");
+        let mapped_user = match user_id {
+            Some(uid) => UserRepo.find_by_id(conn, uid).await?,
+            None => None,
+        };
+        let mapped_claims = crate::protocol_mappers::resolve_mapped_claims(
+            conn,
+            client.id,
+            mapped_user.as_ref(),
+            scopes,
+        )
+        .await?;
         let access_token = token_svc
             .issue_access_token_with_extra(
                 subject,
@@ -404,6 +406,8 @@ impl TokenExchangeFlow {
                 None,
                 resource.map(|r| vec![r.to_string()]).as_deref(),
                 Some(AccessTokenExtraClaims {
+                    custom_claims: mapped_claims.access_token,
+                    additional_audiences: mapped_claims.access_audiences,
                     realm_access: include_roles.then_some(role_claims.realm_access).flatten(),
                     resource_access: include_roles
                         .then_some(role_claims.resource_access)
@@ -489,6 +493,17 @@ impl TokenExchangeFlow {
             None => Default::default(),
         };
         let include_roles = scopes.iter().any(|scope| scope == "roles");
+        let mapped_user = match user_id {
+            Some(uid) => UserRepo.find_by_id(conn, uid).await?,
+            None => None,
+        };
+        let mapped_claims = crate::protocol_mappers::resolve_mapped_claims(
+            conn,
+            client.id,
+            mapped_user.as_ref(),
+            scopes,
+        )
+        .await?;
         let access_token = token_svc
             .issue_access_token_with_extra(
                 subject,
@@ -498,6 +513,8 @@ impl TokenExchangeFlow {
                 None,
                 resource.map(|r| vec![r.to_string()]).as_deref(),
                 Some(AccessTokenExtraClaims {
+                    custom_claims: mapped_claims.access_token,
+                    additional_audiences: mapped_claims.access_audiences,
                     realm_access: include_roles.then_some(role_claims.realm_access).flatten(),
                     resource_access: include_roles
                         .then_some(role_claims.resource_access)
@@ -586,6 +603,17 @@ impl TokenExchangeFlow {
             None => Default::default(),
         };
         let include_roles = scopes.iter().any(|scope| scope == "roles");
+        let mapped_user = match user_id {
+            Some(uid) => UserRepo.find_by_id(conn, uid).await?,
+            None => None,
+        };
+        let mapped_claims = crate::protocol_mappers::resolve_mapped_claims(
+            conn,
+            client.id,
+            mapped_user.as_ref(),
+            scopes,
+        )
+        .await?;
 
         // Also issue an access token for the session
         let access_token = token_svc
@@ -597,6 +625,8 @@ impl TokenExchangeFlow {
                 None,
                 resource.map(|r| vec![r.to_string()]).as_deref(),
                 Some(AccessTokenExtraClaims {
+                    custom_claims: mapped_claims.access_token.clone(),
+                    additional_audiences: mapped_claims.access_audiences.clone(),
                     realm_access: include_roles
                         .then(|| role_claims.realm_access.clone())
                         .flatten(),
@@ -612,6 +642,8 @@ impl TokenExchangeFlow {
 
         // Build ID token extra claims
         let mut id_token_extra = IdTokenExtraClaims {
+            custom_claims: mapped_claims.id_token,
+            additional_audiences: mapped_claims.id_audiences,
             at_hash: Some(at_hash),
             auth_time: Some(chrono::Utc::now().timestamp()),
             acr: Some(oidc_core::utils::ACR_BRONZE.to_string()),
@@ -625,9 +657,7 @@ impl TokenExchangeFlow {
         };
 
         // Populate user claims if we have a user_id
-        if let Some(uid) = user_id
-            && let Some(user) = UserRepo.find_by_id(conn, uid).await?
-        {
+        if let Some(user) = mapped_user {
             id_token_extra.email = Some(user.email.clone());
             id_token_extra.email_verified = Some(user.email_verified);
             id_token_extra.name = user.username.clone();

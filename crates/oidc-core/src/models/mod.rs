@@ -16,6 +16,7 @@ pub mod mfa;
 pub mod organization;
 pub mod password_policy;
 pub mod password_reset_token;
+pub mod protocol_mapper;
 pub mod pushed_authorization_request;
 
 pub mod realm;
@@ -50,6 +51,7 @@ pub use organization::{
 };
 pub use password_policy::{PasswordPolicy, PasswordPolicyViolation};
 pub use password_reset_token::PasswordResetToken;
+pub use protocol_mapper::{ClientScopeAssignment, ProtocolMapper, ProtocolMapperType};
 pub use pushed_authorization_request::PushedAuthorizationRequest;
 
 pub use realm::Realm;

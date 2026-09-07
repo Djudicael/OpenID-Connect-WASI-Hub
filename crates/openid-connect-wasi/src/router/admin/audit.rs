@@ -6,8 +6,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use oidc_core::models::Scope;
 use oidc_core::models::audit_event::ActorType;
+use oidc_core::models::{ProtocolMapper, ProtocolMapperType, Scope};
 use oidc_core::utils::generate_uuid_v7;
 use oidc_repository::repositories::account_recovery_token_repo::AccountRecoveryTokenRepo;
 use oidc_repository::repositories::audit_event_repo::AuditEventRepo;
@@ -19,6 +19,7 @@ use oidc_repository::repositories::group_repo::GroupRepo;
 use oidc_repository::repositories::group_role_repo::GroupRoleRepo;
 use oidc_repository::repositories::par_repo::ParRepo;
 use oidc_repository::repositories::password_reset_token_repo::PasswordResetTokenRepo;
+use oidc_repository::repositories::protocol_mapper_repo::ProtocolMapperRepo;
 use oidc_repository::repositories::realm_repo::RealmRepo;
 use oidc_repository::repositories::realm_signing_keys_repo::RealmSigningKeysRepo;
 use oidc_repository::repositories::role_composite_repo::RoleCompositeRepo;
@@ -468,6 +469,362 @@ pub async fn delete_scope(
         Ok(()) => Json(json!({"deleted": true})).into_response(),
         Err(e) => {
             tracing::error!("delete scope error: {e}");
+            internal_error()
+        }
+    }
+}
+
+fn protocol_mapper_json(mapper: &ProtocolMapper) -> Value {
+    json!({
+        "id": mapper.id.to_string(), "scope_id": mapper.scope_id.to_string(), "name": mapper.name,
+        "mapper_type": mapper.mapper_type.as_str(), "claim_name": mapper.claim_name,
+        "source": mapper.source, "claim_value": mapper.claim_value, "multivalued": mapper.multivalued,
+        "add_to_access_token": mapper.add_to_access_token, "add_to_id_token": mapper.add_to_id_token,
+        "add_to_userinfo": mapper.add_to_userinfo,
+    })
+}
+
+#[derive(Deserialize)]
+pub struct ProtocolMapperRequest {
+    name: String,
+    mapper_type: String,
+    claim_name: Option<String>,
+    source: Option<String>,
+    claim_value: Option<Value>,
+    #[serde(default)]
+    multivalued: bool,
+    #[serde(default = "default_true")]
+    add_to_access_token: bool,
+    #[serde(default = "default_true")]
+    add_to_id_token: bool,
+    #[serde(default = "default_true")]
+    add_to_userinfo: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn mapper_from_request(
+    id: Uuid,
+    scope_id: Uuid,
+    req: ProtocolMapperRequest,
+) -> Result<ProtocolMapper, oidc_core::OidcError> {
+    let mapper = ProtocolMapper {
+        id,
+        scope_id,
+        name: req.name,
+        mapper_type: ProtocolMapperType::try_from(req.mapper_type.as_str())?,
+        claim_name: req.claim_name,
+        source: req.source,
+        claim_value: req.claim_value,
+        multivalued: req.multivalued,
+        add_to_access_token: req.add_to_access_token,
+        add_to_id_token: req.add_to_id_token,
+        add_to_userinfo: req.add_to_userinfo,
+    };
+    mapper.validate()?;
+    Ok(mapper)
+}
+
+pub async fn list_protocol_mappers(
+    State(state): State<AppState>,
+    axum::extract::Path(scope_id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(response) = admin_or_forbidden(&auth) {
+        return response;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(conn) => conn,
+        Err(response) => return response,
+    };
+    match ScopeRepo.find_by_id(&mut conn, scope_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return not_found(),
+        Err(error) => {
+            tracing::error!("protocol mapper scope lookup error: {error}");
+            return internal_error();
+        }
+    }
+    match ProtocolMapperRepo.list_by_scope(&mut conn, scope_id).await {
+        Ok(items) => {
+            Json(json!({"items": items.iter().map(protocol_mapper_json).collect::<Vec<_>>() }))
+                .into_response()
+        }
+        Err(error) => {
+            tracing::error!("list protocol mappers error: {error}");
+            internal_error()
+        }
+    }
+}
+
+pub async fn create_protocol_mapper(
+    State(state): State<AppState>,
+    axum::extract::Path(scope_id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+    body: String,
+) -> Response {
+    if let Some(response) = admin_or_forbidden(&auth) {
+        return response;
+    }
+    let req = match serde_json::from_str::<ProtocolMapperRequest>(&body) {
+        Ok(req) => req,
+        Err(_) => return bad_request(),
+    };
+    let mapper = match mapper_from_request(generate_uuid_v7(), scope_id, req) {
+        Ok(mapper) => mapper,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": error.to_string()})),
+            )
+                .into_response();
+        }
+    };
+    let mut conn = match connect(&state).await {
+        Ok(conn) => conn,
+        Err(response) => return response,
+    };
+    let scope = match ScopeRepo.find_by_id(&mut conn, scope_id).await {
+        Ok(Some(scope)) => scope,
+        Ok(None) => return not_found(),
+        Err(error) => {
+            tracing::error!("protocol mapper scope lookup error: {error}");
+            return internal_error();
+        }
+    };
+    if mapper.mapper_type == ProtocolMapperType::ClientRoles {
+        match ClientRepo
+            .find_by_client_id(&mut conn, mapper.source.as_deref().unwrap_or_default())
+            .await
+        {
+            Ok(Some(client)) if client.realm_id == scope.realm_id => {}
+            Ok(_) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(
+                        json!({"error":"client role source must identify a client in this realm"}),
+                    ),
+                )
+                    .into_response();
+            }
+            Err(error) => {
+                tracing::error!("protocol mapper client lookup error: {error}");
+                return internal_error();
+            }
+        }
+    }
+    match ProtocolMapperRepo.create(&mut conn, &mapper).await {
+        Ok(()) => Json(protocol_mapper_json(&mapper)).into_response(),
+        Err(oidc_core::OidcError::Conflict(_)) => conflict(),
+        Err(error) => {
+            tracing::error!("create protocol mapper error: {error}");
+            internal_error()
+        }
+    }
+}
+
+pub async fn update_protocol_mapper(
+    State(state): State<AppState>,
+    axum::extract::Path((scope_id, mapper_id)): axum::extract::Path<(Uuid, Uuid)>,
+    auth: AdminAuth,
+    body: String,
+) -> Response {
+    if let Some(response) = admin_or_forbidden(&auth) {
+        return response;
+    }
+    let req = match serde_json::from_str::<ProtocolMapperRequest>(&body) {
+        Ok(req) => req,
+        Err(_) => return bad_request(),
+    };
+    let mapper = match mapper_from_request(mapper_id, scope_id, req) {
+        Ok(mapper) => mapper,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error": error.to_string()})),
+            )
+                .into_response();
+        }
+    };
+    let mut conn = match connect(&state).await {
+        Ok(conn) => conn,
+        Err(response) => return response,
+    };
+    match ProtocolMapperRepo.find_by_id(&mut conn, mapper_id).await {
+        Ok(Some(existing)) if existing.scope_id == scope_id => {}
+        Ok(_) => return not_found(),
+        Err(error) => {
+            tracing::error!("protocol mapper lookup error: {error}");
+            return internal_error();
+        }
+    }
+    let scope = match ScopeRepo.find_by_id(&mut conn, scope_id).await {
+        Ok(Some(scope)) => scope,
+        Ok(None) => return not_found(),
+        Err(error) => {
+            tracing::error!("protocol mapper scope lookup error: {error}");
+            return internal_error();
+        }
+    };
+    if mapper.mapper_type == ProtocolMapperType::ClientRoles {
+        match ClientRepo
+            .find_by_client_id(&mut conn, mapper.source.as_deref().unwrap_or_default())
+            .await
+        {
+            Ok(Some(client)) if client.realm_id == scope.realm_id => {}
+            Ok(_) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(
+                        json!({"error":"client role source must identify a client in this realm"}),
+                    ),
+                )
+                    .into_response();
+            }
+            Err(error) => {
+                tracing::error!("protocol mapper client lookup error: {error}");
+                return internal_error();
+            }
+        }
+    }
+    match ProtocolMapperRepo.update(&mut conn, &mapper).await {
+        Ok(()) => Json(protocol_mapper_json(&mapper)).into_response(),
+        Err(oidc_core::OidcError::Conflict(_)) => conflict(),
+        Err(error) => {
+            tracing::error!("update protocol mapper error: {error}");
+            internal_error()
+        }
+    }
+}
+
+pub async fn delete_protocol_mapper(
+    State(state): State<AppState>,
+    axum::extract::Path((scope_id, mapper_id)): axum::extract::Path<(Uuid, Uuid)>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(response) = admin_or_forbidden(&auth) {
+        return response;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(conn) => conn,
+        Err(response) => return response,
+    };
+    match ProtocolMapperRepo.find_by_id(&mut conn, mapper_id).await {
+        Ok(Some(existing)) if existing.scope_id == scope_id => {}
+        Ok(_) => return not_found(),
+        Err(error) => {
+            tracing::error!("protocol mapper lookup error: {error}");
+            return internal_error();
+        }
+    }
+    match ProtocolMapperRepo.delete(&mut conn, mapper_id).await {
+        Ok(()) => Json(json!({"deleted": true})).into_response(),
+        Err(error) => {
+            tracing::error!("delete protocol mapper error: {error}");
+            internal_error()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ClientScopeRequest {
+    scope_id: Uuid,
+    assignment_type: String,
+}
+
+pub async fn list_client_scopes(
+    State(state): State<AppState>,
+    axum::extract::Path(client_id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(response) = admin_or_forbidden(&auth) {
+        return response;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(conn) => conn,
+        Err(response) => return response,
+    };
+    if !matches!(
+        ClientRepo.find_by_id(&mut conn, client_id).await,
+        Ok(Some(_))
+    ) {
+        return not_found();
+    }
+    match ScopeRepo.list_by_client(&mut conn, client_id).await {
+        Ok(items) => Json(json!({"items": items})).into_response(),
+        Err(error) => {
+            tracing::error!("list client scopes error: {error}");
+            internal_error()
+        }
+    }
+}
+
+pub async fn assign_client_scope(
+    State(state): State<AppState>,
+    axum::extract::Path(client_id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+    body: String,
+) -> Response {
+    if let Some(response) = admin_or_forbidden(&auth) {
+        return response;
+    }
+    let req = match serde_json::from_str::<ClientScopeRequest>(&body) {
+        Ok(req) => req,
+        Err(_) => return bad_request(),
+    };
+    let mut conn = match connect(&state).await {
+        Ok(conn) => conn,
+        Err(response) => return response,
+    };
+    let client = match ClientRepo.find_by_id(&mut conn, client_id).await {
+        Ok(Some(client)) => client,
+        Ok(None) => return not_found(),
+        Err(_) => return internal_error(),
+    };
+    let scope = match ScopeRepo.find_by_id(&mut conn, req.scope_id).await {
+        Ok(Some(scope)) => scope,
+        Ok(None) => return not_found(),
+        Err(_) => return internal_error(),
+    };
+    if client.realm_id != scope.realm_id {
+        return bad_request();
+    }
+    match ScopeRepo
+        .assign_to_client(&mut conn, client_id, req.scope_id, &req.assignment_type)
+        .await
+    {
+        Ok(()) => Json(json!({"assigned": true})).into_response(),
+        Err(oidc_core::OidcError::InvalidInput(message)) => {
+            (StatusCode::BAD_REQUEST, Json(json!({"error": message}))).into_response()
+        }
+        Err(error) => {
+            tracing::error!("assign client scope error: {error}");
+            internal_error()
+        }
+    }
+}
+
+pub async fn unassign_client_scope(
+    State(state): State<AppState>,
+    axum::extract::Path((client_id, scope_id)): axum::extract::Path<(Uuid, Uuid)>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(response) = admin_or_forbidden(&auth) {
+        return response;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(conn) => conn,
+        Err(response) => return response,
+    };
+    match ScopeRepo
+        .unassign_from_client(&mut conn, client_id, scope_id)
+        .await
+    {
+        Ok(()) => Json(json!({"removed": true})).into_response(),
+        Err(error) => {
+            tracing::error!("unassign client scope error: {error}");
             internal_error()
         }
     }

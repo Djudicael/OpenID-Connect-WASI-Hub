@@ -107,15 +107,10 @@ pub async fn device_authorization_handler(
             .collect()
     };
 
-    // Validate requested scopes against client's allowed scopes
-    for s in &scopes {
-        if !crate::organization_claims::is_scope_allowed(s, &client.allowed_scopes) {
-            return Err(OidcError::InvalidScope(format!(
-                "Client not authorized for scope: {}",
-                s
-            )));
-        }
-    }
+    let mut conn = state.connect().await?;
+    let scopes = oidc_repository::repositories::scope_repo::ScopeRepo
+        .resolve_names_for_client(&mut conn, client.id, &scopes, &client.allowed_scopes)
+        .await?;
 
     let now = chrono::Utc::now();
     let expires_at = now + chrono::Duration::seconds(900); // 15 minutes
@@ -137,7 +132,6 @@ pub async fn device_authorization_handler(
         created_at: now,
     };
 
-    let mut conn = state.connect().await?;
     DeviceCodeRepo.create(&mut conn, &dc).await?;
 
     Ok(Json(json!({

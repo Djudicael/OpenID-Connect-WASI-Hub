@@ -3,6 +3,7 @@
 //! Tests CRUD operations on the `/api/scopes` REST endpoint
 //! and scope assignment during client creation.
 
+use base64::Engine;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 
@@ -145,6 +146,144 @@ async fn test_scope_crud_lifecycle() {
         !items2.iter().any(|s| s["id"] == scope_id),
         "deleted scope should not appear in list"
     );
+}
+
+#[tokio::test]
+async fn test_protocol_mapper_and_client_scope_lifecycle() {
+    let app = TestApp::new().await;
+    let token = admin_login(&app).await;
+    let realms: Value = app
+        .client()
+        .get(format!("{}/api/realms?limit=1", app.url()))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let realm_id = realms["items"][0]["id"].as_str().unwrap();
+    let scope: Value = app
+        .client()
+        .post(format!("{}/api/scopes", app.url()))
+        .bearer_auth(&token)
+        .json(&json!({"realm_id":realm_id,"name":"workforce-profile","enabled":true}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let scope_id = scope["id"].as_str().unwrap();
+    let client: Value = app.client().post(format!("{}/api/clients", app.url())).bearer_auth(&token)
+        .json(&json!({"realm_id":realm_id,"client_id":format!("mapper-client-{}", uuid::Uuid::new_v4()),"name":"Mapper Client","client_type":"public","allowed_scopes":["openid"]})).send().await.unwrap().json().await.unwrap();
+    let client_id = client["id"].as_str().unwrap();
+
+    let assigned = app
+        .client()
+        .post(format!("{}/api/clients/{client_id}/scopes", app.url()))
+        .bearer_auth(&token)
+        .json(&json!({"scope_id":scope_id,"assignment_type":"default"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(assigned.status(), StatusCode::OK);
+    let assignments: Value = app
+        .client()
+        .get(format!("{}/api/clients/{client_id}/scopes", app.url()))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(assignments["items"][0]["assignment_type"], "default");
+
+    let mapper_response = app.client().post(format!("{}/api/scopes/{scope_id}/mappers", app.url())).bearer_auth(&token)
+        .json(&json!({"name":"Department","mapper_type":"user_attribute","claim_name":"employee.department","source":"department","add_to_access_token":true,"add_to_id_token":true,"add_to_userinfo":true})).send().await.unwrap();
+    assert_eq!(mapper_response.status(), StatusCode::OK);
+    let mapper: Value = mapper_response.json().await.unwrap();
+    let mapper_id = mapper["id"].as_str().unwrap();
+    let mappers: Value = app
+        .client()
+        .get(format!("{}/api/scopes/{scope_id}/mappers", app.url()))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(mappers["items"][0]["claim_name"], "employee.department");
+
+    for body in [
+        json!({"name":"Tenant tier","mapper_type":"hardcoded_claim","claim_name":"tenant.tier","claim_value":"gold","add_to_access_token":true,"add_to_id_token":true,"add_to_userinfo":true}),
+        json!({"name":"Workforce API","mapper_type":"audience","claim_value":"workforce-api","add_to_access_token":true,"add_to_id_token":true,"add_to_userinfo":false}),
+    ] {
+        let response = app
+            .client()
+            .post(format!("{}/api/scopes/{scope_id}/mappers", app.url()))
+            .bearer_auth(&token)
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    let login: Value = app.client().post(format!("{}/oidc/login", app.url())).json(&json!({
+        "email": fixtures::TEST_USER_EMAIL, "password": fixtures::TEST_USER_PASSWORD, "client_id": client["client_id"]
+    })).send().await.unwrap().json().await.unwrap();
+    let payload = login["access_token"]
+        .as_str()
+        .unwrap()
+        .split('.')
+        .nth(1)
+        .unwrap();
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload)
+        .unwrap();
+    let claims: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(claims["tenant"]["tier"], "gold");
+    assert!(
+        claims["aud"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value == "workforce-api")
+    );
+    assert!(
+        claims["scope"]
+            .as_str()
+            .unwrap()
+            .contains("workforce-profile")
+    );
+
+    let updated = app.client().put(format!("{}/api/scopes/{scope_id}/mappers/{mapper_id}", app.url())).bearer_auth(&token)
+        .json(&json!({"name":"Department","mapper_type":"user_attribute","claim_name":"work.department","source":"department","add_to_access_token":true,"add_to_id_token":false,"add_to_userinfo":true})).send().await.unwrap();
+    assert_eq!(updated.status(), StatusCode::OK);
+    let deleted = app
+        .client()
+        .delete(format!(
+            "{}/api/scopes/{scope_id}/mappers/{mapper_id}",
+            app.url()
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), StatusCode::OK);
+    let removed = app
+        .client()
+        .delete(format!(
+            "{}/api/clients/{client_id}/scopes/{scope_id}",
+            app.url()
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(removed.status(), StatusCode::OK);
 }
 
 #[tokio::test]

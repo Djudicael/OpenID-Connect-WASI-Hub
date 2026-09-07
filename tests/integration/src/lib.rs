@@ -38,6 +38,9 @@ pub mod required_actions_tests;
 pub mod client_roles_tests;
 
 #[cfg(test)]
+pub mod protocol_mapper_tests;
+
+#[cfg(test)]
 pub mod db_tests;
 
 #[cfg(test)]

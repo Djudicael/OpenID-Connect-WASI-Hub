@@ -15,6 +15,7 @@ pub mod mfa_repo;
 pub mod organization_repo;
 pub mod par_repo;
 pub mod password_reset_token_repo;
+pub mod protocol_mapper_repo;
 pub mod realm_repo;
 pub mod realm_signing_keys_repo;
 pub mod required_action_repo;

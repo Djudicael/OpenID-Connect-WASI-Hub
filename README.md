@@ -15,6 +15,7 @@ A multi-tenant OpenID Connect / OAuth2 identity provider built in Rust with firs
 - **Organizations** — B2B tenants with invitations, verified domains, identity providers, groups, roles, and OIDC claims. See the [organization guide](docs/organizations.md).
 
 - **Client and Composite Roles** — Application-specific roles, nested role inheritance, group assignments, and structured token claims. See the [roles guide](docs/client-and-composite-roles.md).
+- **Client Scopes and Protocol Mappers** — Reusable default or optional scopes with configurable user, role, fixed, and audience claims. See the [client scopes guide](docs/client-scopes-and-protocol-mappers.md).
 
 ## Request correlation and tracing
 

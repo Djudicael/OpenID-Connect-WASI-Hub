@@ -8,6 +8,7 @@ pub mod endpoints;
 pub mod errors;
 pub mod flows;
 pub mod organization_claims;
+pub mod protocol_mappers;
 pub mod role_claims;
 pub mod session_cookie;
 pub mod state;

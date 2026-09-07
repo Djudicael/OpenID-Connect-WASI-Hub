@@ -91,6 +91,13 @@ impl AuthorizationCodeFlow {
                 crate::organization_claims::resolve_organization_claim(&mut conn, user.id, &scopes)
                     .await?;
             let role_claims = crate::role_claims::resolve_role_claims(&mut conn, user.id).await?;
+            let mapped_claims = crate::protocol_mappers::resolve_mapped_claims(
+                &mut conn,
+                client.id,
+                Some(&user),
+                &scopes,
+            )
+            .await?;
             let include_access_roles = scopes.iter().any(|scope| scope == "roles");
 
             // Generate sid early so it can be included in both the ID token and session
@@ -106,6 +113,8 @@ impl AuthorizationCodeFlow {
                     auth_code.authorization_details.as_ref(),
                     Some(auth_code.resource.as_slice()),
                     Some(AccessTokenExtraClaims {
+                        custom_claims: mapped_claims.access_token.clone(),
+                        additional_audiences: mapped_claims.access_audiences.clone(),
                         organization: organization.clone(),
                         realm_access: include_access_roles
                             .then(|| role_claims.realm_access.clone())
@@ -138,6 +147,8 @@ impl AuthorizationCodeFlow {
                 oidc_core::utils::resolve_locale(&user.locale, &auth_code.claims_locales);
 
             let id_token_extra = IdTokenExtraClaims {
+                custom_claims: mapped_claims.id_token,
+                additional_audiences: mapped_claims.id_audiences,
                 nonce: auth_code.nonce.clone(),
                 at_hash: Some(at_hash),
                 c_hash: Some(c_hash),

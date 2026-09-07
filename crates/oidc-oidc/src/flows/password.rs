@@ -4,7 +4,7 @@ use oidc_core::OidcError;
 use oidc_core::models::Session;
 use oidc_core::models::audit_event::{ActorType, AuditEvent};
 use oidc_core::traits::hasher::{Argon2idHasher, Hasher};
-use oidc_core::traits::token_service::{IdTokenExtraClaims, TokenService};
+use oidc_core::traits::token_service::{AccessTokenExtraClaims, IdTokenExtraClaims, TokenService};
 use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, is_valid_email, sha2_256_hex};
 use oidc_repository::mapper::pg_err;
 use oidc_repository::repositories::audit_event_repo::AuditEventRepo;
@@ -268,25 +268,48 @@ impl PasswordFlow {
                 user.id.to_string()
             };
             let audience = client.client_id.clone();
-            let scopes = vec![
-                "openid".to_string(),
-                "profile".to_string(),
-                "email".to_string(),
-                "admin".to_string(),
-            ];
+            let requested = if requested_scopes.is_empty() {
+                client.allowed_scopes.clone()
+            } else {
+                requested_scopes.to_vec()
+            };
+            let scopes = oidc_repository::repositories::scope_repo::ScopeRepo
+                .resolve_names_for_client(&mut conn, client.id, &requested, &client.allowed_scopes)
+                .await?;
             let role_claims = crate::role_claims::resolve_role_claims(&mut conn, user.id).await?;
+            let mapped_claims = crate::protocol_mappers::resolve_mapped_claims(
+                &mut conn,
+                client.id,
+                Some(&user),
+                &scopes,
+            )
+            .await?;
 
             // Generate sid early so it can be included in both the ID token and session
             let sid = oidc_core::utils::generate_sid().unwrap_or_default();
 
             let token_svc = state.token_service_for_realm(user.realm_id).await?;
             let access_token = token_svc
-                .issue_access_token(&subject, &audience, &scopes, dpop_jkt, None, None)
+                .issue_access_token_with_extra(
+                    &subject,
+                    &audience,
+                    &scopes,
+                    dpop_jkt,
+                    None,
+                    None,
+                    Some(AccessTokenExtraClaims {
+                        custom_claims: mapped_claims.access_token.clone(),
+                        additional_audiences: mapped_claims.access_audiences.clone(),
+                        ..Default::default()
+                    }),
+                )
                 .await?;
 
             let at_hash = oidc_core::utils::compute_at_hash(&access_token);
 
             let id_token_extra = IdTokenExtraClaims {
+                custom_claims: mapped_claims.id_token,
+                additional_audiences: mapped_claims.id_audiences,
                 nonce: None,
                 at_hash: Some(at_hash),
                 c_hash: None,

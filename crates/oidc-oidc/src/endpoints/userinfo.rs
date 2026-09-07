@@ -219,6 +219,28 @@ pub async fn userinfo_handler(
         obj.insert("organization".to_string(), organization);
     }
 
+    let granted_scopes = scopes.iter().cloned().collect::<Vec<_>>();
+    match crate::protocol_mappers::resolve_mapped_claims(
+        &mut conn,
+        session.client_id,
+        Some(&user),
+        &granted_scopes,
+    )
+    .await
+    {
+        Ok(mapped) => {
+            if let Some(obj) = claims.as_object_mut() {
+                for (name, value) in mapped.userinfo {
+                    obj.insert(name, value);
+                }
+            }
+        }
+        Err(error) => {
+            tracing::error!("userinfo protocol mapper error: {error}");
+            return internal_error_response();
+        }
+    }
+
     let _ = conn.close().await;
 
     Json(claims).into_response()

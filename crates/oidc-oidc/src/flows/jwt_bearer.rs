@@ -159,15 +159,19 @@ impl JwtBearerFlow {
                     .map(|s| s.split_whitespace().map(|s| s.to_string()).collect()))
                 .unwrap_or_default();
 
-            // Filter requested scopes against client's allowed scopes
-            let effective_scopes: Vec<String> = if requested_scopes.is_empty() {
+            let requested_scopes = if requested_scopes.is_empty() {
                 client.allowed_scopes.clone()
             } else {
                 requested_scopes
-                    .into_iter()
-                    .filter(|s| client.allowed_scopes.contains(s))
-                    .collect()
             };
+            let effective_scopes = oidc_repository::repositories::scope_repo::ScopeRepo
+                .resolve_names_for_client(
+                    &mut conn,
+                    client.id,
+                    &requested_scopes,
+                    &client.allowed_scopes,
+                )
+                .await?;
 
             if effective_scopes.is_empty() {
                 return Err(OidcError::InvalidScope(
@@ -176,7 +180,7 @@ impl JwtBearerFlow {
             }
 
             // Determine the subject for the access token
-            let (subject, user_id) = if is_self_issued {
+            let (subject, mapped_user) = if is_self_issued {
                 // Client acting on its own behalf — sub is the client_id
                 (client.client_id.clone(), None)
             } else {
@@ -218,8 +222,9 @@ impl JwtBearerFlow {
                     user.id.to_string()
                 };
 
-                (subject, Some(user.id))
+                (subject, Some(user))
             };
+            let user_id = mapped_user.as_ref().map(|user| user.id);
 
             // ── Step 5: Issue access token ──
             let token_svc = state.token_service_for_realm(client.realm_id).await?;
@@ -228,6 +233,13 @@ impl JwtBearerFlow {
                 None => Default::default(),
             };
             let include_roles = effective_scopes.iter().any(|scope| scope == "roles");
+            let mapped_claims = crate::protocol_mappers::resolve_mapped_claims(
+                &mut conn,
+                client.id,
+                mapped_user.as_ref(),
+                &effective_scopes,
+            )
+            .await?;
             let access_token = token_svc
                 .issue_access_token_with_extra(
                     &subject,
@@ -237,6 +249,8 @@ impl JwtBearerFlow {
                     None,
                     None,
                     Some(oidc_core::traits::token_service::AccessTokenExtraClaims {
+                        custom_claims: mapped_claims.access_token,
+                        additional_audiences: mapped_claims.access_audiences,
                         realm_access: include_roles.then_some(role_claims.realm_access).flatten(),
                         resource_access: include_roles
                             .then_some(role_claims.resource_access)

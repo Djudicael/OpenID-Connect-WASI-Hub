@@ -141,6 +141,28 @@ pub fn router() -> Router<AppState> {
         .route("/api/scopes/{id}", get(audit::get_scope))
         .route("/api/scopes/{id}", put(audit::update_scope))
         .route("/api/scopes/{id}", delete(audit::delete_scope))
+        .route(
+            "/api/scopes/{id}/mappers",
+            get(audit::list_protocol_mappers),
+        )
+        .route(
+            "/api/scopes/{id}/mappers",
+            post(audit::create_protocol_mapper),
+        )
+        .route(
+            "/api/scopes/{id}/mappers/{mapper_id}",
+            put(audit::update_protocol_mapper),
+        )
+        .route(
+            "/api/scopes/{id}/mappers/{mapper_id}",
+            delete(audit::delete_protocol_mapper),
+        )
+        .route("/api/clients/{id}/scopes", get(audit::list_client_scopes))
+        .route("/api/clients/{id}/scopes", post(audit::assign_client_scope))
+        .route(
+            "/api/clients/{id}/scopes/{scope_id}",
+            delete(audit::unassign_client_scope),
+        )
         .route("/api/roles", get(audit::list_roles))
         .route("/api/roles", post(audit::create_role))
         .route("/api/roles/{id}", get(audit::get_role))

@@ -24,6 +24,7 @@ const routes = [
   { path: '/api-keys/create', component: 'apikey-create-page' },
   { path: '/api-keys/:id', component: 'apikey-detail-page' },
   { path: '/scopes', component: 'scopes-page' },
+  { path: '/scopes/:id', component: 'scope-detail-page' },
   { path: '/identity-providers', component: 'identity-providers-page' },
   { path: '/password-policies', component: 'password-policies-page' },
   { path: '/security', component: 'security-page', account: true },

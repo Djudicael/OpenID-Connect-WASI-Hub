@@ -6,6 +6,10 @@ use async_trait::async_trait;
 /// Claims to include in an ID token.
 #[derive(Debug, Clone, Default)]
 pub struct IdTokenExtraClaims {
+    /// Additional top-level claims produced by assigned client-scope mappers.
+    pub custom_claims: serde_json::Map<String, serde_json::Value>,
+    /// Additional audiences produced by assigned client-scope mappers.
+    pub additional_audiences: Vec<String>,
     /// `nonce` from the authorization request.
     pub nonce: Option<String>,
     /// `at_hash` — left-half hash of access token.
@@ -79,6 +83,10 @@ pub struct IdTokenExtraClaims {
 /// Optional claims to include in an access token.
 #[derive(Debug, Clone, Default)]
 pub struct AccessTokenExtraClaims {
+    /// Additional top-level claims produced by assigned client-scope mappers.
+    pub custom_claims: serde_json::Map<String, serde_json::Value>,
+    /// Additional audiences produced by assigned client-scope mappers.
+    pub additional_audiences: Vec<String>,
     /// Organizations selected by the granted `organization` scope.
     pub organization: Option<serde_json::Value>,
     /// Effective realm roles in Keycloak-compatible shape.
@@ -114,6 +122,8 @@ pub struct VerifiedAccessToken {
     pub realm_access: Option<serde_json::Value>,
     /// Effective client roles.
     pub resource_access: Option<serde_json::Value>,
+    /// Additional claims carried by the access token.
+    pub custom_claims: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Abstract token issuance and verification service.

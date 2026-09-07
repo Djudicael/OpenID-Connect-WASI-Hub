@@ -142,7 +142,17 @@ pub async fn token_handler_with_endpoint_uri(
             .await?
         }
         "client_credentials" => {
-            ClientCredentialsFlow::execute(&state, &client, dpop_jkt.as_deref()).await?
+            let requested_scopes = params
+                .get("scope")
+                .map(|value| {
+                    value
+                        .split_whitespace()
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            ClientCredentialsFlow::execute(&state, &client, &requested_scopes, dpop_jkt.as_deref())
+                .await?
         }
         "refresh_token" => {
             let refresh_token = params

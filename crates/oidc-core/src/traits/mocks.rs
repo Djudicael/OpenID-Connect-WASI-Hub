@@ -820,6 +820,7 @@ impl TokenService for MockTokenService {
             organization: None,
             realm_access: None,
             resource_access: None,
+            custom_claims: serde_json::Map::new(),
         };
         self.access_tokens
             .write()

@@ -141,12 +141,19 @@ impl RefreshTokenFlow {
             } else {
                 user_id.to_string()
             };
-            let audience = session.client_id.to_string();
+            let audience = client.client_id.clone();
             let scopes = session.scope.clone();
             let organization =
                 crate::organization_claims::resolve_organization_claim(&mut conn, user_id, &scopes)
                     .await?;
             let role_claims = crate::role_claims::resolve_role_claims(&mut conn, user_id).await?;
+            let mapped_claims = crate::protocol_mappers::resolve_mapped_claims(
+                &mut conn,
+                client.id,
+                Some(&user),
+                &scopes,
+            )
+            .await?;
             let include_access_roles = scopes.iter().any(|scope| scope == "roles");
 
             // Generate sid early so it can be included in both the ID token and session
@@ -162,6 +169,8 @@ impl RefreshTokenFlow {
                     None,
                     None,
                     Some(AccessTokenExtraClaims {
+                        custom_claims: mapped_claims.access_token.clone(),
+                        additional_audiences: mapped_claims.access_audiences.clone(),
                         organization: organization.clone(),
                         realm_access: include_access_roles
                             .then(|| role_claims.realm_access.clone())
@@ -176,6 +185,8 @@ impl RefreshTokenFlow {
             let at_hash = oidc_core::utils::compute_at_hash(&access_token);
 
             let id_token_extra = IdTokenExtraClaims {
+                custom_claims: mapped_claims.id_token,
+                additional_audiences: mapped_claims.id_audiences,
                 at_hash: Some(at_hash),
                 auth_time: Some(chrono::Utc::now().timestamp()),
                 sid: Some(sid.clone()),

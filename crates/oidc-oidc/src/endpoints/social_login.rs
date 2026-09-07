@@ -184,12 +184,18 @@ pub async fn social_login_initiate_handler(
         )
             .into_response();
     }
-    if requested_scopes
-        .iter()
-        .any(|scope| !crate::organization_claims::is_scope_allowed(scope, &client.allowed_scopes))
+    let requested_scopes = match oidc_repository::repositories::scope_repo::ScopeRepo
+        .resolve_names_for_client(
+            &mut conn,
+            client.id,
+            &requested_scopes,
+            &client.allowed_scopes,
+        )
+        .await
     {
-        return (axum::http::StatusCode::BAD_REQUEST, "Invalid scope").into_response();
-    }
+        Ok(scopes) => scopes,
+        Err(_) => return (axum::http::StatusCode::BAD_REQUEST, "Invalid scope").into_response(),
+    };
 
     let internal_state = match generate_opaque_token() {
         Ok(state) => state,
@@ -508,6 +514,24 @@ pub async fn social_login_callback_handler(
         }
     };
     let include_access_roles = scopes.iter().any(|scope| scope == "roles");
+    let mapped_claims = match crate::protocol_mappers::resolve_mapped_claims(
+        &mut conn,
+        local_client.id,
+        Some(&user),
+        &scopes,
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::error!("Failed to resolve protocol mappers: {error}");
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Token issuance failed",
+            )
+                .into_response();
+        }
+    };
 
     let token_svc = match state.token_service_for_realm(realm.id).await {
         Ok(svc) => svc,
@@ -530,6 +554,8 @@ pub async fn social_login_callback_handler(
             None,
             None,
             Some(AccessTokenExtraClaims {
+                custom_claims: mapped_claims.access_token.clone(),
+                additional_audiences: mapped_claims.access_audiences.clone(),
                 organization: organization.clone(),
                 realm_access: include_access_roles
                     .then(|| role_claims.realm_access.clone())
@@ -555,6 +581,8 @@ pub async fn social_login_callback_handler(
     let at_hash = oidc_core::utils::compute_at_hash(&access_token);
 
     let id_token_extra = oidc_core::traits::token_service::IdTokenExtraClaims {
+        custom_claims: mapped_claims.id_token,
+        additional_audiences: mapped_claims.id_audiences,
         nonce: nonce.clone(),
         at_hash: Some(at_hash),
         auth_time: Some(chrono::Utc::now().timestamp()),

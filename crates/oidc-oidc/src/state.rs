@@ -199,8 +199,9 @@ impl OidcState {
     ) -> Result<String, oidc_core::OidcError> {
         let claims: crate::tokens::jwt_service::IdTokenClaims =
             Self::decode_jwt_payload_unverified(token)?;
+        let client_id = Self::client_id_from_aud(&claims.aud);
         let token_service = self
-            .token_service_for_token_context(&claims.iss, Some(&claims.aud))
+            .token_service_for_token_context(&claims.iss, client_id.as_deref())
             .await?;
         token_service.verify_id_token(token).await
     }

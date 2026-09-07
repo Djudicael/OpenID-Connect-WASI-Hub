@@ -148,6 +148,11 @@ pub async fn introspect_handler(
         {
             obj.insert("resource_access".to_string(), resource_access);
         }
+        if let Some(obj) = response.as_object_mut() {
+            for (name, value) in claims.custom_claims {
+                obj.insert(name, value);
+            }
+        }
 
         Ok(Json(response))
     });

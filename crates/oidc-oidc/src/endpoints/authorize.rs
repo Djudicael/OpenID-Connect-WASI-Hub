@@ -957,6 +957,21 @@ async fn authorize_inner(
 
     // --- Scope validation ---
     let requested_scopes: Vec<String> = scope.split(' ').map(|s| s.to_string()).collect();
+    let requested_scopes = oidc_repository::repositories::scope_repo::ScopeRepo
+        .resolve_names_for_client(
+            &mut conn,
+            client.id,
+            &requested_scopes,
+            &client.allowed_scopes,
+        )
+        .await
+        .map_err(|_| {
+            (
+                redirect_uri.clone(),
+                "invalid_scope".to_string(),
+                "A requested scope is not allowed for this client".to_string(),
+            )
+        })?;
 
     // Require "openid" scope for OIDC
     if !requested_scopes.contains(&"openid".to_string()) {
@@ -965,17 +980,6 @@ async fn authorize_inner(
             "invalid_scope".to_string(),
             "The 'openid' scope is required".to_string(),
         ));
-    }
-
-    // Validate requested scopes against client's allowed scopes
-    for s in &requested_scopes {
-        if !crate::organization_claims::is_scope_allowed(s, &client.allowed_scopes) {
-            return Err((
-                redirect_uri.clone(),
-                "invalid_scope".to_string(),
-                format!("Scope '{}' is not allowed for this client", s),
-            ));
-        }
     }
 
     // --- prompt parameter handling (OIDC Core §3.1.2.1) ---
@@ -1555,6 +1559,21 @@ async fn authorize_inner(
             }
         };
         let include_access_roles = requested_scopes.iter().any(|scope| scope == "roles");
+        let mapped_claims = crate::protocol_mappers::resolve_mapped_claims(
+            &mut conn,
+            client.id,
+            Some(&user),
+            &requested_scopes,
+        )
+        .await
+        .map_err(|error| {
+            tracing::error!("Failed to resolve protocol mappers: {error}");
+            (
+                redirect_uri.clone(),
+                "server_error".to_string(),
+                "An internal error occurred".to_string(),
+            )
+        })?;
 
         if response_type.has_token() {
             let access_token = match token_svc
@@ -1566,6 +1585,8 @@ async fn authorize_inner(
                     authorization_details.as_ref(),
                     Some(resource_params.as_slice()),
                     Some(oidc_core::traits::token_service::AccessTokenExtraClaims {
+                        custom_claims: mapped_claims.access_token.clone(),
+                        additional_audiences: mapped_claims.access_audiences.clone(),
                         organization: organization.clone(),
                         realm_access: include_access_roles
                             .then(|| role_claims.realm_access.clone())
@@ -1648,6 +1669,8 @@ async fn authorize_inner(
             };
 
             let id_token_extra = oidc_core::traits::token_service::IdTokenExtraClaims {
+                custom_claims: mapped_claims.id_token,
+                additional_audiences: mapped_claims.id_audiences,
                 nonce: nonce.clone(),
                 at_hash,
                 c_hash: None,

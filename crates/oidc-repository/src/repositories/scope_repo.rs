@@ -3,7 +3,7 @@ use uuid::Uuid;
 use crate::connection::Connection;
 use crate::mapper;
 use oidc_core::OidcError;
-use oidc_core::models::Scope;
+use oidc_core::models::{ClientScopeAssignment, Scope};
 
 /// PostgreSQL implementation of the Scope repository.
 pub struct ScopeRepo;
@@ -12,6 +12,86 @@ pub struct ScopeRepo;
 const SCOPE_COLUMNS: &str = "id, realm_id, name, description, enabled";
 
 impl ScopeRepo {
+    pub async fn list_by_client(
+        &self,
+        conn: &mut Connection,
+        client_id: Uuid,
+    ) -> Result<Vec<ClientScopeAssignment>, OidcError> {
+        conn.query_params(
+            "SELECT s.id, s.name, s.description, s.enabled, cs.assignment_type FROM scopes s JOIN client_scopes cs ON cs.scope_id=s.id WHERE cs.client_id=$1 ORDER BY cs.assignment_type, s.name",
+            &[&client_id],
+        ).await.map_err(mapper::pg_err)?.into_rows().iter().map(|row| Ok(ClientScopeAssignment {
+            scope_id: mapper::uuid(row, 0)?, name: mapper::string(row, 1)?, description: mapper::opt_string(row, 2)?,
+            enabled: mapper::bool_(row, 3)?, assignment_type: mapper::string(row, 4)?,
+        })).collect()
+    }
+
+    pub async fn assign_to_client(
+        &self,
+        conn: &mut Connection,
+        client_id: Uuid,
+        scope_id: Uuid,
+        assignment_type: &str,
+    ) -> Result<(), OidcError> {
+        if !matches!(assignment_type, "default" | "optional") {
+            return Err(OidcError::InvalidInput(
+                "assignment type must be default or optional".into(),
+            ));
+        }
+        conn.execute_params(
+            "INSERT INTO client_scopes(client_id, scope_id, assignment_type) VALUES($1,$2,$3) ON CONFLICT(client_id,scope_id) DO UPDATE SET assignment_type=EXCLUDED.assignment_type",
+            &[&client_id, &scope_id, &assignment_type],
+        ).await.map_err(mapper::pg_err)?;
+        Ok(())
+    }
+
+    pub async fn unassign_from_client(
+        &self,
+        conn: &mut Connection,
+        client_id: Uuid,
+        scope_id: Uuid,
+    ) -> Result<(), OidcError> {
+        conn.execute_params(
+            "DELETE FROM client_scopes WHERE client_id=$1 AND scope_id=$2",
+            &[&client_id, &scope_id],
+        )
+        .await
+        .map_err(mapper::pg_err)?;
+        Ok(())
+    }
+
+    pub async fn resolve_names_for_client(
+        &self,
+        conn: &mut Connection,
+        client_id: Uuid,
+        requested: &[String],
+        legacy_allowed: &[String],
+    ) -> Result<Vec<String>, OidcError> {
+        let assignments = self.list_by_client(conn, client_id).await?;
+        let mut allowed = legacy_allowed.to_vec();
+        allowed.extend(
+            assignments
+                .iter()
+                .filter(|item| item.enabled)
+                .map(|item| item.name.clone()),
+        );
+        for name in requested {
+            if !crate_scope_allowed(name, &allowed) {
+                return Err(OidcError::InvalidScope(name.clone()));
+            }
+        }
+        let mut resolved = requested.to_vec();
+        for item in assignments
+            .iter()
+            .filter(|item| item.enabled && item.assignment_type == "default")
+        {
+            if !resolved.contains(&item.name) {
+                resolved.push(item.name.clone());
+            }
+        }
+        Ok(resolved)
+    }
+
     /// Find a scope by its primary key.
     pub async fn find_by_id(
         &self,
@@ -137,4 +217,12 @@ impl ScopeRepo {
             enabled: mapper::bool_(row, 4)?,
         })
     }
+}
+
+fn crate_scope_allowed(requested: &str, allowed: &[String]) -> bool {
+    allowed.iter().any(|scope| {
+        scope == requested
+            || (requested.starts_with(scope)
+                && requested.as_bytes().get(scope.len()) == Some(&b':'))
+    })
 }
