@@ -16,6 +16,7 @@ A multi-tenant OpenID Connect / OAuth2 identity provider built in Rust with firs
 
 - **Client and Composite Roles** — Application-specific roles, nested role inheritance, group assignments, and structured token claims. See the [roles guide](docs/client-and-composite-roles.md).
 - **Client Scopes and Protocol Mappers** — Reusable default or optional scopes with configurable user, role, fixed, and audience claims. See the [client scopes guide](docs/client-scopes-and-protocol-mappers.md).
+- **Authorization Services**: Protected resources, contextual policies, permission tickets, entitlements, and revocable RPTs. See the [Authorization Services guide](docs/authorization-services.md).
 
 ## Request correlation and tracing
 

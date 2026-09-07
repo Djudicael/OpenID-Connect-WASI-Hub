@@ -35,6 +35,7 @@ import './pages/apikey-create-page.js';
 import './pages/apikey-detail-page.js';
 import './pages/scopes-page.js';
 import './pages/scope-detail-page.js';
+import './pages/authorization-services-page.js';
 import './pages/identity-providers-page.js';
 import './pages/password-policies-page.js';
 import './pages/security-page.js';

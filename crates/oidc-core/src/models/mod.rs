@@ -6,6 +6,7 @@ pub mod api_key;
 pub mod audit_event;
 pub mod auth_code;
 pub mod authorization_detail;
+pub mod authorization_service;
 pub mod client;
 pub mod device_code;
 pub mod email_verification_token;
@@ -38,6 +39,10 @@ pub use api_key::ApiKey;
 pub use audit_event::{ActorType, AuditEvent};
 pub use auth_code::{AuthCode, CodeChallengeMethod};
 pub use authorization_detail::{AuthorizationDetail, AuthorizationDetails};
+pub use authorization_service::{
+    AuthorizationContext, AuthorizationPermission, AuthorizationPolicy, PermissionTicket,
+    ProtectedResource, RptGrant,
+};
 pub use client::{Client, ClientType};
 pub use device_code::DeviceCode;
 pub use email_verification_token::EmailVerificationToken;

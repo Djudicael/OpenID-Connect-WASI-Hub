@@ -53,7 +53,8 @@ pub async fn discovery_handler(state: OidcState) -> Json<Value> {
             "authorization_code", "client_credentials", "refresh_token",
             "urn:ietf:params:oauth:grant-type:device_code",
             "urn:ietf:params:oauth:grant-type:jwt-bearer",
-            "urn:ietf:params:oauth:grant-type:token-exchange"
+            "urn:ietf:params:oauth:grant-type:token-exchange",
+            "urn:ietf:params:oauth:grant-type:uma-ticket"
         ]),
         "token_endpoint_auth_methods_supported" => json!([
             "client_secret_basic", "client_secret_post", "client_secret_jwt", "private_key_jwt"
@@ -136,7 +137,8 @@ pub async fn realm_discovery_handler(state: OidcState, realm: String) -> Json<Va
             "authorization_code", "client_credentials", "refresh_token",
             "urn:ietf:params:oauth:grant-type:device_code",
             "urn:ietf:params:oauth:grant-type:jwt-bearer",
-            "urn:ietf:params:oauth:grant-type:token-exchange"
+            "urn:ietf:params:oauth:grant-type:token-exchange",
+            "urn:ietf:params:oauth:grant-type:uma-ticket"
         ]),
         "token_endpoint_auth_methods_supported" => json!([
             "client_secret_basic", "client_secret_post", "client_secret_jwt", "private_key_jwt"

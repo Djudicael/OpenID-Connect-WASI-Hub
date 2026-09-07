@@ -16,6 +16,7 @@ const adminLinks = [
   { path: '/sessions', label: 'Sessions' },
   { path: '/api-keys', label: 'API Keys' },
   { path: '/scopes', label: 'Scopes' },
+  { path: '/authorization-services', label: 'Authorization Services' },
   { path: '/audit', label: 'Audit' },
   { path: '/maintenance', label: 'Maintenance' },
 ];

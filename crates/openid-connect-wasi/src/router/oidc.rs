@@ -184,6 +184,32 @@ pub fn router() -> Router<AppState> {
         .route("/realms/{realm}/protocol/openid-connect/logout", get(per_realm_logout_handler))
         .route("/realms/{realm}/.well-known/openid-configuration", get(per_realm_discovery_handler))
         .route("/realms/{realm}/protocol/openid-connect/certs", get(per_realm_certs_handler))
+        .route(
+            "/realms/{realm}/.well-known/uma2-configuration",
+            get(uma_discovery_handler),
+        )
+        .route(
+            "/realms/{realm}/authz/protection/resource_set",
+            get(uma_list_resources_handler).post(uma_create_resource_handler),
+        )
+        .route(
+            "/realms/{realm}/authz/protection/resource_set/{resource_id}",
+            get(uma_get_resource_handler)
+                .put(uma_update_resource_handler)
+                .delete(uma_delete_resource_handler),
+        )
+        .route(
+            "/realms/{realm}/authz/protection/permission",
+            post(uma_create_ticket_handler),
+        )
+        .route(
+            "/realms/{realm}/authz/entitlement/{client_id}",
+            post(uma_entitlement_handler),
+        )
+        .route(
+            "/realms/{realm}/authz/protection/permission/evaluate/{client_id}",
+            post(uma_evaluate_handler),
+        )
         .route("/realms/{realm}/login", get(per_realm_login_page_handler))
         .route("/realms/{realm}/login", post(per_realm_login_handler))
         .route("/realms/{realm}/organization/identity-provider", get(|State(state): State<AppState>, Path(realm): Path<String>, Query(query): Query<oidc_oidc::endpoints::organizations::OrganizationIdentityProviderQuery>| async move {
@@ -197,6 +223,221 @@ pub fn router() -> Router<AppState> {
         .route("/realms/{realm}/protocol/openid-connect/social/{provider}", get(per_realm_social_login_initiate_handler))
         .route("/realms/{realm}/protocol/openid-connect/social/{provider}/callback", get(per_realm_social_login_callback_handler))
         .route("/oidc/error", get(error_handler))
+}
+
+async fn uma_server_from_token(
+    state: &oidc_oidc::state::OidcState,
+    headers: &axum::http::HeaderMap,
+) -> Result<String, oidc_core::OidcError> {
+    let token = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .ok_or_else(|| {
+            oidc_core::OidcError::AuthenticationFailed("Bearer token required".into())
+        })?;
+    Ok(state
+        .verify_access_token_with_claims_any_issuer(token)
+        .await?
+        .sub)
+}
+
+fn uma_result(
+    result: Result<Json<serde_json::Value>, oidc_core::OidcError>,
+) -> axum::response::Response {
+    match result {
+        Ok(value) => value.into_response(),
+        Err(error) => oidc_oidc::errors::from_oidc_error(&error).into_response(),
+    }
+}
+
+async fn uma_discovery_handler(
+    State(state): State<AppState>,
+    Path(realm): Path<String>,
+) -> Json<serde_json::Value> {
+    let issuer = format!(
+        "{}/realms/{}",
+        state.config.issuer.trim_end_matches('/'),
+        realm
+    );
+    Json(serde_json::json!({
+        "issuer": issuer,
+        "grant_types_supported": [oidc_oidc::endpoints::authorization_services::UMA_GRANT_TYPE],
+        "response_types_supported": ["token"],
+        "token_endpoint": format!("{issuer}/protocol/openid-connect/token"),
+        "resource_registration_endpoint": format!("{issuer}/authz/protection/resource_set"),
+        "permission_endpoint": format!("{issuer}/authz/protection/permission"),
+        "uma_profiles_supported": ["http://docs.kantarainitiative.org/uma/profiles/uma-token-bearer-1.0"]
+    }))
+}
+
+async fn uma_create_resource_handler(
+    State(state): State<AppState>,
+    Path(realm): Path<String>,
+    headers: axum::http::HeaderMap,
+    Json(req): Json<oidc_oidc::endpoints::authorization_services::ResourceRegistrationRequest>,
+) -> axum::response::Response {
+    let oidc_state = state
+        .oidc_state()
+        .with_issuer(format!("{}/realms/{}", state.config.issuer, realm));
+    let server = match uma_server_from_token(&oidc_state, &headers).await {
+        Ok(value) => value,
+        Err(error) => return uma_result(Err(error)),
+    };
+    uma_result(
+        oidc_oidc::endpoints::authorization_services::register_resource(
+            oidc_state, realm, server, headers, req,
+        )
+        .await,
+    )
+}
+
+async fn uma_list_resources_handler(
+    State(state): State<AppState>,
+    Path(realm): Path<String>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    let oidc_state = state
+        .oidc_state()
+        .with_issuer(format!("{}/realms/{}", state.config.issuer, realm));
+    let server = match uma_server_from_token(&oidc_state, &headers).await {
+        Ok(value) => value,
+        Err(error) => return uma_result(Err(error)),
+    };
+    uma_result(
+        oidc_oidc::endpoints::authorization_services::list_registered_resources(
+            oidc_state, realm, server, headers,
+        )
+        .await,
+    )
+}
+
+async fn uma_get_resource_handler(
+    State(state): State<AppState>,
+    Path((realm, resource_id)): Path<(String, uuid::Uuid)>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    let oidc_state = state
+        .oidc_state()
+        .with_issuer(format!("{}/realms/{}", state.config.issuer, realm));
+    let server = match uma_server_from_token(&oidc_state, &headers).await {
+        Ok(value) => value,
+        Err(error) => return uma_result(Err(error)),
+    };
+    uma_result(
+        oidc_oidc::endpoints::authorization_services::get_registered_resource(
+            oidc_state,
+            realm,
+            server,
+            resource_id,
+            headers,
+        )
+        .await,
+    )
+}
+
+async fn uma_update_resource_handler(
+    State(state): State<AppState>,
+    Path((realm, resource_id)): Path<(String, uuid::Uuid)>,
+    headers: axum::http::HeaderMap,
+    Json(req): Json<oidc_oidc::endpoints::authorization_services::ResourceRegistrationRequest>,
+) -> axum::response::Response {
+    let oidc_state = state
+        .oidc_state()
+        .with_issuer(format!("{}/realms/{}", state.config.issuer, realm));
+    let server = match uma_server_from_token(&oidc_state, &headers).await {
+        Ok(value) => value,
+        Err(error) => return uma_result(Err(error)),
+    };
+    uma_result(
+        oidc_oidc::endpoints::authorization_services::update_registered_resource(
+            oidc_state,
+            realm,
+            server,
+            resource_id,
+            headers,
+            req,
+        )
+        .await,
+    )
+}
+
+async fn uma_delete_resource_handler(
+    State(state): State<AppState>,
+    Path((realm, resource_id)): Path<(String, uuid::Uuid)>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    let oidc_state = state
+        .oidc_state()
+        .with_issuer(format!("{}/realms/{}", state.config.issuer, realm));
+    let server = match uma_server_from_token(&oidc_state, &headers).await {
+        Ok(value) => value,
+        Err(error) => return uma_result(Err(error)),
+    };
+    uma_result(
+        oidc_oidc::endpoints::authorization_services::delete_registered_resource(
+            oidc_state,
+            realm,
+            server,
+            resource_id,
+            headers,
+        )
+        .await,
+    )
+}
+
+async fn uma_create_ticket_handler(
+    State(state): State<AppState>,
+    Path(realm): Path<String>,
+    headers: axum::http::HeaderMap,
+    Json(req): Json<oidc_oidc::endpoints::authorization_services::PermissionTicketRequest>,
+) -> axum::response::Response {
+    let oidc_state = state
+        .oidc_state()
+        .with_issuer(format!("{}/realms/{}", state.config.issuer, realm));
+    let server = match uma_server_from_token(&oidc_state, &headers).await {
+        Ok(value) => value,
+        Err(error) => return uma_result(Err(error)),
+    };
+    uma_result(
+        oidc_oidc::endpoints::authorization_services::create_permission_ticket(
+            oidc_state, realm, server, headers, req,
+        )
+        .await,
+    )
+}
+
+async fn uma_entitlement_handler(
+    State(state): State<AppState>,
+    Path((realm, client_id)): Path<(String, String)>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    let oidc_state = state
+        .oidc_state()
+        .with_issuer(format!("{}/realms/{}", state.config.issuer, realm));
+    uma_result(
+        oidc_oidc::endpoints::authorization_services::entitlement(
+            oidc_state, realm, client_id, headers,
+        )
+        .await,
+    )
+}
+
+async fn uma_evaluate_handler(
+    State(state): State<AppState>,
+    Path((realm, client_id)): Path<(String, String)>,
+    headers: axum::http::HeaderMap,
+    Json(req): Json<oidc_oidc::endpoints::authorization_services::DecisionRequest>,
+) -> axum::response::Response {
+    let oidc_state = state
+        .oidc_state()
+        .with_issuer(format!("{}/realms/{}", state.config.issuer, realm));
+    uma_result(
+        oidc_oidc::endpoints::authorization_services::evaluate_rpt(
+            oidc_state, realm, client_id, headers, req,
+        )
+        .await,
+    )
 }
 
 async fn account_profile(

@@ -126,6 +126,12 @@ fn route_is_authorized(method: &Method, path: &str, auth: &AdminAuth) -> bool {
     let read = method == Method::GET || method == Method::HEAD;
     let permission = if path == "/api/stats" {
         "stats:read"
+    } else if path == "/api/authorization" || path.starts_with("/api/authorization/") {
+        if read {
+            "authorization:read"
+        } else {
+            "authorization:write"
+        }
     } else if path.starts_with("/api/users/") && path.ends_with("/impersonate") {
         "users:impersonate"
     } else if path.starts_with("/api/users/") && path.contains("/roles") {

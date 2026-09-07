@@ -9,6 +9,7 @@ use oidc_core::models::ClientType;
 
 use oidc_repository::repositories::client_repo::ClientRepo;
 
+use crate::endpoints::authorization_services::{self, UMA_GRANT_TYPE};
 use crate::flows::authorization_code::AuthorizationCodeFlow;
 use crate::flows::client_credentials::ClientCredentialsFlow;
 use crate::flows::device_code::DeviceCodeFlow;
@@ -205,6 +206,10 @@ pub async fn token_handler_with_endpoint_uri(
                 dpop_jkt.as_deref(),
             )
             .await?
+        }
+        UMA_GRANT_TYPE => {
+            authorization_services::uma_ticket_grant(&state, &client, &params, dpop_jkt.as_deref())
+                .await?
         }
         _ => return Err(OidcError::UnsupportedGrantType),
     };

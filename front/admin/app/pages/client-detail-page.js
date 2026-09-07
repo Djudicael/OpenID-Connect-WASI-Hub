@@ -5,6 +5,7 @@ import { navigate } from '../core/router.js';
 import { showToast } from '../components/ui/toast.js';
 
 const GRANT_TYPES = [
+  { value: 'urn:ietf:params:oauth:grant-type:uma-ticket', label: 'UMA Permission Ticket', desc: 'Exchange permission tickets for RPT access tokens' },
   { value: 'authorization_code', label: 'Authorization Code', desc: 'Standard web app flow' },
   { value: 'refresh_token', label: 'Refresh Token', desc: 'Long-lived sessions' },
   { value: 'client_credentials', label: 'Client Credentials', desc: 'Server-to-server' },

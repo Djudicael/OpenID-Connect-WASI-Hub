@@ -1,0 +1,18 @@
+import { get, post, put, del } from '../core/http.js';
+const query = (serverId) => `?resource_server_id=${encodeURIComponent(serverId)}`;
+export const listResources = (id, signal) => get(`/api/authorization/resources${query(id)}`, signal);
+export const createResource = (body) => post('/api/authorization/resources', body);
+export const updateResource = (id, body) => put(`/api/authorization/resources/${id}`, body);
+export const deleteResource = (id) => del(`/api/authorization/resources/${id}`);
+export const listPolicies = (id, signal) => get(`/api/authorization/policies${query(id)}`, signal);
+export const createPolicy = (body) => post('/api/authorization/policies', body);
+export const updatePolicy = (id, body) => put(`/api/authorization/policies/${id}`, body);
+export const deletePolicy = (id) => del(`/api/authorization/policies/${id}`);
+export const listPermissions = (id, signal) => get(`/api/authorization/permissions${query(id)}`, signal);
+export const createPermission = (body) => post('/api/authorization/permissions', body);
+export const updatePermission = (id, body) => put(`/api/authorization/permissions/${id}`, body);
+export const deletePermission = (id) => del(`/api/authorization/permissions/${id}`);
+export const listTickets = (id, signal) => get(`/api/authorization/tickets${query(id)}`, signal);
+export const revokeTicket = (id) => del(`/api/authorization/tickets/${id}`);
+export const listRpts = (id, signal) => get(`/api/authorization/rpts${query(id)}`, signal);
+export const revokeRpt = (id) => del(`/api/authorization/rpts/${id}`);

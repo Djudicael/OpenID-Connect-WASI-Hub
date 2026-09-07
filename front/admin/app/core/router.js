@@ -25,6 +25,7 @@ const routes = [
   { path: '/api-keys/:id', component: 'apikey-detail-page' },
   { path: '/scopes', component: 'scopes-page' },
   { path: '/scopes/:id', component: 'scope-detail-page' },
+  { path: '/authorization-services', component: 'authorization-services-page' },
   { path: '/identity-providers', component: 'identity-providers-page' },
   { path: '/password-policies', component: 'password-policies-page' },
   { path: '/security', component: 'security-page', account: true },

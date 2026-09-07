@@ -13,6 +13,7 @@ use crate::middleware::admin_auth::AdminAuth;
 use crate::state::AppState;
 
 pub mod audit;
+pub mod authorization_services;
 pub mod clients;
 pub mod organizations;
 pub mod realms;
@@ -43,6 +44,51 @@ pub fn conflict() -> Response {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/stats", get(audit::stats_handler))
+        .route(
+            "/api/authorization/resources",
+            get(authorization_services::list_resources)
+                .post(authorization_services::create_resource),
+        )
+        .route(
+            "/api/authorization/resources/{id}",
+            put(authorization_services::update_resource)
+                .delete(authorization_services::delete_resource),
+        )
+        .route(
+            "/api/authorization/policies",
+            get(authorization_services::list_policies).post(authorization_services::create_policy),
+        )
+        .route(
+            "/api/authorization/policies/{id}",
+            put(authorization_services::update_policy)
+                .delete(authorization_services::delete_policy),
+        )
+        .route(
+            "/api/authorization/permissions",
+            get(authorization_services::list_permissions)
+                .post(authorization_services::create_permission),
+        )
+        .route(
+            "/api/authorization/permissions/{id}",
+            put(authorization_services::update_permission)
+                .delete(authorization_services::delete_permission),
+        )
+        .route(
+            "/api/authorization/tickets",
+            get(authorization_services::list_tickets),
+        )
+        .route(
+            "/api/authorization/tickets/{id}",
+            delete(authorization_services::revoke_ticket),
+        )
+        .route(
+            "/api/authorization/rpts",
+            get(authorization_services::list_rpts),
+        )
+        .route(
+            "/api/authorization/rpts/{id}",
+            delete(authorization_services::revoke_rpt),
+        )
         .route("/api/users", get(users::list))
         .route("/api/users", post(users::create))
         .route("/api/users/{id}", get(users::get))

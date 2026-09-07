@@ -937,6 +937,265 @@ async fn test_offline_access_requires_code_and_interactive_consent() {
 }
 
 #[tokio::test]
+async fn test_uma_ticket_rpt_entitlement_enforcement_and_revocation() {
+    use oidc_core::models::{AuthorizationPermission, AuthorizationPolicy};
+    use oidc_repository::repositories::authorization_service_repo::AuthorizationServiceRepo;
+
+    let app = TestApp::new().await;
+    let client_id = "documents-api";
+    let client_secret = "DocumentsApiSecret123!";
+    let client_db_id = app
+        .seed_client_with_secret(client_id, client_secret, &[])
+        .await;
+    let mut conn = app.db_conn().await;
+    let grants = json!([
+        "client_credentials",
+        "urn:ietf:params:oauth:grant-type:uma-ticket"
+    ]);
+    conn.execute_params(
+        "UPDATE clients SET allowed_grant_types=$1 WHERE id=$2",
+        &[&grants, &client_db_id],
+    )
+    .await
+    .unwrap();
+
+    let user_id: uuid::Uuid = conn
+        .query_one_params(
+            "SELECT id FROM users WHERE email=$1",
+            &[&fixtures::TEST_USER_EMAIL],
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .get(0)
+        .unwrap();
+    let user_token = login(&app).await["access_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let pat_response = app
+        .client()
+        .post(format!("{}/oidc/token", app.url()))
+        .form(&[
+            ("grant_type", "client_credentials"),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(pat_response.status(), StatusCode::OK);
+    let pat = pat_response.json::<Value>().await.unwrap()["access_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let registered = app.client()
+        .post(format!("{}/realms/master/authz/protection/resource_set", app.url()))
+        .bearer_auth(&pat)
+        .json(&json!({"name":"quarterly-report","uris":["/reports/quarterly"],"resource_scopes":["view","edit"],"attributes":{"classification":"internal"}}))
+        .send().await.unwrap();
+    assert_eq!(registered.status(), StatusCode::OK);
+    let resource_id: uuid::Uuid = registered.json::<Value>().await.unwrap()["_id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+
+    let now = chrono::Utc::now();
+    let policy = AuthorizationPolicy {
+        id: uuid::Uuid::now_v7(),
+        realm_id: app.master_realm_id(),
+        resource_server_id: client_db_id,
+        name: "named-user".into(),
+        description: None,
+        policy_type: "user".into(),
+        logic: "positive".into(),
+        config: json!({"users":[user_id]}),
+        created_at: now,
+        updated_at: now,
+    };
+    AuthorizationServiceRepo
+        .create_policy(&mut conn, &policy)
+        .await
+        .unwrap();
+    let permission = AuthorizationPermission {
+        id: uuid::Uuid::now_v7(),
+        realm_id: app.master_realm_id(),
+        resource_server_id: client_db_id,
+        name: "view-report".into(),
+        description: None,
+        resources: vec![resource_id],
+        scopes: vec!["view".into()],
+        policies: vec![policy.id],
+        decision_strategy: "unanimous".into(),
+        created_at: now,
+        updated_at: now,
+    };
+    AuthorizationServiceRepo
+        .create_permission(&mut conn, &permission)
+        .await
+        .unwrap();
+
+    let ticket_response = app
+        .client()
+        .post(format!(
+            "{}/realms/master/authz/protection/permission",
+            app.url()
+        ))
+        .bearer_auth(&pat)
+        .json(&json!({"resource_id":resource_id,"resource_scopes":["view"],"requester":user_id}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ticket_response.status(), StatusCode::OK);
+    let ticket = ticket_response.json::<Value>().await.unwrap()["ticket"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let rpt_response = app
+        .client()
+        .post(format!(
+            "{}/realms/master/protocol/openid-connect/token",
+            app.url()
+        ))
+        .form(&[
+            ("grant_type", "urn:ietf:params:oauth:grant-type:uma-ticket"),
+            ("ticket", ticket.as_str()),
+            ("claim_token", user_token.as_str()),
+            ("claim_token_format", "urn:ietf:params:oauth:token-type:jwt"),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rpt_response.status(), StatusCode::OK);
+    let rpt_body = rpt_response.json::<Value>().await.unwrap();
+    let initial_rpt = rpt_body["access_token"].as_str().unwrap().to_string();
+    let rpt_claims = decode_jwt_payload(&initial_rpt);
+    assert_eq!(
+        rpt_claims["authorization"]["permissions"][0]["rsid"],
+        resource_id.to_string()
+    );
+    assert_eq!(
+        rpt_claims["authorization"]["permissions"][0]["scopes"],
+        json!(["view"])
+    );
+
+    let permission_parameter = format!("{resource_id}#view");
+    let upgraded_response = app
+        .client()
+        .post(format!(
+            "{}/realms/master/protocol/openid-connect/token",
+            app.url()
+        ))
+        .form(&[
+            ("grant_type", "urn:ietf:params:oauth:grant-type:uma-ticket"),
+            ("audience", client_id),
+            ("permission", permission_parameter.as_str()),
+            ("rpt", initial_rpt.as_str()),
+            ("claim_token", user_token.as_str()),
+            ("claim_token_format", "urn:ietf:params:oauth:token-type:jwt"),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(upgraded_response.status(), StatusCode::OK);
+    let upgraded_body = upgraded_response.json::<Value>().await.unwrap();
+    assert_eq!(upgraded_body["upgraded"], true);
+    let rpt = upgraded_body["access_token"].as_str().unwrap().to_string();
+
+    let old_introspection = app
+        .client()
+        .post(format!("{}/oidc/introspect", app.url()))
+        .form(&[
+            ("token", initial_rpt.as_str()),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(old_introspection.status(), StatusCode::OK);
+    assert_eq!(
+        old_introspection.json::<Value>().await.unwrap()["active"],
+        false
+    );
+
+    let entitlement = app
+        .client()
+        .post(format!(
+            "{}/realms/master/authz/entitlement/{client_id}",
+            app.url()
+        ))
+        .bearer_auth(&user_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(entitlement.status(), StatusCode::OK);
+    assert!(entitlement.json::<Value>().await.unwrap()["access_token"].is_string());
+
+    let decision = app
+        .client()
+        .post(format!(
+            "{}/realms/master/authz/protection/permission/evaluate/{client_id}",
+            app.url()
+        ))
+        .bearer_auth(&rpt)
+        .json(&json!({"resource_id":resource_id,"scopes":["view"]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(decision.status(), StatusCode::OK);
+    assert_eq!(decision.json::<Value>().await.unwrap()["result"], true);
+
+    let introspection = app
+        .client()
+        .post(format!("{}/oidc/introspect", app.url()))
+        .form(&[
+            ("token", rpt.as_str()),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(introspection.status(), StatusCode::OK);
+    assert_eq!(introspection.json::<Value>().await.unwrap()["active"], true);
+
+    let revoked = app
+        .client()
+        .post(format!("{}/oidc/revoke", app.url()))
+        .form(&[
+            ("token", rpt.as_str()),
+            ("token_type_hint", "access_token"),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(revoked.status(), StatusCode::OK);
+    let denied = app
+        .client()
+        .post(format!(
+            "{}/realms/master/authz/protection/permission/evaluate/{client_id}",
+            app.url()
+        ))
+        .bearer_auth(&rpt)
+        .json(&json!({"resource_id":resource_id,"scopes":["view"]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn test_refresh_token_rotation() {
     let app = TestApp::new().await;
 

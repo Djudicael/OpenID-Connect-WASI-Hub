@@ -4,6 +4,7 @@ use axum::http::HeaderMap;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
+use oidc_repository::repositories::authorization_service_repo::AuthorizationServiceRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::with_transaction;
 
@@ -48,6 +49,23 @@ pub async fn revoke_handler(
         .await?;
 
         let token_hash = oidc_core::utils::sha2_256_hex(token);
+
+        // RPTs are JWTs backed by a durable grant and can be revoked by the
+        // requesting client or the protected resource server.
+        if let Ok(claims) = state
+            .verify_access_token_with_claims_any_issuer(token)
+            .await
+            && let Some(rpt_id) = claims.custom_claims.get("rpt_id").and_then(Value::as_str)
+            && let Ok(rpt_id) = uuid::Uuid::parse_str(rpt_id)
+            && let Ok(Some(grant)) = AuthorizationServiceRepo
+                .find_active_rpt(&mut conn, rpt_id)
+                .await
+        {
+            if grant.client_id == client.id || grant.resource_server_id == client.id {
+                let _ = AuthorizationServiceRepo.revoke_rpt(&mut conn, rpt_id).await;
+            }
+            return Ok(Json(json!({})));
+        }
 
         // Try refresh token first if hinted, otherwise try access token
         if token_type_hint == Some("refresh_token")

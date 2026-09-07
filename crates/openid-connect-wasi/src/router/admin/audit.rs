@@ -12,6 +12,7 @@ use oidc_core::utils::generate_uuid_v7;
 use oidc_repository::repositories::account_recovery_token_repo::AccountRecoveryTokenRepo;
 use oidc_repository::repositories::audit_event_repo::AuditEventRepo;
 use oidc_repository::repositories::auth_code_repo::AuthCodeRepo;
+use oidc_repository::repositories::authorization_service_repo::AuthorizationServiceRepo;
 use oidc_repository::repositories::client_repo::ClientRepo;
 use oidc_repository::repositories::device_code_repo::DeviceCodeRepo;
 use oidc_repository::repositories::email_verification_token_repo::EmailVerificationTokenRepo;
@@ -1836,6 +1837,13 @@ pub async fn cleanup_expired(State(state): State<AppState>, auth: AdminAuth) -> 
             tracing::warn!("failed to cleanup expired PARs: {e}");
             0
         });
+    let authorization_grants_deleted = AuthorizationServiceRepo
+        .cleanup_expired(&mut conn)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("failed to cleanup expired authorization grants: {e}");
+            0
+        });
     let audit = oidc_core::models::AuditEvent {
         id: generate_uuid_v7(),
         realm_id: None,
@@ -1856,6 +1864,7 @@ pub async fn cleanup_expired(State(state): State<AppState>, auth: AdminAuth) -> 
             "device_codes_deleted": device_codes_deleted,
             "auth_codes_deleted": auth_codes_deleted,
             "par_deleted": par_deleted,
+            "authorization_grants_deleted": authorization_grants_deleted,
         }),
         ip_address: None,
         user_agent: None,
@@ -1872,6 +1881,7 @@ pub async fn cleanup_expired(State(state): State<AppState>, auth: AdminAuth) -> 
         "device_codes_deleted": device_codes_deleted,
         "auth_codes_deleted": auth_codes_deleted,
         "par_deleted": par_deleted,
+        "authorization_grants_deleted": authorization_grants_deleted,
     }))
     .into_response()
 }
