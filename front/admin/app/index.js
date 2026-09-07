@@ -15,6 +15,7 @@ import './components/ui/pagination.js';
 import './components/ui/session-timer.js';
 
 import './pages/login-page.js';
+import './pages/account-page.js';
 import './pages/dashboard-page.js';
 import './pages/users-page.js';
 import './pages/user-detail-page.js';

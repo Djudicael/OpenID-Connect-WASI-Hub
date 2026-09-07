@@ -4,6 +4,7 @@ import { authService } from '../auth/auth-service.js';
 const routes = [
   { path: '/login', component: 'login-page', public: true },
   { path: '/callback', component: 'login-page', public: true },
+  { path: '/account', component: 'account-page', account: true },
   { path: '/admin', component: 'dashboard-page' },
   { path: '/', component: 'dashboard-page' },
   { path: '/users', component: 'users-page' },
@@ -25,7 +26,7 @@ const routes = [
   { path: '/scopes', component: 'scopes-page' },
   { path: '/identity-providers', component: 'identity-providers-page' },
   { path: '/password-policies', component: 'password-policies-page' },
-  { path: '/security', component: 'security-page' },
+  { path: '/security', component: 'security-page', account: true },
   { path: '/maintenance', component: 'maintenance-page' },
   { path: '/audit', component: 'audit-page' },
 ];
@@ -91,9 +92,13 @@ class RouterOutlet extends HTMLElement {
         return;
       }
 
-      if (!authService.hasValidSession() || !authService.hasAdminAccess()) {
+      if (!authService.hasValidSession()) {
         authService.clearSession();
         this._navigate('/login');
+        return;
+      }
+      if (!route.account && !authService.hasAdminAccess()) {
+        this._navigate('/account');
         return;
       }
     }
@@ -103,9 +108,8 @@ class RouterOutlet extends HTMLElement {
       && route.path === '/login'
       && authService.isAuthenticated()
       && authService.hasValidSession()
-      && authService.hasAdminAccess()
     ) {
-      this._navigate('/');
+      this._navigate(authService.hasAdminAccess() ? '/' : '/account');
       return;
     }
 

@@ -27,6 +27,7 @@ pub mod session;
 pub mod signing_key;
 pub mod social_login_state;
 pub mod user;
+pub mod user_consent;
 
 pub use account_recovery_token::AccountRecoveryToken;
 pub use address::AddressClaim;
@@ -59,3 +60,4 @@ pub use session::Session;
 pub use signing_key::{Algorithm, SigningKey};
 pub use social_login_state::SocialLoginState;
 pub use user::User;
+pub use user_consent::UserConsent;

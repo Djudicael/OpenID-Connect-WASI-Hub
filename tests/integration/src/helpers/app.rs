@@ -210,6 +210,7 @@ impl TestApp {
         });
 
         let mut request = self.client.get(url);
+        let mut session_cookie = None;
         if let Some(email) = login_hint {
             let login = self
                 .client
@@ -235,10 +236,47 @@ impl TestApp {
                 .next()
                 .expect("session cookie should have a value")
                 .to_string();
-            request = request.header(reqwest::header::COOKIE, cookie);
+            request = request.header(reqwest::header::COOKIE, &cookie);
+            session_cookie = Some(cookie);
         }
 
-        request.send().await
+        let response = request.send().await?;
+        if response.status() != reqwest::StatusCode::OK || session_cookie.is_none() {
+            return Ok(response);
+        }
+
+        // Most authorization tests exercise the complete successful flow. If
+        // the server asks for first-time consent, act as the browser user and
+        // approve the displayed grant before returning the final response.
+        let body = response.text().await?;
+        let marker = "name=\"consent_token\" value=\"";
+        let Some(start) = body.find(marker).map(|index| index + marker.len()) else {
+            return self
+                .client
+                .get(url)
+                .header(reqwest::header::COOKIE, session_cookie.unwrap())
+                .send()
+                .await;
+        };
+        let Some(end) = body[start..].find('"').map(|index| start + index) else {
+            return self
+                .client
+                .get(url)
+                .header(reqwest::header::COOKIE, session_cookie.unwrap())
+                .send()
+                .await;
+        };
+        let mut approval_url =
+            url::Url::parse(url).expect("authorization test URL should be valid");
+        approval_url
+            .query_pairs_mut()
+            .append_pair("consent_action", "allow")
+            .append_pair("consent_token", &body[start..end]);
+        self.client
+            .get(approval_url)
+            .header(reqwest::header::COOKIE, session_cookie.unwrap())
+            .send()
+            .await
     }
 
     /// The master realm ID seeded during setup.

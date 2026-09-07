@@ -154,6 +154,35 @@ impl SessionRepo {
         Ok(())
     }
 
+    /// Revoke every active session for one user and client application.
+    pub async fn revoke_by_user_and_client(
+        &self,
+        conn: &mut Connection,
+        user_id: Uuid,
+        client_id: Uuid,
+    ) -> Result<(), OidcError> {
+        let sql = "UPDATE sessions SET revoked = TRUE WHERE user_id = $1 AND client_id = $2 AND NOT revoked";
+        conn.execute_params(sql, &[&user_id, &client_id])
+            .await
+            .map_err(mapper::pg_err)?;
+        Ok(())
+    }
+
+    /// Revoke all active sessions except the session carrying the current token.
+    pub async fn revoke_other_user_sessions(
+        &self,
+        conn: &mut Connection,
+        user_id: Uuid,
+        current_session_id: Uuid,
+    ) -> Result<(), OidcError> {
+        let sql =
+            "UPDATE sessions SET revoked = TRUE WHERE user_id = $1 AND id <> $2 AND NOT revoked";
+        conn.execute_params(sql, &[&user_id, &current_session_id])
+            .await
+            .map_err(mapper::pg_err)?;
+        Ok(())
+    }
+
     /// Find all active (non-revoked, non-expired) sessions for a user.
     /// Used for front-channel and back-channel logout notifications.
     pub async fn find_active_by_user_id(

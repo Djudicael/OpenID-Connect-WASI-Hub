@@ -4,7 +4,7 @@ use axum::Json;
 use axum::Router;
 use axum::extract::{Form, Path, Query, State};
 use axum::response::{Html, IntoResponse};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use std::collections::HashMap;
 
 use crate::middleware::admin_auth::AdminAuth;
@@ -96,6 +96,14 @@ pub fn router() -> Router<AppState> {
         .route("/oidc/account/mfa/recovery-codes", post(|State(state): State<AppState>, headers: axum::http::HeaderMap| async move {
             match oidc_oidc::endpoints::mfa::recovery_regenerate_handler(state.oidc_state(), headers).await { Ok(v)=>v.into_response(), Err(e)=>oidc_oidc::errors::from_oidc_error(&e).into_response() }
         }))
+        .route("/oidc/account", get(account_profile).put(account_update_profile))
+        .route("/oidc/account/password", put(account_change_password))
+        .route("/oidc/account/sessions", get(account_sessions))
+        .route("/oidc/account/sessions/{id}", delete(account_revoke_session))
+        .route("/oidc/account/linked-identities", get(account_linked_identities))
+        .route("/oidc/account/linked-identities/{id}", delete(account_unlink_identity))
+        .route("/oidc/account/applications", get(account_applications))
+        .route("/oidc/account/applications/{id}", delete(account_revoke_application))
         // Password reset
         .route("/oidc/password-reset/request", post(|State(state): State<AppState>, Json(req): Json<oidc_oidc::endpoints::password_reset::PasswordResetRequestRequest>| async move {
             match oidc_oidc::endpoints::password_reset::password_reset_request_handler(State(state.oidc_state()), Json(req)).await {
@@ -174,6 +182,118 @@ pub fn router() -> Router<AppState> {
         .route("/realms/{realm}/protocol/openid-connect/social/{provider}", get(per_realm_social_login_initiate_handler))
         .route("/realms/{realm}/protocol/openid-connect/social/{provider}/callback", get(per_realm_social_login_callback_handler))
         .route("/oidc/error", get(error_handler))
+}
+
+async fn account_profile(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    account_result(
+        oidc_oidc::endpoints::account::profile_handler(state.oidc_state(), headers).await,
+    )
+}
+
+async fn account_update_profile(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(req): Json<oidc_oidc::endpoints::account::UpdateProfileRequest>,
+) -> axum::response::Response {
+    account_result(
+        oidc_oidc::endpoints::account::update_profile_handler(state.oidc_state(), headers, req)
+            .await,
+    )
+}
+
+async fn account_change_password(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(req): Json<oidc_oidc::endpoints::account::ChangePasswordRequest>,
+) -> axum::response::Response {
+    account_result(
+        oidc_oidc::endpoints::account::change_password_handler(state.oidc_state(), headers, req)
+            .await,
+    )
+}
+
+async fn account_sessions(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    account_result(
+        oidc_oidc::endpoints::account::sessions_handler(state.oidc_state(), headers).await,
+    )
+}
+
+async fn account_revoke_session(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<uuid::Uuid>,
+) -> axum::response::Response {
+    account_result(
+        oidc_oidc::endpoints::account::revoke_session_handler(state.oidc_state(), headers, id)
+            .await,
+    )
+}
+
+async fn account_linked_identities(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    account_result(
+        oidc_oidc::endpoints::account::linked_identities_handler(state.oidc_state(), headers).await,
+    )
+}
+
+async fn account_unlink_identity(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<uuid::Uuid>,
+) -> axum::response::Response {
+    account_result(
+        oidc_oidc::endpoints::account::unlink_identity_handler(state.oidc_state(), headers, id)
+            .await,
+    )
+}
+
+async fn account_applications(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> axum::response::Response {
+    account_result(
+        oidc_oidc::endpoints::account::applications_handler(state.oidc_state(), headers).await,
+    )
+}
+
+async fn account_revoke_application(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<uuid::Uuid>,
+) -> axum::response::Response {
+    account_result(
+        oidc_oidc::endpoints::account::revoke_application_handler(state.oidc_state(), headers, id)
+            .await,
+    )
+}
+
+fn account_result(
+    result: Result<Json<serde_json::Value>, oidc_core::OidcError>,
+) -> axum::response::Response {
+    match result {
+        Ok(value) => value.into_response(),
+        Err(
+            oidc_core::OidcError::AuthenticationFailed(_)
+            | oidc_core::OidcError::InvalidTokenSignature
+            | oidc_core::OidcError::TokenExpired,
+        ) => (
+            axum::http::StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "error": "unauthorized",
+                "error_description": "A valid account access token is required"
+            })),
+        )
+            .into_response(),
+        Err(error) => oidc_oidc::errors::from_oidc_error(&error).into_response(),
+    }
 }
 
 /// Per-realm token endpoint (Keycloak-compatible).

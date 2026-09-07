@@ -99,26 +99,25 @@ class AuthService {
   }
 
   hasAdminAccess() {
-    const accessClaims = this.getAccessTokenClaims();
-    const idClaims = this.getIdTokenClaims();
+    return this.tokens?.administration_access === true;
+  }
 
-    const scopes = new Set(
-      String(accessClaims?.scope || '')
-        .split(/\s+/)
-        .filter(Boolean)
-    );
-    if (scopes.has('admin')) {
-      return true;
-    }
+  setAdministrationAccess(value) {
+    if (!this.tokens) return;
+    this.tokens.administration_access = value === true;
+    this._saveTokens();
+  }
 
-    const roleLists = [
-      Array.isArray(accessClaims?.roles) ? accessClaims.roles : [],
-      Array.isArray(idClaims?.roles) ? idClaims.roles : [],
-      Array.isArray(accessClaims?.realm_access?.roles) ? accessClaims.realm_access.roles : [],
-      Array.isArray(idClaims?.realm_access?.roles) ? idClaims.realm_access.roles : [],
-    ];
-
-    return roleLists.some((roles) => roles.includes('admin'));
+  async _loadAdministrationAccess(token = this.tokens?.access_token) {
+    if (!token) return false;
+    const response = await fetch('/oidc/account', {
+      headers: { Authorization: `Bearer ${token}` },
+      credentials: 'same-origin',
+    });
+    if (!response.ok) throw new Error('Could not load account access');
+    const account = await response.json();
+    this.setAdministrationAccess(account.administration_access);
+    return account.administration_access === true;
   }
 
   async getAccessToken() {
@@ -156,11 +155,7 @@ class AuthService {
       expires_at: Date.now() + data.expires_in * 1000,
     };
     this._saveTokens();
-
-    if (!this.hasAdminAccess()) {
-      this.clearSession();
-      throw new Error('Account does not have admin access');
-    }
+    await this._loadAdministrationAccess(data.access_token);
 
     return data;
   }
@@ -227,11 +222,7 @@ class AuthService {
     this.tokens = await response.json();
     this.tokens.expires_at = Date.now() + this.tokens.expires_in * 1000;
     this._saveTokens();
-
-    if (!this.hasAdminAccess()) {
-      this.clearSession();
-      throw new Error('OIDC login did not grant admin access');
-    }
+    await this._loadAdministrationAccess(this.tokens.access_token);
 
     sessionStorage.removeItem(STATE_KEY);
     sessionStorage.removeItem(VERIFIER_KEY);
@@ -257,14 +248,12 @@ class AuthService {
       throw new Error('Token refresh failed');
     }
 
+    const administrationAccess = this.tokens.administration_access === true;
     this.tokens = await response.json();
     this.tokens.expires_at = Date.now() + this.tokens.expires_in * 1000;
+    this.tokens.administration_access = administrationAccess;
     this._saveTokens();
-
-    if (!this.hasAdminAccess()) {
-      this.clearSession();
-      throw new Error('Refreshed session no longer has admin access');
-    }
+    await this._loadAdministrationAccess(this.tokens.access_token);
   }
 
   logout() {

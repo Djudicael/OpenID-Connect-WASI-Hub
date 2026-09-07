@@ -6,7 +6,7 @@ Multi-factor authentication adds a second check after the password. You can use 
 
 ## Set up an authenticator app
 
-1. Sign in and open **Sign-in Security**.
+1. Sign in and open **My Account**, then select **Sign-in Security**.
 2. Under **Authenticator app**, select **Set up authenticator**.
 3. Add the displayed setup key to your authenticator app.
 4. Enter the six-digit code from the app and select **Verify and enable**.
@@ -16,7 +16,7 @@ The code changes every 30 seconds. If a valid code is refused, check that the ti
 
 ## Add a passkey
 
-1. Open **Sign-in Security**.
+1. Open **My Account**, then select **Sign-in Security**.
 2. Under **Passkeys**, select **Add a passkey**.
 3. Follow the browser prompt to use the device screen lock, face, fingerprint, or a security key.
 
@@ -34,11 +34,11 @@ An MFA request expires after five minutes and stops accepting attempts after fiv
 
 Choose **Recovery code** on the sign-in screen and enter one saved code. Used codes are removed from the remaining count.
 
-To replace the set, open **Sign-in Security** and select **Generate new codes**. Replacing the set immediately invalidates every older recovery code. Download the new codes before leaving the page.
+To replace the set, open **My Account**, select **Sign-in Security**, and select **Generate new codes**. Replacing the set immediately invalidates every older recovery code. Download the new codes before leaving the page.
 
 ## Remove a method
 
-Open **Sign-in Security** and select **Remove** beside the authenticator app or passkey. Changing recovery methods requires a session that has recently completed MFA. If the action is refused, sign out, sign in with MFA, and try again.
+Open **My Account**, select **Sign-in Security**, and select **Remove** beside the authenticator app or passkey. Changing recovery methods requires a session that has recently completed MFA. If the action is refused, sign out, sign in with MFA, and try again.
 
 ## Recover a locked-out user
 

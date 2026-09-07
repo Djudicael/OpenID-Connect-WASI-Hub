@@ -84,6 +84,10 @@ pub struct AccessTokenClaims {
     pub iss: String,
     pub exp: i64,
     pub iat: i64,
+    /// Unique token identifier. This prevents two otherwise identical grants
+    /// issued in the same second from producing the same bearer token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jti: Option<String>,
     pub scope: String,
     /// Authorized party — the client_id that was authorized (RFC 8707 §2).
     /// Required when `aud` contains resource indicators in addition to client_id.
@@ -1064,6 +1068,7 @@ impl TokenService for JwtTokenService {
             iss: self.issuer.clone(),
             exp: now + self.access_token_ttl_secs,
             iat: now,
+            jti: Some(generate_opaque_token()?),
             scope: scopes.join(" "),
             azp,
             cnf,
@@ -1451,6 +1456,7 @@ mod tests {
             iss: "https://test.example.com".to_string(),
             exp: now + 900,
             iat: now,
+            jti: None,
             scope: "openid".to_string(),
             azp: None,
             cnf: None,
@@ -1481,6 +1487,7 @@ mod tests {
             iss: "https://test.example.com".to_string(),
             exp: now + 900,
             iat: now,
+            jti: None,
             scope: "openid".to_string(),
             azp: None,
             cnf: None,
@@ -1644,6 +1651,7 @@ mod tests {
             iss: "https://test.example.com".to_string(),
             exp: now + 900,
             iat: now,
+            jti: None,
             scope: "openid".to_string(),
             azp: None,
             cnf: None,
@@ -1673,6 +1681,7 @@ mod tests {
             iss: "https://test.example.com".to_string(),
             exp: now + 900,
             iat: now,
+            jti: None,
             scope: "openid".to_string(),
             azp: None,
             cnf: None,

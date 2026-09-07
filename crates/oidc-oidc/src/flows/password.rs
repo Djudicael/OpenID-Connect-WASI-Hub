@@ -13,6 +13,7 @@ use oidc_repository::repositories::mfa_repo::MfaRepo;
 use oidc_repository::repositories::organization_repo::OrganizationRepo;
 use oidc_repository::repositories::realm_repo::RealmRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
+use oidc_repository::repositories::user_consent_repo::UserConsentRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 use oidc_repository::with_transaction;
 
@@ -318,6 +319,9 @@ impl PasswordFlow {
             };
 
             SessionRepo.create(&mut conn, &session).await?;
+            UserConsentRepo
+                .grant(&mut conn, user.id, user.realm_id, client.id, &scopes)
+                .await?;
 
             let token_type = if dpop_jkt.is_some() { "DPoP" } else { "Bearer" };
 

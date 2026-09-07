@@ -21,7 +21,7 @@ class LoginPage extends BaseComponent {
     this.setState({ loading: true, error: null });
     try {
       await authService.handleCallback();
-      window.location.href = '/';
+      window.location.href = authService.hasAdminAccess() ? '/' : '/account';
     } catch (err) {
       this.setState({ error: err.message, loading: false });
     }
@@ -43,7 +43,7 @@ class LoginPage extends BaseComponent {
         if (methods.includes('webauthn')) await this._completePasskey();
         return;
       }
-      window.location.href = '/';
+      window.location.href = authService.hasAdminAccess() ? '/' : '/account';
     } catch (err) {
       this.setState({ error: err.message || 'Login failed', loading: false });
     }
@@ -88,7 +88,7 @@ class LoginPage extends BaseComponent {
     try {
       const result = await authService.loginWithPassword(this._primary.email, this._primary.password, this._primary.realm, { ceremony_token: this._state.mfa.ceremony_token, ...proof });
       if (result.mfa_required) throw new Error('A new MFA challenge was requested');
-      this._primary = null; window.location.href = '/';
+      this._primary = null; window.location.href = authService.hasAdminAccess() ? '/' : '/account';
     } catch (err) { this.setState({ loading: false, error: err.message || 'Verification failed' }); }
   }
 
@@ -110,7 +110,7 @@ class LoginPage extends BaseComponent {
     return html`
       <div class="login-box">
         <h1 class="login-title">OpenID Connect Hub</h1>
-        <p class="login-subtitle">Admin Console</p>
+        <p class="login-subtitle">Account and administration console</p>
 
         ${mfa ? html`
           <p class="login-subtitle">Complete your sign in with a second factor.</p>

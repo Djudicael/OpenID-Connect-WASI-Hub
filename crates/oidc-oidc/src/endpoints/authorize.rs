@@ -6,6 +6,10 @@
 use axum::extract::Query;
 use axum::http::HeaderMap;
 use axum::response::{Html, IntoResponse, Redirect, Response};
+use base64::Engine;
+use hmac::{Hmac, Mac};
+use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use std::collections::HashMap;
 
 use oidc_core::OidcError;
@@ -15,6 +19,7 @@ use oidc_core::utils::{generate_uuid_v7, html_escape};
 use oidc_repository::repositories::client_repo::ClientRepo;
 use oidc_repository::repositories::realm_repo::RealmRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
+use oidc_repository::repositories::user_consent_repo::UserConsentRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 
 use crate::session_cookie;
@@ -134,6 +139,122 @@ fn merge_protected_authorize_params(
     Ok(())
 }
 
+#[derive(Serialize, Deserialize)]
+struct ConsentToken {
+    user_id: uuid::Uuid,
+    client_id: uuid::Uuid,
+    scopes: Vec<String>,
+    expires_at: i64,
+}
+
+fn create_consent_token(
+    state: &OidcState,
+    user_id: uuid::Uuid,
+    client_id: uuid::Uuid,
+    scopes: &[String],
+) -> Result<String, OidcError> {
+    let payload = ConsentToken {
+        user_id,
+        client_id,
+        scopes: scopes.to_vec(),
+        expires_at: chrono::Utc::now().timestamp() + 300,
+    };
+    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&payload).map_err(|error| OidcError::Internal(error.to_string()))?,
+    );
+    let key = state.decode_encryption_key()?;
+    let mut mac = Hmac::<Sha256>::new_from_slice(&key)
+        .map_err(|error| OidcError::Internal(error.to_string()))?;
+    mac.update(encoded.as_bytes());
+    Ok(format!(
+        "{encoded}.{}",
+        hex::encode(mac.finalize().into_bytes())
+    ))
+}
+
+fn verify_consent_token(
+    state: &OidcState,
+    value: &str,
+    user_id: uuid::Uuid,
+    client_id: uuid::Uuid,
+    scopes: &[String],
+) -> bool {
+    let Some((encoded, signature)) = value.rsplit_once('.') else {
+        return false;
+    };
+    let Ok(signature) = hex::decode(signature) else {
+        return false;
+    };
+    let Ok(key) = state.decode_encryption_key() else {
+        return false;
+    };
+    let Ok(mut mac) = Hmac::<Sha256>::new_from_slice(&key) else {
+        return false;
+    };
+    mac.update(encoded.as_bytes());
+    if mac.verify_slice(&signature).is_err() {
+        return false;
+    }
+    let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(encoded) else {
+        return false;
+    };
+    let Ok(payload) = serde_json::from_slice::<ConsentToken>(&bytes) else {
+        return false;
+    };
+    payload.user_id == user_id
+        && payload.client_id == client_id
+        && payload.scopes == scopes
+        && payload.expires_at >= chrono::Utc::now().timestamp()
+}
+
+fn render_consent_html(
+    action: &str,
+    params: &HashMap<String, String>,
+    client_name: &str,
+    scopes: &[String],
+    token: &str,
+) -> String {
+    let hidden = params
+        .iter()
+        .filter(|(key, _)| {
+            !matches!(
+                key.as_str(),
+                "request" | "request_uri" | "consent_action" | "consent_token"
+            )
+        })
+        .map(|(key, value)| {
+            format!(
+                "<input type=\"hidden\" name=\"{}\" value=\"{}\">",
+                html_escape(key),
+                html_escape(value)
+            )
+        })
+        .collect::<String>();
+    let scope_items = scopes
+        .iter()
+        .map(|scope| {
+            let description = match scope.as_str() {
+                "openid" => "Sign you in and identify your account",
+                "profile" => "View your name and profile information",
+                "email" => "View your email address",
+                "address" => "View your postal address",
+                "phone" => "View your phone number",
+                "offline_access" => "Keep access when you are away",
+                _ => scope.as_str(),
+            };
+            format!("<li>{}</li>", html_escape(description))
+        })
+        .collect::<String>();
+    format!(
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Approve access</title><style>body{{font:16px system-ui;background:#f4f6f8;color:#182230;margin:0}}main{{max-width:560px;margin:8vh auto;background:white;padding:2rem;border-radius:12px;box-shadow:0 8px 30px #0002}}h1{{margin-top:0}}li{{margin:.75rem 0}}.actions{{display:flex;gap:.75rem;justify-content:flex-end;margin-top:2rem}}button{{padding:.7rem 1rem;border-radius:6px;border:1px solid #98a2b3;background:white;font-weight:600}}button[name=consent_action][value=allow]{{background:#175cd3;color:white;border-color:#175cd3}}</style></head><body><main><h1>Approve access</h1><p><strong>{}</strong> wants permission to:</p><ul>{}</ul><p>You can remove this access later from your account.</p><form method="get" action="{}">{}<input type="hidden" name="consent_token" value="{}"><div class="actions"><button name="consent_action" value="deny">Deny</button><button name="consent_action" value="allow">Allow</button></div></form></main></body></html>"#,
+        html_escape(client_name),
+        scope_items,
+        html_escape(action),
+        hidden,
+        html_escape(token),
+    )
+}
+
 /// Authorization endpoint handler.
 /// Validates the request, generates an authorization code, and redirects back to the client.
 ///
@@ -141,7 +262,7 @@ fn merge_protected_authorize_params(
 /// - `prompt=none`: Returns `login_required` if no authenticated session exists.
 ///   If a valid session cookie is present, the user is authenticated silently (SSO).
 /// - `prompt=login`: Forces re-authentication (ignores session cookie, proceeds to login page).
-/// - `prompt=consent`: Pass-through (auto-consent for now).
+/// - `prompt=consent`: Always asks the user to approve the requested access.
 /// - `max_age`: If the user's auth_time exceeds max_age, requires re-authentication.
 pub async fn authorize_handler(
     state: OidcState,
@@ -1096,6 +1217,96 @@ async fn authorize_inner(
             );
             return Ok(AuthorizeResult::Redirect(login_url));
         }
+    }
+
+    // --- User consent ---
+    let saved_consent = UserConsentRepo
+        .find(&mut conn, user.id, client.id)
+        .await
+        .map_err(|error| {
+            tracing::error!("Failed to load user consent: {error}");
+            (
+                redirect_uri.clone(),
+                "server_error".to_string(),
+                "An internal error occurred".to_string(),
+            )
+        })?;
+    let already_granted = saved_consent.as_ref().is_some_and(|consent| {
+        requested_scopes
+            .iter()
+            .all(|scope| consent.scopes.contains(scope))
+    });
+    let consent_token = params.get("consent_token");
+    let consent_action = params.get("consent_action").map(String::as_str);
+    let submitted = consent_token.is_some() || consent_action.is_some();
+    let valid_submission = consent_token.is_some_and(|token| {
+        verify_consent_token(&state, token, user.id, client.id, &requested_scopes)
+    });
+    if submitted && !valid_submission {
+        return Err((
+            redirect_uri.clone(),
+            "invalid_request".to_string(),
+            "The consent request is invalid or expired".to_string(),
+        ));
+    }
+    match consent_action {
+        Some("deny") if valid_submission => {
+            return Err((
+                redirect_uri.clone(),
+                "access_denied".to_string(),
+                "The user denied the request".to_string(),
+            ));
+        }
+        Some("allow") if valid_submission => {
+            UserConsentRepo
+                .grant(
+                    &mut conn,
+                    user.id,
+                    user.realm_id,
+                    client.id,
+                    &requested_scopes,
+                )
+                .await
+                .map_err(|error| {
+                    tracing::error!("Failed to save user consent: {error}");
+                    (
+                        redirect_uri.clone(),
+                        "server_error".to_string(),
+                        "An internal error occurred".to_string(),
+                    )
+                })?;
+        }
+        _ if prompt_values.contains(&"none") && !already_granted => {
+            return Err((
+                redirect_uri.clone(),
+                "consent_required".to_string(),
+                "The user has not approved the requested access".to_string(),
+            ));
+        }
+        _ if prompt_values.contains(&"consent") || !already_granted => {
+            let token = create_consent_token(&state, user.id, client.id, &requested_scopes)
+                .map_err(|error| {
+                    tracing::error!("Failed to create consent token: {error}");
+                    (
+                        redirect_uri.clone(),
+                        "server_error".to_string(),
+                        "An internal error occurred".to_string(),
+                    )
+                })?;
+            let action = realm_name
+                .map(|realm| format!("/realms/{realm}/protocol/openid-connect/auth"))
+                .unwrap_or_else(|| "/oidc/authorize".into());
+            return Ok(AuthorizeResult::Page {
+                html: render_consent_html(
+                    &action,
+                    &params,
+                    &client.name,
+                    &requested_scopes,
+                    &token,
+                ),
+            });
+        }
+        _ => {}
     }
 
     // --- acr_values validation and resolution (OIDC Core §3.1.2.1 / §3.1.2.2) ---

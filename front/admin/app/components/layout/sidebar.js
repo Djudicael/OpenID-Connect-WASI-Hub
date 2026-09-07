@@ -1,7 +1,8 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../../core/component.js';
+import { authService } from '../../auth/auth-service.js';
 
-const links = [
+const adminLinks = [
   { path: '/', label: 'Dashboard' },
   { path: '/users', label: 'Users' },
   { path: '/roles', label: 'Roles' },
@@ -12,12 +13,16 @@ const links = [
   // TODO: Add when backend admin CRUD endpoints exist for identity providers
   // { path: '/identity-providers', label: 'Identity Providers' },
   { path: '/password-policies', label: 'Password Policies' },
-  { path: '/security', label: 'Sign-in Security' },
   { path: '/sessions', label: 'Sessions' },
   { path: '/api-keys', label: 'API Keys' },
   { path: '/scopes', label: 'Scopes' },
   { path: '/audit', label: 'Audit' },
   { path: '/maintenance', label: 'Maintenance' },
+];
+
+const accountLinks = [
+  { path: '/account', label: 'My Account' },
+  { path: '/security', label: 'Sign-in Security' },
 ];
 
 class Sidebar extends BaseComponent {
@@ -46,6 +51,7 @@ class Sidebar extends BaseComponent {
 
   template() {
     const current = this._state.currentPath;
+    const links = authService.hasAdminAccess() ? [...accountLinks, ...adminLinks] : accountLinks;
     return html`
       <nav class="sidebar">
         <div class="sidebar-brand">OIDC Hub</div>

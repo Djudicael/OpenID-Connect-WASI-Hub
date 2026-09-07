@@ -29,6 +29,9 @@ pub mod helpers;
 pub mod apikey_tests;
 
 #[cfg(test)]
+pub mod account_tests;
+
+#[cfg(test)]
 pub mod db_tests;
 
 #[cfg(test)]

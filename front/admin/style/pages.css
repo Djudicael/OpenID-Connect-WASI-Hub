@@ -70,3 +70,39 @@
 
 /* API Keys (legacy) */
 .api-key-raw { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.875rem; background: #f8fafc; padding: 0.75rem; border-radius: var(--radius-sm); border: 1px solid #e2e8f0; word-break: break-all; }
+.account-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem;
+  margin-bottom: 1rem;
+}
+
+.account-tabs button,
+.account-tabs a {
+  border: 1px solid var(--color-border, #d0d5dd);
+  border-radius: .4rem;
+  background: #fff;
+  color: var(--color-text, #344054);
+  padding: .55rem .8rem;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.account-tabs button.active {
+  background: var(--color-primary, #175cd3);
+  border-color: var(--color-primary, #175cd3);
+  color: #fff;
+}
+
+.account-card { max-width: 960px; }
+.account-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+.account-form.narrow { max-width: 560px; grid-template-columns: 1fr; }
+.account-actions { grid-column: 1 / -1; }
+.account-list { display: grid; gap: .75rem; margin-top: 1rem; }
+.account-list article { display: flex; align-items: center; justify-content: space-between; gap: 1rem; border-top: 1px solid var(--color-border, #eaecf0); padding: 1rem 0; }
+.account-list article p { margin: .35rem 0 0; color: var(--color-muted, #667085); }
+
+@media (max-width: 720px) {
+  .account-form { grid-template-columns: 1fr; }
+  .account-list article { align-items: flex-start; flex-direction: column; }
+}
