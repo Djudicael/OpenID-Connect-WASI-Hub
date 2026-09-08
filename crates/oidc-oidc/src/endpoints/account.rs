@@ -21,12 +21,12 @@ use uuid::Uuid;
 
 use crate::state::OidcState;
 
-struct AccountContext {
-    user: User,
-    session_id: Uuid,
+pub(crate) struct AccountContext {
+    pub(crate) user: User,
+    pub(crate) session: oidc_core::models::Session,
 }
 
-async fn current_account(
+pub(crate) async fn current_account(
     state: &OidcState,
     headers: &HeaderMap,
 ) -> Result<AccountContext, OidcError> {
@@ -53,10 +53,7 @@ async fn current_account(
         .await?
         .filter(|user| user.enabled)
         .ok_or_else(|| OidcError::AuthenticationFailed("Active user required".into()))?;
-    Ok(AccountContext {
-        user,
-        session_id: session.id,
-    })
+    Ok(AccountContext { user, session })
 }
 
 fn optional(value: Option<String>) -> Option<String> {
@@ -235,7 +232,7 @@ pub async fn change_password_handler(
     user.password_hash = Some(state.hasher.hash(&req.new_password)?);
     UserRepo.update(&mut conn, &user).await?;
     SessionRepo
-        .revoke_other_user_sessions(&mut conn, user.id, account.session_id)
+        .revoke_other_user_sessions(&mut conn, user.id, account.session.id)
         .await?;
     audit(&mut conn, &user, "ACCOUNT_PASSWORD_CHANGED", json!({})).await;
     Ok(Json(
@@ -264,7 +261,7 @@ pub async fn sessions_handler(
             "expires_at": session.refresh_expires_at.unwrap_or(session.expires_at),
             "maximum_expires_at": session.offline_max_expires_at,
             "offline": session.offline_session,
-            "current": session.id == account.session_id,
+            "current": session.id == account.session.id,
             "authentication_methods": session.amr,
         }));
     }
@@ -296,7 +293,7 @@ pub async fn revoke_session_handler(
     )
     .await;
     Ok(Json(
-        json!({"revoked": true, "current": id == account.session_id}),
+        json!({"revoked": true, "current": id == account.session.id}),
     ))
 }
 

@@ -37,6 +37,11 @@ pub fn router() -> Router<AppState> {
                 Err(e) => oidc_oidc::errors::from_oidc_error(&e).into_response(),
             }
         }))
+        .route("/oidc/backchannel-authentication", post(|State(state): State<AppState>, headers: axum::http::HeaderMap, Form(params): Form<HashMap<String, String>>| async move {
+            match oidc_oidc::endpoints::ciba::authentication_request(state.oidc_state(), headers, params, None).await {
+                Ok(json) => json.into_response(), Err(error) => error.into_response()
+            }
+        }))
         .route("/oidc/userinfo", get(|State(state): State<AppState>, headers: axum::http::HeaderMap| async move {
             let auth = headers.get(axum::http::header::AUTHORIZATION).cloned();
             let dpop = headers.get("DPoP").cloned();
@@ -122,6 +127,12 @@ pub fn router() -> Router<AppState> {
         .route("/oidc/account/linked-identities/{id}", delete(account_unlink_identity))
         .route("/oidc/account/applications", get(account_applications))
         .route("/oidc/account/applications/{id}", delete(account_revoke_application))
+        .route("/oidc/account/ciba", get(|State(state): State<AppState>, headers: axum::http::HeaderMap| async move {
+            account_result(oidc_oidc::endpoints::ciba::pending_requests(state.oidc_state(), headers).await)
+        }))
+        .route("/oidc/account/ciba/{id}", post(|State(state): State<AppState>, Path(id): Path<uuid::Uuid>, headers: axum::http::HeaderMap, Json(req): Json<oidc_oidc::endpoints::ciba::CibaDecision>| async move {
+            account_result(oidc_oidc::endpoints::ciba::decide_request(state.oidc_state(), headers, id, req).await)
+        }))
         // Password reset
         .route("/oidc/password-reset/request", post(|State(state): State<AppState>, Json(req): Json<oidc_oidc::endpoints::password_reset::PasswordResetRequestRequest>| async move {
             match oidc_oidc::endpoints::password_reset::password_reset_request_handler(State(state.oidc_state()), Json(req)).await {
@@ -184,6 +195,7 @@ pub fn router() -> Router<AppState> {
         .route("/realms/{realm}/protocol/openid-connect/revoke", post(per_realm_revoke_handler))
         .route("/realms/{realm}/protocol/openid-connect/par", post(per_realm_par_handler))
         .route("/realms/{realm}/protocol/openid-connect/device/authorize", post(per_realm_device_authorization_handler))
+        .route("/realms/{realm}/protocol/openid-connect/ext/ciba/auth", post(per_realm_ciba_handler))
         .route("/realms/{realm}/protocol/openid-connect/logout", get(per_realm_logout_handler))
         .route("/realms/{realm}/.well-known/openid-configuration", get(per_realm_discovery_handler))
         .route("/realms/{realm}/protocol/openid-connect/certs", get(per_realm_certs_handler))
@@ -717,6 +729,28 @@ async fn per_realm_token_handler(
     match oidc_oidc::endpoints::token::token_handler(realm_state, headers, params).await {
         Ok(json) => (axum::http::StatusCode::OK, json).into_response(),
         Err(err) => oidc_oidc::errors::from_oidc_error(&err).into_response(),
+    }
+}
+
+async fn per_realm_ciba_handler(
+    State(state): State<AppState>,
+    Path(realm): Path<String>,
+    headers: axum::http::HeaderMap,
+    Form(params): Form<HashMap<String, String>>,
+) -> axum::response::Response {
+    let realm_state = state
+        .oidc_state()
+        .with_issuer(format!("{}/realms/{}", state.config.issuer, realm));
+    match oidc_oidc::endpoints::ciba::authentication_request(
+        realm_state,
+        headers,
+        params,
+        Some(&realm),
+    )
+    .await
+    {
+        Ok(json) => json.into_response(),
+        Err(error) => error.into_response(),
     }
 }
 

@@ -80,6 +80,11 @@ pub fn i64_(row: &Row, idx: usize) -> Result<i64, OidcError> {
     row.get::<i64>(idx).map_err(pg_err)
 }
 
+/// Extract a required PostgreSQL INTEGER value.
+pub fn i32_(row: &Row, idx: usize) -> Result<i32, OidcError> {
+    row.get::<i32>(idx).map_err(pg_err)
+}
+
 /// Extract an optional `i64` from a row column.
 pub fn opt_i64(row: &Row, idx: usize) -> Result<Option<i64>, OidcError> {
     row.get::<Option<i64>>(idx).map_err(pg_err)

@@ -13,6 +13,7 @@ use oidc_repository::repositories::account_recovery_token_repo::AccountRecoveryT
 use oidc_repository::repositories::audit_event_repo::AuditEventRepo;
 use oidc_repository::repositories::auth_code_repo::AuthCodeRepo;
 use oidc_repository::repositories::authorization_service_repo::AuthorizationServiceRepo;
+use oidc_repository::repositories::ciba_repo::CibaRepo;
 use oidc_repository::repositories::client_repo::ClientRepo;
 use oidc_repository::repositories::device_code_repo::DeviceCodeRepo;
 use oidc_repository::repositories::email_verification_token_repo::EmailVerificationTokenRepo;
@@ -1824,6 +1825,13 @@ pub async fn cleanup_expired(State(state): State<AppState>, auth: AdminAuth) -> 
             tracing::warn!("failed to cleanup expired device codes: {e}");
             0
         });
+    let ciba_requests_deleted = CibaRepo
+        .cleanup_expired(&mut conn)
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("failed to cleanup expired CIBA requests: {e}");
+            0
+        });
     let auth_codes_deleted = AuthCodeRepo
         .cleanup_expired(&mut conn)
         .await
@@ -1867,6 +1875,7 @@ pub async fn cleanup_expired(State(state): State<AppState>, auth: AdminAuth) -> 
             "email_verification_deleted": email_verification_deleted,
             "account_recovery_deleted": account_recovery_deleted,
             "device_codes_deleted": device_codes_deleted,
+            "ciba_requests_deleted": ciba_requests_deleted,
             "auth_codes_deleted": auth_codes_deleted,
             "par_deleted": par_deleted,
             "authorization_grants_deleted": authorization_grants_deleted,
@@ -1885,6 +1894,7 @@ pub async fn cleanup_expired(State(state): State<AppState>, auth: AdminAuth) -> 
         "email_verification_deleted": email_verification_deleted,
         "account_recovery_deleted": account_recovery_deleted,
         "device_codes_deleted": device_codes_deleted,
+        "ciba_requests_deleted": ciba_requests_deleted,
         "auth_codes_deleted": auth_codes_deleted,
         "par_deleted": par_deleted,
         "authorization_grants_deleted": authorization_grants_deleted,

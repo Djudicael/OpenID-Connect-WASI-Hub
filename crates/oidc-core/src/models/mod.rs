@@ -7,6 +7,7 @@ pub mod audit_event;
 pub mod auth_code;
 pub mod authorization_detail;
 pub mod authorization_service;
+pub mod ciba;
 pub mod client;
 pub mod device_code;
 pub mod email_verification_token;
@@ -45,6 +46,7 @@ pub use authorization_service::{
     AuthorizationContext, AuthorizationPermission, AuthorizationPolicy, PermissionTicket,
     ProtectedResource, RptGrant,
 };
+pub use ciba::{CIBA_GRANT_TYPE, CibaAuthenticationRequest, CibaClientConfig};
 pub use client::{Client, ClientType};
 pub use device_code::DeviceCode;
 pub use email_verification_token::EmailVerificationToken;

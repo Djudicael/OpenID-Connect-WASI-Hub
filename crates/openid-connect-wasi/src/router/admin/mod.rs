@@ -130,6 +130,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/clients/{id}", get(clients::get))
         .route("/api/clients/{id}", put(clients::update))
         .route("/api/clients/{id}", delete(clients::delete))
+        .route(
+            "/api/clients/{id}/ciba",
+            get(clients::get_ciba).put(clients::update_ciba),
+        )
         .route("/api/realms", get(realms::list))
         .route("/api/realms", post(realms::create))
         .route("/api/realms/{id}", get(realms::get))

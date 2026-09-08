@@ -84,6 +84,13 @@ impl OidcState {
         )
     }
 
+    pub fn backchannel_authentication_endpoint_uri(&self) -> String {
+        self.protocol_endpoint(
+            "/oidc/backchannel-authentication",
+            "/protocol/openid-connect/ext/ciba/auth",
+        )
+    }
+
     pub fn introspection_endpoint_uri(&self) -> String {
         self.protocol_endpoint("/oidc/introspect", "/protocol/openid-connect/introspect")
     }
@@ -271,7 +278,7 @@ impl OidcState {
         }
     }
 
-    fn decode_jwt_payload_unverified<T: DeserializeOwned>(
+    pub(crate) fn decode_jwt_payload_unverified<T: DeserializeOwned>(
         token: &str,
     ) -> Result<T, oidc_core::OidcError> {
         let payload_segment = token

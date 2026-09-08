@@ -7,6 +7,7 @@ import {
   changePassword, getAccount, listAccountSessions, listApplications,
   listLinkedIdentities, revokeAccountSession, revokeApplication,
   unlinkIdentity, updateAccount,
+  listCibaRequests, decideCibaRequest,
 } from '../services/account-service.js';
 
 const PROFILE_FIELDS = [
@@ -21,7 +22,7 @@ const PROFILE_FIELDS = [
 class AccountPage extends BaseComponent {
   constructor() {
     super();
-    this._state = { loading: true, profile: null, sessions: [], identities: [], applications: [], section: 'profile' };
+    this._state = { loading: true, profile: null, sessions: [], identities: [], applications: [], cibaRequests: [], section: 'profile' };
   }
 
   connectedCallback() { super.connectedCallback(); this._load(); }
@@ -29,12 +30,12 @@ class AccountPage extends BaseComponent {
   async _load() {
     this.setState({ loading: true });
     try {
-      const [profile, sessions, identities, applications] = await Promise.all([
+      const [profile, sessions, identities, applications, ciba] = await Promise.all([
         getAccount(this.signal), listAccountSessions(this.signal),
-        listLinkedIdentities(this.signal), listApplications(this.signal),
+        listLinkedIdentities(this.signal), listApplications(this.signal), listCibaRequests(this.signal),
       ]);
       authService.setAdministrationAccess(profile.administration_access);
-      this.setState({ profile, sessions: sessions.items || [], identities: identities.items || [], applications: applications.items || [], loading: false });
+      this.setState({ profile, sessions: sessions.items || [], identities: identities.items || [], applications: applications.items || [], cibaRequests: ciba.items || [], loading: false });
     } catch (error) {
       if (error.name !== 'AbortError') handleApiError(error, 'Could not load your account');
       this.setState({ loading: false });
@@ -93,8 +94,13 @@ class AccountPage extends BaseComponent {
     catch (error) { handleApiError(error, 'Could not remove application access'); }
   }
 
+  async _decideCiba(request, decision) {
+    try { await decideCibaRequest(request.id, decision); showToast(decision === 'approve' ? 'Sign-in approved' : 'Sign-in denied', 'success'); await this._load(); }
+    catch (error) { handleApiError(error, 'Could not complete the sign-in request'); }
+  }
+
   _nav() {
-    const sections = [['profile', 'Profile'], ['password', 'Password'], ['sessions', 'Sessions'], ['offline', 'Offline access'], ['applications', 'Applications'], ['identities', 'Linked identities']];
+    const sections = [['profile', 'Profile'], ['requests', `Sign-in requests${this._state.cibaRequests.length ? ` (${this._state.cibaRequests.length})` : ''}`], ['password', 'Password'], ['sessions', 'Sessions'], ['offline', 'Offline access'], ['applications', 'Applications'], ['identities', 'Linked identities']];
     return html`<nav class="account-tabs" aria-label="Account sections">${sections.map(([id, label]) => html`<button class=${this._state.section === id ? 'active' : ''} @click=${() => this.setState({ section: id })}>${label}</button>`)}<a href="/security">Sign-in security</a></nav>`;
   }
 
@@ -107,6 +113,11 @@ class AccountPage extends BaseComponent {
         ${PROFILE_FIELDS.map(([name, label]) => html`<div class="field"><label class="field-label" for=${`account-${name}`}>${label}</label><input class="field-input" id=${`account-${name}`} name=${name} .value=${profile[name] || ''}></div>`)}
         <div class="account-actions"><button class="btn btn--primary" type="submit">Save profile</button></div>
       </form></section>`;
+  }
+
+  _requests() {
+    const requests=this._state.cibaRequests;
+    return html`<section class="card account-card" data-doc-section="ciba-requests"><h2>Sign-in requests</h2><p>Approve only requests you started. Compare the verification message with the message shown by the application.</p><div class="account-list">${requests.length ? requests.map(request=>html`<article><div><strong>${request.client_name}</strong><p>Scopes: ${request.scopes.join(', ')}</p>${request.binding_message ? html`<p><strong>Verification message:</strong> <code>${request.binding_message}</code></p>` : ''}${request.request_context ? html`<p>${request.request_context}</p>` : ''}<p>Expires ${new Date(request.expires_at).toLocaleString()}</p></div><div class="account-actions"><button class="btn btn--primary btn--sm" @click=${()=>this._decideCiba(request,'approve')}>Approve</button><button class="btn btn--danger btn--sm" @click=${()=>this._decideCiba(request,'deny')}>Deny</button></div></article>`) : html`<p>No pending sign-in requests.</p>`}</div></section>`;
   }
 
   _password() {
@@ -133,7 +144,7 @@ class AccountPage extends BaseComponent {
 
   template() {
     const { loading, profile, section } = this._state;
-    return html`<c-page-layout title="My account">${loading || !profile ? html`<p>Loading your account...</p>` : html`${this._nav()}${section === 'profile' ? this._profile() : section === 'password' ? this._password() : section === 'sessions' ? this._sessions() : section === 'offline' ? this._offline() : section === 'applications' ? this._applications() : this._identities()}`}</c-page-layout>`;
+    return html`<c-page-layout title="My account">${loading || !profile ? html`<p>Loading your account...</p>` : html`${this._nav()}${section === 'profile' ? this._profile() : section === 'requests' ? this._requests() : section === 'password' ? this._password() : section === 'sessions' ? this._sessions() : section === 'offline' ? this._offline() : section === 'applications' ? this._applications() : this._identities()}`}</c-page-layout>`;
   }
 }
 

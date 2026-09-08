@@ -39,6 +39,9 @@ pub async fn discovery_handler(state: OidcState) -> Json<Value> {
         "revocation_endpoint" => json!(format!("{issuer}/oidc/revoke")),
         "pushed_authorization_request_endpoint" => json!(format!("{issuer}/oidc/par")),
         "device_authorization_endpoint" => json!(format!("{issuer}/oidc/device/authorize")),
+        "backchannel_authentication_endpoint" => json!(format!("{issuer}/oidc/backchannel-authentication")),
+        "backchannel_token_delivery_modes_supported" => json!(["poll", "ping"]),
+        "backchannel_user_code_parameter_supported" => json!(false),
         "password_reset_endpoint" => json!(format!("{issuer}/oidc/password-reset/request")),
         "email_verification_endpoint" => json!(format!("{issuer}/oidc/email-verification/request")),
         "registration_endpoint" => json!(format!("{issuer}/oidc/register")),
@@ -55,6 +58,7 @@ pub async fn discovery_handler(state: OidcState) -> Json<Value> {
             "urn:ietf:params:oauth:grant-type:jwt-bearer",
             "urn:ietf:params:oauth:grant-type:token-exchange",
             "urn:ietf:params:oauth:grant-type:uma-ticket"
+            ,"urn:openid:params:grant-type:ciba"
         ]),
         "token_endpoint_auth_methods_supported" => json!([
             "client_secret_basic", "client_secret_post", "client_secret_jwt", "private_key_jwt"
@@ -123,6 +127,9 @@ pub async fn realm_discovery_handler(state: OidcState, realm: String) -> Json<Va
         "revocation_endpoint" => json!(format!("{realm_base}/protocol/openid-connect/revoke")),
         "pushed_authorization_request_endpoint" => json!(format!("{realm_base}/protocol/openid-connect/par")),
         "device_authorization_endpoint" => json!(format!("{realm_base}/protocol/openid-connect/device/authorize")),
+        "backchannel_authentication_endpoint" => json!(format!("{realm_base}/protocol/openid-connect/ext/ciba/auth")),
+        "backchannel_token_delivery_modes_supported" => json!(["poll", "ping"]),
+        "backchannel_user_code_parameter_supported" => json!(false),
         "password_reset_endpoint" => json!(format!("{realm_base}/protocol/openid-connect/password-reset/request")),
         "email_verification_endpoint" => json!(format!("{realm_base}/protocol/openid-connect/email-verification/request")),
         "registration_endpoint" => json!(format!("{realm_base}/protocol/openid-connect/register")),
@@ -139,6 +146,7 @@ pub async fn realm_discovery_handler(state: OidcState, realm: String) -> Json<Va
             "urn:ietf:params:oauth:grant-type:jwt-bearer",
             "urn:ietf:params:oauth:grant-type:token-exchange",
             "urn:ietf:params:oauth:grant-type:uma-ticket"
+            ,"urn:openid:params:grant-type:ciba"
         ]),
         "token_endpoint_auth_methods_supported" => json!([
             "client_secret_basic", "client_secret_post", "client_secret_jwt", "private_key_jwt"

@@ -21,6 +21,10 @@ const TABLES: &[TableSpec] = &[
         export_sql: "SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY t.id), '[]'::jsonb) FROM (SELECT * FROM clients WHERE realm_id=$1 AND deleted_at IS NULL) t",
     },
     TableSpec {
+        name: "ciba_client_configs",
+        export_sql: "SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) FROM (SELECT cc.* FROM ciba_client_configs cc JOIN clients c ON c.id=cc.client_id WHERE c.realm_id=$1) t",
+    },
+    TableSpec {
         name: "signing_keys",
         export_sql: "SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY t.id), '[]'::jsonb) FROM (SELECT * FROM signing_keys WHERE realm_id=$1) t",
     },
@@ -157,6 +161,7 @@ const TABLES: &[TableSpec] = &[
 const INSERT_ORDER: &[&str] = &[
     "users",
     "clients",
+    "ciba_client_configs",
     "signing_keys",
     "scopes",
     "realm_signing_keys",
@@ -248,6 +253,7 @@ impl RealmTransferRepo {
             "DELETE FROM authorization_codes WHERE realm_id=$1",
             "DELETE FROM pushed_authorization_requests WHERE realm_id=$1",
             "DELETE FROM device_codes WHERE realm_id=$1",
+            "DELETE FROM ciba_authentication_requests WHERE realm_id=$1",
             "DELETE FROM social_login_states WHERE realm_id=$1",
             "DELETE FROM federated_identities WHERE realm_id=$1",
             "DELETE FROM mfa_ceremonies WHERE realm_id=$1",

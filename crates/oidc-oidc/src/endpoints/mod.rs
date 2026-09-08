@@ -4,6 +4,7 @@ pub mod account;
 pub mod account_recovery;
 pub mod authorization_services;
 pub mod authorize;
+pub mod ciba;
 pub mod client_auth;
 pub mod device_authorization;
 pub mod discovery;
