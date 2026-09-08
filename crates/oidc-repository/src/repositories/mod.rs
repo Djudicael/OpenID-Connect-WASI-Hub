@@ -22,6 +22,7 @@ pub mod realm_signing_keys_repo;
 pub mod required_action_repo;
 pub mod role_composite_repo;
 pub mod role_repo;
+pub mod saml_repo;
 pub mod scope_repo;
 pub mod session_repo;
 pub mod signing_key_repo;

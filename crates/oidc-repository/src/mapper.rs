@@ -110,6 +110,16 @@ pub fn opt_bytes(row: &Row, idx: usize) -> Result<Option<Vec<u8>>, OidcError> {
     row.get::<Option<Vec<u8>>>(idx).map_err(pg_err)
 }
 
+/// Extract a required JSON value from a JSONB column.
+pub fn json_value(row: &Row, idx: usize) -> Result<serde_json::Value, OidcError> {
+    row.get::<serde_json::Value>(idx).map_err(pg_err)
+}
+
+/// Extract an optional JSON value from a JSONB column.
+pub fn opt_json_value(row: &Row, idx: usize) -> Result<Option<serde_json::Value>, OidcError> {
+    row.get::<Option<serde_json::Value>>(idx).map_err(pg_err)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

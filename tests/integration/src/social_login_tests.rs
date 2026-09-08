@@ -161,6 +161,8 @@ async fn seed_identity_provider(app: &TestApp, upstream: &MockUpstreamIdp, alias
         client_id: "upstream-client".to_string(),
         client_secret: encrypt_test_secret("upstream-secret"),
         scopes: vec!["openid".into(), "profile".into(), "email".into()],
+        saml_metadata_xml: None,
+        saml_attribute_mapping: serde_json::json!({}),
         auto_create_users: true,
         link_users_by_email: true,
         deleted_at: None,

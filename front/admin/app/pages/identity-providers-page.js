@@ -13,6 +13,7 @@ const PROVIDER_TYPES = [
   { value: 'oidc', label: 'Generic OIDC' },
   { value: 'google', label: 'Google' },
   { value: 'github', label: 'GitHub' },
+  { value: 'saml', label: 'SAML 2.0' },
 ];
 
 class IdentityProvidersPage extends BaseComponent {
@@ -32,6 +33,7 @@ class IdentityProvidersPage extends BaseComponent {
       createScopes: 'openid profile email',
       createAutoCreateUsers: true,
       createLinkByEmail: false,
+      createSamlMetadata: '',
       createLoading: false,
     };
   }
@@ -84,6 +86,7 @@ class IdentityProvidersPage extends BaseComponent {
       createScopes: 'openid profile email',
       createAutoCreateUsers: true,
       createLinkByEmail: false,
+      createSamlMetadata: '',
       createLoading: false,
     });
     requestAnimationFrame(() => {
@@ -99,7 +102,7 @@ class IdentityProvidersPage extends BaseComponent {
   }
 
   async _createProvider() {
-    const { realmId, createAlias, createType, createClientId, createClientSecret, createIssuer, createScopes, createAutoCreateUsers, createLinkByEmail } = this._state;
+    const { realmId, createAlias, createType, createClientId, createClientSecret, createIssuer, createScopes, createAutoCreateUsers, createLinkByEmail, createSamlMetadata } = this._state;
     if (!isRequired(realmId) || !isRequired(createAlias)) return;
 
     this.setState({ createLoading: true });
@@ -107,10 +110,12 @@ class IdentityProvidersPage extends BaseComponent {
       await createIdentityProvider({
         realm_id: realmId,
         alias: createAlias.trim(),
+        display_name: createAlias.trim(),
         provider_type: createType,
-        client_id: createClientId.trim() || undefined,
+        client_id: createClientId.trim(),
         client_secret: createClientSecret.trim() || undefined,
-        issuer_url: createIssuer.trim() || undefined,
+        issuer: createIssuer.trim(),
+        saml_metadata_xml: createType === 'saml' ? createSamlMetadata.trim() : undefined,
         scopes: createScopes.split(' ').filter(Boolean),
         auto_create_users: createAutoCreateUsers,
         link_users_by_email: createLinkByEmail,
@@ -139,7 +144,7 @@ class IdentityProvidersPage extends BaseComponent {
   }
 
   template() {
-    const { providers, loading, realms, realmId, showCreateModal, createAlias, createType, createClientId, createClientSecret, createIssuer, createScopes, createAutoCreateUsers, createLinkByEmail, createLoading } = this._state;
+    const { providers, loading, realms, realmId, showCreateModal, createAlias, createType, createClientId, createClientSecret, createIssuer, createScopes, createAutoCreateUsers, createLinkByEmail, createSamlMetadata, createLoading } = this._state;
     const columns = [
       { key: 'alias', label: 'Alias' },
       { key: 'provider_type', label: 'Type', render: (v) => { const t = PROVIDER_TYPES.find(t => t.value === v); return t ? t.label : v; } },
@@ -190,7 +195,11 @@ class IdentityProvidersPage extends BaseComponent {
                 ${PROVIDER_TYPES.map(t => html`<option value=${t.value}>${t.label}</option>`)}
               </select>
             </div>
-            <div class="field">
+            ${createType === 'saml' ? html`<div class="field">
+              <label class="field-label" for="idp-saml-metadata">Identity provider metadata XML *</label>
+              <textarea class="field-textarea" style="min-height:14rem" id="idp-saml-metadata" .value=${createSamlMetadata} @input=${(e) => this.setState({ createSamlMetadata: e.target.value })}></textarea>
+              <div class="hint">Paste the metadata exported by the external identity provider.</div>
+            </div>` : html`<div class="field">
               <label class="field-label" for="idp-issuer">Issuer URL</label>
               <input class="field-input" id="idp-issuer" type="url" placeholder="https://accounts.google.com" .value=${createIssuer} @input=${(e) => this.setState({ createIssuer: e.target.value })} />
               <div class="hint">OIDC discovery URL (not needed for Google/GitHub)</div>
@@ -207,7 +216,7 @@ class IdentityProvidersPage extends BaseComponent {
               <label class="field-label" for="idp-scopes">Scopes</label>
               <input class="field-input" id="idp-scopes" type="text" .value=${createScopes} @input=${(e) => this.setState({ createScopes: e.target.value })} />
               <div class="hint">Space-separated</div>
-            </div>
+            </div>`}
             <div class="field">
               <label class="field-checkbox">
                 <input type="checkbox" id="idp-auto-create" ?checked=${createAutoCreateUsers} @change=${(e) => this.setState({ createAutoCreateUsers: e.target.checked })} />
@@ -224,7 +233,7 @@ class IdentityProvidersPage extends BaseComponent {
         ` : ''}
         <div slot="footer">
           <c-button variant="secondary" @click=${() => this._closeCreateModal()}>Cancel</c-button>
-          <c-button variant="primary" ?disabled=${createLoading || !createAlias.trim()} @click=${() => this._createProvider()}>
+          <c-button variant="primary" ?disabled=${createLoading || !createAlias.trim() || (createType === 'saml' && !createSamlMetadata.trim())} @click=${() => this._createProvider()}>
             ${createLoading ? 'Creating...' : 'Create'}
           </c-button>
         </div>

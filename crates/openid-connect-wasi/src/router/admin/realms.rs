@@ -512,7 +512,7 @@ pub async fn list_identity_providers(
         "realm_id": i.realm_id.to_string(),
         "alias": i.alias,
         "display_name": i.display_name,
-        "provider_type": match i.provider_type { IdentityProviderType::Oidc => "oidc", IdentityProviderType::Google => "google", IdentityProviderType::GitHub => "github" },
+        "provider_type": match i.provider_type { IdentityProviderType::Oidc => "oidc", IdentityProviderType::Google => "google", IdentityProviderType::GitHub => "github", IdentityProviderType::Saml => "saml" },
         "enabled": i.enabled,
         "issuer": i.issuer,
         "authorization_url": i.authorization_url,
@@ -523,6 +523,8 @@ pub async fn list_identity_providers(
         "scopes": i.scopes,
         "auto_create_users": i.auto_create_users,
         "link_users_by_email": i.link_users_by_email,
+        "saml_metadata_xml": i.saml_metadata_xml,
+        "saml_attribute_mapping": i.saml_attribute_mapping,
     })).collect();
     Json(json!({"items": rows, "total": rows.len()})).into_response()
 }
@@ -544,6 +546,8 @@ pub struct CreateIdentityProviderRequest {
     scopes: Option<Vec<String>>,
     auto_create_users: Option<bool>,
     link_users_by_email: Option<bool>,
+    saml_metadata_xml: Option<String>,
+    saml_attribute_mapping: Option<Value>,
 }
 
 pub async fn create_identity_provider(
@@ -579,6 +583,7 @@ pub async fn create_identity_provider(
     let provider_type = match req.provider_type.as_deref() {
         Some("google") => IdentityProviderType::Google,
         Some("github") => IdentityProviderType::GitHub,
+        Some("saml") => IdentityProviderType::Saml,
         _ => IdentityProviderType::Oidc,
     };
     let (issuer, authorization_url, token_url, userinfo_url, jwks_url) = match provider_type {
@@ -610,6 +615,13 @@ pub async fn create_identity_provider(
             req.userinfo_url.unwrap_or_default(),
             req.jwks_url.unwrap_or_default(),
         ),
+        IdentityProviderType::Saml => (
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+        ),
     };
     let id = generate_uuid_v7();
     let encrypted_client_secret = match state
@@ -638,10 +650,30 @@ pub async fn create_identity_provider(
         scopes: req
             .scopes
             .unwrap_or_else(|| vec!["openid".into(), "profile".into(), "email".into()]),
+        saml_metadata_xml: req.saml_metadata_xml,
+        saml_attribute_mapping: req.saml_attribute_mapping.unwrap_or_else(
+            || json!({"email":"email","given_name":"firstName","family_name":"lastName"}),
+        ),
         auto_create_users: req.auto_create_users.unwrap_or(true),
         link_users_by_email: req.link_users_by_email.unwrap_or(false),
         deleted_at: None,
     };
+    if provider_type == IdentityProviderType::Saml {
+        let Some(metadata) = idp.saml_metadata_xml.as_deref() else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error":"SAML metadata is required"})),
+            )
+                .into_response();
+        };
+        if let Err(error) = saml::IdpDescriptor::from_metadata_xml(metadata.as_bytes()) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error":format!("Invalid SAML metadata: {error}")})),
+            )
+                .into_response();
+        }
+    }
     if let Err(e) = idp.validate() {
         return (
             StatusCode::BAD_REQUEST,
@@ -676,7 +708,7 @@ pub async fn create_identity_provider(
                 "realm_id": idp.realm_id.to_string(),
                 "alias": idp.alias,
                 "display_name": idp.display_name,
-                "provider_type": match idp.provider_type { IdentityProviderType::Oidc => "oidc", IdentityProviderType::Google => "google", IdentityProviderType::GitHub => "github" },
+                "provider_type": match idp.provider_type { IdentityProviderType::Oidc => "oidc", IdentityProviderType::Google => "google", IdentityProviderType::GitHub => "github", IdentityProviderType::Saml => "saml" },
                 "enabled": idp.enabled,
                 "issuer": idp.issuer,
                 "authorization_url": idp.authorization_url,
@@ -714,7 +746,7 @@ pub async fn get_identity_provider(
             "realm_id": i.realm_id.to_string(),
             "alias": i.alias,
             "display_name": i.display_name,
-            "provider_type": match i.provider_type { IdentityProviderType::Oidc => "oidc", IdentityProviderType::Google => "google", IdentityProviderType::GitHub => "github" },
+            "provider_type": match i.provider_type { IdentityProviderType::Oidc => "oidc", IdentityProviderType::Google => "google", IdentityProviderType::GitHub => "github", IdentityProviderType::Saml => "saml" },
             "enabled": i.enabled,
             "issuer": i.issuer,
             "authorization_url": i.authorization_url,
@@ -725,6 +757,8 @@ pub async fn get_identity_provider(
             "scopes": i.scopes,
             "auto_create_users": i.auto_create_users,
             "link_users_by_email": i.link_users_by_email,
+            "saml_metadata_xml": i.saml_metadata_xml,
+            "saml_attribute_mapping": i.saml_attribute_mapping,
         })).into_response(),
         Ok(None) => not_found(),
         Err(e) => {
@@ -750,6 +784,8 @@ pub struct UpdateIdentityProviderRequest {
     scopes: Option<Vec<String>>,
     auto_create_users: Option<bool>,
     link_users_by_email: Option<bool>,
+    saml_metadata_xml: Option<String>,
+    saml_attribute_mapping: Option<Value>,
 }
 
 pub async fn update_identity_provider(
@@ -787,6 +823,7 @@ pub async fn update_identity_provider(
         idp.provider_type = match v.as_str() {
             "google" => IdentityProviderType::Google,
             "github" => IdentityProviderType::GitHub,
+            "saml" => IdentityProviderType::Saml,
             _ => IdentityProviderType::Oidc,
         };
     }
@@ -828,6 +865,20 @@ pub async fn update_identity_provider(
     }
     if let Some(v) = req.link_users_by_email {
         idp.link_users_by_email = v;
+    }
+    if let Some(v) = req.saml_metadata_xml {
+        idp.saml_metadata_xml = Some(v);
+    }
+    if let Some(v) = req.saml_attribute_mapping {
+        idp.saml_attribute_mapping = v;
+    }
+    if idp.provider_type == IdentityProviderType::Saml {
+        let Some(metadata) = idp.saml_metadata_xml.as_deref() else {
+            return bad_request();
+        };
+        if saml::IdpDescriptor::from_metadata_xml(metadata.as_bytes()).is_err() {
+            return bad_request();
+        }
     }
     if let Err(e) = idp.validate() {
         return (

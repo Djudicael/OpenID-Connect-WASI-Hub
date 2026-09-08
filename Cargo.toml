@@ -56,6 +56,8 @@ sha2 = "0.10"
 rsa = { version = "0.9", features = ["sha2", "pem"] }
 ed25519-dalek = { version = "2", features = ["pkcs8"] }
 aes-gcm = { version = "0.10", features = ["std"] }
+saml = { version = "0.0.1-alpha.2", default-features = false, features = ["rsa-sha", "ecdsa-sha", "xmlenc", "slo", "metadata-emit", "xsd-validate"] }
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring", "pem"] }
 
 # Utils
 uuid = { version = "1", features = ["v4", "v7", "serde"] }

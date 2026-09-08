@@ -25,6 +25,7 @@ use oidc_repository::repositories::realm_repo::RealmRepo;
 use oidc_repository::repositories::realm_signing_keys_repo::RealmSigningKeysRepo;
 use oidc_repository::repositories::role_composite_repo::RoleCompositeRepo;
 use oidc_repository::repositories::role_repo::RoleRepo;
+use oidc_repository::repositories::saml_repo::SamlRepo;
 use oidc_repository::repositories::scope_repo::ScopeRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
@@ -1844,6 +1845,10 @@ pub async fn cleanup_expired(State(state): State<AppState>, auth: AdminAuth) -> 
             tracing::warn!("failed to cleanup expired authorization grants: {e}");
             0
         });
+    let saml_entries_deleted = SamlRepo.cleanup(&mut conn).await.unwrap_or_else(|e| {
+        tracing::warn!("failed to cleanup expired SAML state: {e}");
+        0
+    });
     let audit = oidc_core::models::AuditEvent {
         id: generate_uuid_v7(),
         realm_id: None,
@@ -1865,6 +1870,7 @@ pub async fn cleanup_expired(State(state): State<AppState>, auth: AdminAuth) -> 
             "auth_codes_deleted": auth_codes_deleted,
             "par_deleted": par_deleted,
             "authorization_grants_deleted": authorization_grants_deleted,
+            "saml_entries_deleted": saml_entries_deleted,
         }),
         ip_address: None,
         user_agent: None,

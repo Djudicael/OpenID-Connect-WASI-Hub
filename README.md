@@ -18,6 +18,7 @@ A multi-tenant OpenID Connect / OAuth2 identity provider built in Rust with firs
 - **Client Scopes and Protocol Mappers** — Reusable default or optional scopes with configurable user, role, fixed, and audience claims. See the [client scopes guide](docs/client-scopes-and-protocol-mappers.md).
 - **Authorization Services**: Protected resources, contextual policies, permission tickets, entitlements, and revocable RPTs. See the [Authorization Services guide](docs/authorization-services.md).
 - **User federation**: LDAP and Active Directory password authentication, directory synchronization, group mapping, and Kerberos browser sign-in. See the [User Federation guide](docs/user-federation.md).
+- **SAML 2.0**: Signed and encrypted SAML application sign-in, upstream identity brokering, metadata exchange, and single logout. See the [SAML guide](docs/saml.md).
 
 ## Request correlation and tracing
 

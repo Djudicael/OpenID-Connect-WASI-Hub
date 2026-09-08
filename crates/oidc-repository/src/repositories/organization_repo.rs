@@ -353,7 +353,7 @@ impl OrganizationRepo {
     ) -> Result<Vec<OrganizationIdentityProviderLink>, OidcError> {
         conn.query_params(
             "SELECT oip.organization_id, ip.id, ip.alias, ip.display_name, ip.enabled, \
-                    oip.redirect_on_email_domain \
+                    oip.redirect_on_email_domain, ip.provider_type \
              FROM organization_identity_providers oip \
              JOIN identity_providers ip ON ip.id = oip.identity_provider_id \
                   AND ip.deleted_at IS NULL \
@@ -484,7 +484,7 @@ impl OrganizationRepo {
         let rows = conn
             .query_params(
                 "SELECT oip.organization_id, ip.id, ip.alias, ip.display_name, ip.enabled, \
-                        oip.redirect_on_email_domain \
+                        oip.redirect_on_email_domain, ip.provider_type \
                  FROM organization_domains od \
                  JOIN organizations o ON o.id = od.organization_id \
                  JOIN organization_identity_providers oip ON oip.organization_id = o.id \
@@ -687,6 +687,7 @@ impl OrganizationRepo {
             display_name: mapper::string(row, 3)?,
             enabled: mapper::bool_(row, 4)?,
             redirect_on_email_domain: mapper::bool_(row, 5)?,
+            provider_type: mapper::string(row, 6)?,
         })
     }
 

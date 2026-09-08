@@ -927,7 +927,7 @@ async fn get_upstream_userinfo(
 }
 
 /// Find or create a local user based on the federated identity.
-async fn find_or_create_local_user(
+pub(crate) async fn find_or_create_local_user(
     conn: &mut oidc_repository::Connection,
     provider: &IdentityProvider,
     upstream_subject: &str,

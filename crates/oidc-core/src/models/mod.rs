@@ -26,6 +26,7 @@ pub mod realm_signing_keys;
 pub mod required_action;
 pub mod response_type;
 pub mod role;
+pub mod saml;
 pub mod scope;
 pub mod session;
 pub mod signing_key;
@@ -69,6 +70,7 @@ pub use required_action::{
 };
 pub use response_type::ResponseType;
 pub use role::Role;
+pub use saml::{SamlPendingRequest, SamlRealmKey, SamlServiceProvider};
 pub use scope::Scope;
 pub use session::Session;
 pub use signing_key::{Algorithm, SigningKey};

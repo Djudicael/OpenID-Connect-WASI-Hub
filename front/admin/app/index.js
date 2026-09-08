@@ -26,6 +26,7 @@ import './pages/group-detail-page.js';
 import './pages/organizations-page.js';
 import './pages/organization-detail-page.js';
 import './pages/clients-page.js';
+import './pages/saml-clients-page.js';
 import './pages/client-detail-page.js';
 import './pages/realms-page.js';
 import './pages/realm-detail-page.js';

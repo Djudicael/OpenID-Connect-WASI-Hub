@@ -18,6 +18,7 @@ path = "src/main.rs"
 oidc-core = { workspace = true }
 oidc-repository = { workspace = true }
 oidc-oidc = { workspace = true }
+saml = { workspace = true }
 oidc-apikey = { workspace = true }
 
 axum = { workspace = true }

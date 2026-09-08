@@ -38,6 +38,7 @@ pub async fn discover_identity_provider(
             "identity_provider": {
                 "alias": provider.alias,
                 "display_name": provider.display_name,
+                "provider_type": provider.provider_type,
             }
         }),
         None => json!({"identity_provider": null}),

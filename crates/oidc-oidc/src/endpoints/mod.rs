@@ -20,6 +20,7 @@ pub mod password_reset;
 pub mod registration;
 pub mod required_actions;
 pub mod revoke;
+pub mod saml;
 pub mod session;
 pub mod social_login;
 pub mod token;

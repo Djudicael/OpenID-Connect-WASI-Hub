@@ -9,6 +9,7 @@ const adminLinks = [
   { path: '/groups', label: 'Groups' },
   { path: '/organizations', label: 'Organizations' },
   { path: '/clients', label: 'Clients' },
+  { path: '/saml-clients', label: 'SAML Clients' },
   { path: '/realms', label: 'Realms' },
   { path: '/identity-providers', label: 'Identity Providers' },
   { path: '/user-federation', label: 'User Federation' },

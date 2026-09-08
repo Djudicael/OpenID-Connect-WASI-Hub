@@ -17,6 +17,7 @@ const routes = [
   { path: '/organizations/:id', component: 'organization-detail-page' },
   { path: '/clients', component: 'clients-page' },
   { path: '/clients/:id', component: 'client-detail-page' },
+  { path: '/saml-clients', component: 'saml-clients-page' },
   { path: '/realms', component: 'realms-page' },
   { path: '/realms/:id', component: 'realm-detail-page' },
   { path: '/sessions', component: 'sessions-page' },

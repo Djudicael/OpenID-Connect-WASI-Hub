@@ -168,6 +168,12 @@ fn route_is_authorized(method: &Method, path: &str, auth: &AdminAuth) -> bool {
         } else {
             "user_federation:write"
         }
+    } else if path == "/api/saml/clients" || path.starts_with("/api/saml/clients/") {
+        if read {
+            "clients:read"
+        } else {
+            "clients:write"
+        }
     } else if path == "/api/identity-providers" || path.starts_with("/api/identity-providers/") {
         if read {
             "identity_providers:read"

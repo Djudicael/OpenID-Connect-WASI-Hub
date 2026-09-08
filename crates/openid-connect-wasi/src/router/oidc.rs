@@ -2,7 +2,7 @@
 
 use axum::Json;
 use axum::Router;
-use axum::extract::{Form, Path, Query, State};
+use axum::extract::{Form, OriginalUri, Path, Query, State};
 use axum::response::{Html, IntoResponse};
 use axum::routing::{delete, get, post, put};
 use std::collections::HashMap;
@@ -226,7 +226,151 @@ pub fn router() -> Router<AppState> {
         .route("/realms/{realm}/protocol/openid-connect/social", get(per_realm_list_identity_providers_handler))
         .route("/realms/{realm}/protocol/openid-connect/social/{provider}", get(per_realm_social_login_initiate_handler))
         .route("/realms/{realm}/protocol/openid-connect/social/{provider}/callback", get(per_realm_social_login_callback_handler))
+        .route("/realms/{realm}/protocol/saml/descriptor", get(saml_metadata_handler))
+        .route("/realms/{realm}/protocol/saml", get(saml_sso_get_handler).post(saml_sso_post_handler))
+        .route("/realms/{realm}/protocol/saml/logout", get(saml_logout_get_handler).post(saml_logout_post_handler))
+        .route("/realms/{realm}/protocol/saml/broker/{provider}", get(saml_broker_start_handler))
+        .route("/realms/{realm}/protocol/saml/broker/{provider}/metadata", get(saml_broker_metadata_handler))
+        .route("/realms/{realm}/protocol/saml/broker/{provider}/endpoint", post(saml_broker_acs_handler))
+        .route("/realms/{realm}/protocol/saml/broker/{provider}/logout", get(saml_broker_logout_get_handler).post(saml_broker_logout_post_handler))
         .route("/oidc/error", get(error_handler))
+}
+
+async fn saml_metadata_handler(
+    State(state): State<AppState>,
+    Path(realm): Path<String>,
+) -> axum::response::Response {
+    oidc_oidc::endpoints::saml::idp_metadata(state.oidc_state(), realm).await
+}
+
+async fn saml_sso_get_handler(
+    State(state): State<AppState>,
+    Path(realm): Path<String>,
+    headers: axum::http::HeaderMap,
+    OriginalUri(uri): OriginalUri,
+    Query(params): Query<HashMap<String, String>>,
+) -> axum::response::Response {
+    let resume = params.get("flow").cloned();
+    let wire = uri.query().unwrap_or_default().to_string();
+    oidc_oidc::endpoints::saml::idp_sso(
+        state.oidc_state(),
+        realm,
+        headers,
+        wire,
+        saml::Binding::HttpRedirect,
+        None,
+        resume,
+    )
+    .await
+}
+
+async fn saml_sso_post_handler(
+    State(state): State<AppState>,
+    Path(realm): Path<String>,
+    headers: axum::http::HeaderMap,
+    Form(params): Form<HashMap<String, String>>,
+) -> axum::response::Response {
+    oidc_oidc::endpoints::saml::idp_sso(
+        state.oidc_state(),
+        realm,
+        headers,
+        params.get("SAMLRequest").cloned().unwrap_or_default(),
+        saml::Binding::HttpPost,
+        params.get("RelayState").cloned(),
+        params.get("flow").cloned(),
+    )
+    .await
+}
+
+async fn saml_broker_start_handler(
+    State(state): State<AppState>,
+    Path((realm, provider)): Path<(String, String)>,
+    Query(params): Query<HashMap<String, String>>,
+) -> axum::response::Response {
+    oidc_oidc::endpoints::saml::broker_start(
+        state.oidc_state(),
+        realm,
+        provider,
+        params.get("return_to").cloned().unwrap_or_default(),
+    )
+    .await
+}
+async fn saml_broker_metadata_handler(
+    State(state): State<AppState>,
+    Path((realm, provider)): Path<(String, String)>,
+) -> axum::response::Response {
+    oidc_oidc::endpoints::saml::broker_metadata(state.oidc_state(), realm, provider).await
+}
+async fn saml_broker_acs_handler(
+    State(state): State<AppState>,
+    Path((realm, provider)): Path<(String, String)>,
+    Form(params): Form<HashMap<String, String>>,
+) -> axum::response::Response {
+    oidc_oidc::endpoints::saml::broker_acs(
+        state.oidc_state(),
+        realm,
+        provider,
+        params.get("SAMLResponse").cloned().unwrap_or_default(),
+        params.get("RelayState").cloned().unwrap_or_default(),
+    )
+    .await
+}
+async fn saml_logout_get_handler(
+    State(state): State<AppState>,
+    Path(realm): Path<String>,
+    OriginalUri(uri): OriginalUri,
+    Query(params): Query<HashMap<String, String>>,
+) -> axum::response::Response {
+    oidc_oidc::endpoints::saml::idp_logout(
+        state.oidc_state(),
+        realm,
+        uri.query().unwrap_or_default().to_string(),
+        saml::Binding::HttpRedirect,
+        params.get("RelayState").cloned(),
+    )
+    .await
+}
+async fn saml_logout_post_handler(
+    State(state): State<AppState>,
+    Path(realm): Path<String>,
+    Form(params): Form<HashMap<String, String>>,
+) -> axum::response::Response {
+    oidc_oidc::endpoints::saml::idp_logout(
+        state.oidc_state(),
+        realm,
+        params.get("SAMLRequest").cloned().unwrap_or_default(),
+        saml::Binding::HttpPost,
+        params.get("RelayState").cloned(),
+    )
+    .await
+}
+async fn saml_broker_logout_get_handler(
+    State(state): State<AppState>,
+    Path((realm, provider)): Path<(String, String)>,
+    OriginalUri(uri): OriginalUri,
+) -> axum::response::Response {
+    oidc_oidc::endpoints::saml::broker_logout(
+        state.oidc_state(),
+        realm,
+        provider,
+        uri.query().unwrap_or_default().to_string(),
+        saml::Binding::HttpRedirect,
+    )
+    .await
+}
+async fn saml_broker_logout_post_handler(
+    State(state): State<AppState>,
+    Path((realm, provider)): Path<(String, String)>,
+    Form(params): Form<HashMap<String, String>>,
+) -> axum::response::Response {
+    oidc_oidc::endpoints::saml::broker_logout(
+        state.oidc_state(),
+        realm,
+        provider,
+        params.get("SAMLRequest").cloned().unwrap_or_default(),
+        saml::Binding::HttpPost,
+    )
+    .await
 }
 
 async fn uma_server_from_token(
@@ -1086,11 +1230,13 @@ async fn per_realm_login_page_handler(
                     if (discoveryResponse.ok) {{
                         const discovery = await discoveryResponse.json();
                         if (discovery.identity_provider) {{
+                            const isSaml = discovery.identity_provider.provider_type === 'saml';
                             const social = new URL('/realms/' + encodeURIComponent(realmName) +
-                                '/protocol/openid-connect/social/' + encodeURIComponent(discovery.identity_provider.alias), window.location.origin);
+                                (isSaml ? '/protocol/saml/broker/' : '/protocol/openid-connect/social/') + encodeURIComponent(discovery.identity_provider.alias), window.location.origin);
                             if (returnTo) {{
+                                if (isSaml) social.searchParams.set('return_to', decodeURIComponent(returnTo));
                                 const authorize = new URL(decodeURIComponent(returnTo), window.location.origin);
-                                ['client_id', 'redirect_uri', 'state', 'nonce', 'code_challenge',
+                                if (!isSaml) ['client_id', 'redirect_uri', 'state', 'nonce', 'code_challenge',
                                  'code_challenge_method', 'scope'].forEach(function(name) {{
                                     const value = authorize.searchParams.get(name);
                                     if (value) social.searchParams.set(name, value);

@@ -146,6 +146,7 @@ pub struct OrganizationIdentityProviderLink {
     pub identity_provider_id: Uuid,
     pub alias: String,
     pub display_name: String,
+    pub provider_type: String,
     pub enabled: bool,
     pub redirect_on_email_domain: bool,
 }

@@ -17,6 +17,7 @@ pub mod authorization_services;
 pub mod clients;
 pub mod organizations;
 pub mod realms;
+pub mod saml;
 pub mod user_federation;
 pub mod users;
 
@@ -44,6 +45,11 @@ pub fn conflict() -> Response {
 /// Build the admin API sub-router.
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/api/saml/clients", get(saml::list).post(saml::create))
+        .route(
+            "/api/saml/clients/{id}",
+            put(saml::update).delete(saml::delete_client),
+        )
         .route("/api/stats", get(audit::stats_handler))
         .route(
             "/api/user-federation",
