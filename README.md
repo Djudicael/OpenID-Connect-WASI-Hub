@@ -19,6 +19,7 @@ A multi-tenant OpenID Connect / OAuth2 identity provider built in Rust with firs
 - **Authorization Services**: Protected resources, contextual policies, permission tickets, entitlements, and revocable RPTs. See the [Authorization Services guide](docs/authorization-services.md).
 - **User federation**: LDAP and Active Directory password authentication, directory synchronization, group mapping, and Kerberos browser sign-in. See the [User Federation guide](docs/user-federation.md).
 - **SAML 2.0**: Signed and encrypted SAML application sign-in, upstream identity brokering, metadata exchange, and single logout. See the [SAML guide](docs/saml.md).
+- **Realm portability**: Password-protected realm backup, restore, and transfer including users, credentials, applications, roles, organizations, and signing keys. See the [realm import and export guide](docs/realm-import-export.md).
 
 ## Request correlation and tracing
 

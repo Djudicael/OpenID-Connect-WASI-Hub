@@ -19,6 +19,7 @@ pub mod password_reset_token_repo;
 pub mod protocol_mapper_repo;
 pub mod realm_repo;
 pub mod realm_signing_keys_repo;
+pub mod realm_transfer_repo;
 pub mod required_action_repo;
 pub mod role_composite_repo;
 pub mod role_repo;

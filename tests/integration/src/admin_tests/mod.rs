@@ -49,6 +49,193 @@ async fn admin_login(app: &TestApp) -> String {
         .to_string()
 }
 
+#[tokio::test]
+async fn realm_export_import_is_password_protected_and_restores_identity_data() {
+    let app = TestApp::new().await;
+    let token = admin_login(&app).await;
+    let password = "portable-test-archive-password";
+
+    let export = admin_client(&app, &token)
+        .post(format!(
+            "{}/api/realms/{}/export",
+            app.url(),
+            app.master_realm_id()
+        ))
+        .bearer_auth(&token)
+        .json(&json!({"password":password}))
+        .send()
+        .await
+        .expect("realm export failed");
+    assert_eq!(export.status(), StatusCode::OK);
+    assert!(
+        export
+            .headers()
+            .get(reqwest::header::CONTENT_DISPOSITION)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.contains("realm.json"))
+    );
+    let archive: Value = export.json().await.expect("archive should be JSON");
+    let serialized = archive.to_string();
+    assert!(!serialized.contains(fixtures::TEST_USER_EMAIL));
+    assert_eq!(archive["encryption"], "argon2id-aes-256-gcm");
+
+    let wrong_password = admin_client(&app, &token)
+        .post(format!("{}/api/realms/import", app.url()))
+        .bearer_auth(&token)
+        .json(&json!({
+            "password":"another-long-but-wrong-password",
+            "archive":archive,
+            "replace_existing":true
+        }))
+        .send()
+        .await
+        .expect("wrong-password import request failed");
+    assert_eq!(wrong_password.status(), StatusCode::BAD_REQUEST);
+
+    let conflict = admin_client(&app, &token)
+        .post(format!("{}/api/realms/import", app.url()))
+        .bearer_auth(&token)
+        .json(&json!({
+            "password":password,
+            "archive":archive,
+            "replace_existing":false
+        }))
+        .send()
+        .await
+        .expect("conflicting import request failed");
+    assert_eq!(conflict.status(), StatusCode::CONFLICT);
+
+    let extra_user_id = uuid::Uuid::now_v7();
+    let mut conn = app.db_conn().await;
+    conn.execute_params(
+        "INSERT INTO users(id,realm_id,email) VALUES($1,$2,$3)",
+        &[
+            &extra_user_id,
+            &app.master_realm_id(),
+            &"remove-on-import@example.test",
+        ],
+    )
+    .await
+    .expect("failed to add post-export user");
+    conn.execute_params(
+        "UPDATE realms SET display_name='Changed after export',deleted_at=NOW() WHERE id=$1",
+        &[&app.master_realm_id()],
+    )
+    .await
+    .expect("failed to modify realm");
+    conn.close().await.unwrap();
+
+    let imported = admin_client(&app, &token)
+        .post(format!("{}/api/realms/import", app.url()))
+        .bearer_auth(&token)
+        .json(&json!({
+            "password":password,
+            "archive":archive,
+            "replace_existing":true
+        }))
+        .send()
+        .await
+        .expect("realm replacement failed");
+    assert_eq!(imported.status(), StatusCode::CREATED);
+    let result: Value = imported.json().await.unwrap();
+    assert_eq!(result["replaced"], true);
+
+    let mut conn = app.db_conn().await;
+    let realm = conn
+        .query_one_params(
+            "SELECT display_name,deleted_at FROM realms WHERE id=$1",
+            &[&app.master_realm_id()],
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(realm.get::<String>(0).unwrap(), "Changed after export");
+    assert!(
+        realm
+            .get::<Option<chrono::DateTime<chrono::Utc>>>(1)
+            .unwrap()
+            .is_none()
+    );
+    let extra = conn
+        .query_one_params("SELECT id FROM users WHERE id=$1", &[&extra_user_id])
+        .await
+        .unwrap();
+    assert!(extra.is_none());
+    conn.close().await.unwrap();
+
+    let login_after_restore = app
+        .client()
+        .post(format!("{}/oidc/login", app.url()))
+        .json(&json!({
+            "email":fixtures::TEST_USER_EMAIL,
+            "password":fixtures::TEST_USER_PASSWORD
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(login_after_restore.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn realm_archive_creates_a_realm_on_another_installation() {
+    let source = TestApp::new().await;
+    let source_token = admin_login(&source).await;
+    let created = admin_client(&source, &source_token)
+        .post(format!("{}/api/realms", source.url()))
+        .bearer_auth(&source_token)
+        .json(&json!({
+            "name":"portable-realm",
+            "display_name":"Portable Realm",
+            "enabled":true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created.status(), StatusCode::OK);
+    let created: Value = created.json().await.unwrap();
+    let realm_id = created["id"].as_str().expect("created realm ID");
+    let password = "cross-installation-test-password";
+    let exported = admin_client(&source, &source_token)
+        .post(format!("{}/api/realms/{realm_id}/export", source.url()))
+        .bearer_auth(&source_token)
+        .json(&json!({"password":password}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(exported.status(), StatusCode::OK);
+    let archive: Value = exported.json().await.unwrap();
+
+    let destination = TestApp::new().await;
+    let destination_token = admin_login(&destination).await;
+    let imported = admin_client(&destination, &destination_token)
+        .post(format!("{}/api/realms/import", destination.url()))
+        .bearer_auth(&destination_token)
+        .json(&json!({
+            "password":password,
+            "archive":archive,
+            "replace_existing":false
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(imported.status(), StatusCode::CREATED);
+    let body: Value = imported.json().await.unwrap();
+    assert_eq!(body["name"], "portable-realm");
+    assert_eq!(body["replaced"], false);
+
+    let mut conn = destination.db_conn().await;
+    let restored = conn
+        .query_one_params(
+            "SELECT display_name FROM realms WHERE name=$1 AND deleted_at IS NULL",
+            &[&"portable-realm"],
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(restored.get::<String>(0).unwrap(), "Portable Realm");
+    conn.close().await.unwrap();
+}
+
 fn admin_client(_app: &TestApp, _token: &str) -> reqwest::Client {
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())

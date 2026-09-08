@@ -2,6 +2,7 @@
 
 use axum::Json;
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
@@ -16,6 +17,7 @@ pub mod audit;
 pub mod authorization_services;
 pub mod clients;
 pub mod organizations;
+pub mod realm_transfer;
 pub mod realms;
 pub mod saml;
 pub mod user_federation;
@@ -133,6 +135,11 @@ pub fn router() -> Router<AppState> {
         .route("/api/realms/{id}", get(realms::get))
         .route("/api/realms/{id}", put(realms::update))
         .route("/api/realms/{id}", delete(realms::delete))
+        .route("/api/realms/{id}/export", post(realm_transfer::export))
+        .route(
+            "/api/realms/import",
+            post(realm_transfer::import).layer(DefaultBodyLimit::max(25 * 1024 * 1024)),
+        )
         .route("/api/organizations", get(organizations::list))
         .route("/api/organizations", post(organizations::create))
         .route("/api/organizations/{id}", get(organizations::get))
