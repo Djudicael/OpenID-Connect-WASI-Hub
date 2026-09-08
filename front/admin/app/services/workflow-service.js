@@ -1,0 +1,11 @@
+import { get, post, put, del } from '../core/http.js';
+const base = realmId => `/api/realms/${realmId}/workflows`;
+export const listWorkflows = (realmId, signal) => get(base(realmId), signal);
+export const createWorkflow = (realmId, body, signal) => post(base(realmId), body, signal);
+export const updateWorkflow = (realmId, id, body, signal) => put(`${base(realmId)}/${id}`, body, signal);
+export const deleteWorkflow = (realmId, id, signal) => del(`${base(realmId)}/${id}`, signal);
+export const activateWorkflow = (realmId, id, userId, signal) => post(`${base(realmId)}/${id}/activate`, { user_id: userId }, signal);
+export const listWorkflowExecutions = (realmId, signal) => get(`${base(realmId)}/executions`, signal);
+export const runDueWorkflows = (realmId, signal) => post(`${base(realmId)}/run-due`, { limit: 500 }, signal);
+export const retryWorkflowExecution = (realmId, id, signal) => post(`${base(realmId)}/executions/${id}/retry`, {}, signal);
+export const cancelWorkflowExecution = (realmId, id, signal) => post(`${base(realmId)}/executions/${id}/cancel`, {}, signal);

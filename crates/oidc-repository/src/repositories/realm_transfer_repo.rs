@@ -29,6 +29,10 @@ const TABLES: &[TableSpec] = &[
         export_sql: "SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY t.priority,t.id), '[]'::jsonb) FROM (SELECT * FROM client_policies WHERE realm_id=$1) t",
     },
     TableSpec {
+        name: "workflows",
+        export_sql: "SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY lower(t.name),t.id), '[]'::jsonb) FROM (SELECT * FROM workflows WHERE realm_id=$1 AND deleted_at IS NULL) t",
+    },
+    TableSpec {
         name: "ciba_client_configs",
         export_sql: "SELECT COALESCE(jsonb_agg(to_jsonb(t)), '[]'::jsonb) FROM (SELECT cc.* FROM ciba_client_configs cc JOIN clients c ON c.id=cc.client_id WHERE c.realm_id=$1) t",
     },
@@ -171,6 +175,7 @@ const INSERT_ORDER: &[&str] = &[
     "clients",
     "client_policy_profiles",
     "client_policies",
+    "workflows",
     "ciba_client_configs",
     "signing_keys",
     "scopes",
@@ -277,6 +282,7 @@ impl RealmTransferRepo {
             "DELETE FROM user_federation_providers WHERE realm_id=$1",
             "DELETE FROM saml_service_providers WHERE realm_id=$1",
             "DELETE FROM identity_providers WHERE realm_id=$1",
+            "DELETE FROM workflows WHERE realm_id=$1",
             "DELETE FROM client_policies WHERE realm_id=$1",
             "DELETE FROM client_policy_profiles WHERE realm_id=$1",
             "DELETE FROM authorization_permissions WHERE realm_id=$1",

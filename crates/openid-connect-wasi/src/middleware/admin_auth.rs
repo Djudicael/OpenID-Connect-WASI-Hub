@@ -146,6 +146,18 @@ fn route_is_authorized(method: &Method, path: &str, auth: &AdminAuth) -> bool {
         } else {
             "clients:write"
         }
+    } else if path.starts_with("/api/realms/") && path.contains("/workflows") {
+        if read {
+            "workflows:read"
+        } else if path.ends_with("/run-due")
+            || path.ends_with("/activate")
+            || path.ends_with("/retry")
+            || path.ends_with("/cancel")
+        {
+            "workflows:execute"
+        } else {
+            "workflows:write"
+        }
     } else if path.starts_with("/api/realms/")
         && (path.contains("/client-policies") || path.contains("/client-policy-profiles"))
     {
@@ -466,6 +478,21 @@ mod tests {
                 Method::POST,
                 "/api/realms/01990000-0000-7000-8000-000000000001/client-policy-profiles",
                 "clients:write",
+            ),
+            (
+                Method::GET,
+                "/api/realms/01990000-0000-7000-8000-000000000001/workflows",
+                "workflows:read",
+            ),
+            (
+                Method::POST,
+                "/api/realms/01990000-0000-7000-8000-000000000001/workflows",
+                "workflows:write",
+            ),
+            (
+                Method::POST,
+                "/api/realms/01990000-0000-7000-8000-000000000001/workflows/run-due",
+                "workflows:execute",
             ),
             (Method::GET, "/api/realms", "realms:read"),
             (

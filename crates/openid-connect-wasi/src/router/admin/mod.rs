@@ -23,6 +23,7 @@ pub mod realms;
 pub mod saml;
 pub mod user_federation;
 pub mod users;
+pub mod workflows;
 
 pub fn internal_error() -> Response {
     (
@@ -48,6 +49,34 @@ pub fn conflict() -> Response {
 /// Build the admin API sub-router.
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route(
+            "/api/realms/{realm_id}/workflows",
+            get(workflows::list).post(workflows::create),
+        )
+        .route(
+            "/api/realms/{realm_id}/workflows/executions",
+            get(workflows::executions),
+        )
+        .route(
+            "/api/realms/{realm_id}/workflows/run-due",
+            post(workflows::run_due),
+        )
+        .route(
+            "/api/realms/{realm_id}/workflows/{id}",
+            put(workflows::update).delete(workflows::delete_workflow),
+        )
+        .route(
+            "/api/realms/{realm_id}/workflows/{id}/activate",
+            post(workflows::activate),
+        )
+        .route(
+            "/api/realms/{realm_id}/workflows/executions/{id}/retry",
+            post(workflows::retry),
+        )
+        .route(
+            "/api/realms/{realm_id}/workflows/executions/{id}/cancel",
+            post(workflows::cancel),
+        )
         .route(
             "/api/realms/{realm_id}/client-policy-profiles",
             get(client_policies::list_profiles).post(client_policies::create_profile),

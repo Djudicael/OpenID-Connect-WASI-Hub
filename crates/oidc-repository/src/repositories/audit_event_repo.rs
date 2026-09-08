@@ -343,6 +343,12 @@ impl AuditEventRepo {
         )
         .await
         .map_err(mapper::pg_err)?;
+        if let Err(error) = crate::repositories::workflow_repo::WorkflowRepo
+            .dispatch_event(conn, entity)
+            .await
+        {
+            tracing::warn!("workflow event dispatch failed: {error}");
+        }
         Ok(())
     }
 

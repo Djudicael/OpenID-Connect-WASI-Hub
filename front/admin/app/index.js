@@ -41,6 +41,7 @@ import './pages/identity-providers-page.js';
 import './pages/user-federation-page.js';
 import './pages/password-policies-page.js';
 import './pages/client-policies-page.js';
+import './pages/workflows-page.js';
 import './pages/security-page.js';
 import './pages/maintenance-page.js';
 import './pages/audit-page.js';

@@ -35,3 +35,4 @@ pub mod user_federation_repo;
 pub mod user_group_repo;
 pub mod user_repo;
 pub mod user_role_repo;
+pub mod workflow_repo;

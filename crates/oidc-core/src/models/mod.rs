@@ -37,6 +37,7 @@ pub mod social_login_state;
 pub mod user;
 pub mod user_consent;
 pub mod user_federation;
+pub mod workflow;
 
 pub use account_recovery_token::AccountRecoveryToken;
 pub use address::AddressClaim;
@@ -91,4 +92,8 @@ pub use user::User;
 pub use user_consent::UserConsent;
 pub use user_federation::{
     DirectoryUser, FederatedDirectoryUser, UserFederationProvider, UserFederationType,
+};
+pub use workflow::{
+    Workflow, WorkflowAction, WorkflowCondition, WorkflowExecution, WorkflowExecutionStatus,
+    WorkflowSchedule, WorkflowStep,
 };

@@ -44,6 +44,9 @@ pub mod ciba_tests;
 pub mod client_policy_tests;
 
 #[cfg(test)]
+pub mod workflow_tests;
+
+#[cfg(test)]
 pub mod protocol_mapper_tests;
 
 #[cfg(test)]

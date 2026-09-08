@@ -31,6 +31,7 @@ const routes = [
   { path: '/user-federation', component: 'user-federation-page' },
   { path: '/password-policies', component: 'password-policies-page' },
   { path: '/client-policies', component: 'client-policies-page' },
+  { path: '/workflows', component: 'workflows-page' },
   { path: '/security', component: 'security-page', account: true },
   { path: '/maintenance', component: 'maintenance-page' },
   { path: '/audit', component: 'audit-page' },

@@ -507,6 +507,23 @@ impl PasswordFlow {
                 .grant(&mut conn, user.id, user.realm_id, client.id, &scopes)
                 .await?;
 
+            let login_event = AuditEvent {
+                id: generate_uuid_v7(),
+                realm_id: Some(user.realm_id),
+                event_type: "user.authenticated".to_string(),
+                actor_id: Some(user.id),
+                actor_type: ActorType::User,
+                target_type: Some("user".to_string()),
+                target_id: Some(user.id),
+                details: serde_json::json!({"client_id": client.id, "grant_type": session.grant_type}),
+                ip_address: None,
+                user_agent: None,
+                created_at: now,
+            };
+            if let Err(error) = AuditEventRepo.create(&mut conn, &login_event).await {
+                tracing::warn!("login audit event failed: {error}");
+            }
+
             let token_type = if dpop_jkt.is_some() { "DPoP" } else { "Bearer" };
 
             Ok(PasswordFlowOutcome::Authenticated(PasswordFlowResult {
