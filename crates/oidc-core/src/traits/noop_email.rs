@@ -1,5 +1,5 @@
 use crate::OidcError;
-use crate::traits::email::EmailSender;
+use crate::traits::email::{EmailMessage, EmailSender};
 
 /// A no-op email sender that logs but doesn't actually send emails.
 /// Useful for development and testing.
@@ -7,6 +7,10 @@ pub struct NoOpEmailSender;
 
 #[async_trait::async_trait]
 impl EmailSender for NoOpEmailSender {
+    async fn send_email(&self, to: &str, message: &EmailMessage) -> Result<(), OidcError> {
+        tracing::info!("Email to {}: {}\n{}", to, message.subject, message.text);
+        Ok(())
+    }
     async fn send_password_reset_email(&self, to: &str, reset_url: &str) -> Result<(), OidcError> {
         tracing::info!("Password reset email to {}: {}", to, reset_url);
         Ok(())

@@ -11,7 +11,7 @@ pub mod token_service;
 pub mod mocks;
 
 pub use clock::Clock;
-pub use email::EmailSender;
+pub use email::{EmailMessage, EmailSender};
 pub use hasher::Hasher;
 pub use noop_email::NoOpEmailSender;
 pub use token_service::TokenService;

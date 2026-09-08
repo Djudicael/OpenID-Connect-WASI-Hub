@@ -485,7 +485,7 @@ async fn test_realm_login_page_disabled_realm() {
 }
 
 #[tokio::test]
-async fn test_realm_login_page_theming() {
+async fn test_realm_theme_localization_and_email_templates() {
     let app = TestApp::new().await;
 
     // Update master realm with a custom theme via admin API
@@ -528,7 +528,23 @@ async fn test_realm_login_page_theming() {
                     "login_title": "Master Realm Custom Title",
                     "logo_url": "https://example.com/logo.png",
                     "primary_color": "#ff0000",
-                    "bg_color": "#000000"
+                    "background_color": "#000000",
+                    "card_color": "#ffffff",
+                    "text_color": "#111111",
+                    "font_family": "Arial, sans-serif",
+                    "footer_text": "Example Identity"
+                },
+                "localization": {
+                    "default_locale": "en",
+                    "supported_locales": ["en", "fr"],
+                    "messages": {"fr": {"subtitle": "Connectez-vous pour continuer", "sign_in": "Se connecter"}}
+                },
+                "email_templates": {
+                    "locales": {"fr": {"password_reset": {
+                        "subject": "Mot de passe pour {{realm_name}}",
+                        "text": "Bonjour {{user_name}} : {{action_url}}",
+                        "html": "<p>Bonjour {{user_name}}</p><a href=\"{{action_url}}\">Continuer</a>"
+                    }}}
                 }
             }
         }))
@@ -540,7 +556,7 @@ async fn test_realm_login_page_theming() {
     // Fetch the login page and verify theme is applied
     let resp = app
         .client()
-        .get(format!("{}/realms/master/login", app.url()))
+        .get(format!("{}/realms/master/login?ui_locales=fr", app.url()))
         .send()
         .await
         .expect("realm login page request failed");
@@ -564,6 +580,32 @@ async fn test_realm_login_page_theming() {
         body.contains("#000000"),
         "login page should contain custom bg color"
     );
+    assert!(body.contains("lang=\"fr\""));
+    assert!(body.contains("Connectez-vous pour continuer"));
+    assert!(body.contains("Se connecter"));
+    assert!(body.contains("Example Identity"));
+
+    let preview = app
+        .client()
+        .post(format!(
+            "{}/api/realms/{master_id}/email-template-preview",
+            app.url()
+        ))
+        .header("authorization", format!("Bearer {admin_token}"))
+        .json(&json!({"template":"password_reset","locale":"fr"}))
+        .send()
+        .await
+        .expect("email preview");
+    assert_eq!(preview.status(), StatusCode::OK);
+    let preview: Value = preview.json().await.expect("preview json");
+    assert_eq!(preview["subject"], "Mot de passe pour master");
+    assert!(preview["html"].as_str().unwrap().contains("Alex Morgan"));
+
+    let invalid = app.client().put(format!("{}/api/realms/{master_id}", app.url()))
+        .header("authorization", format!("Bearer {admin_token}"))
+        .json(&json!({"config":{"localization":{"default_locale":"en","supported_locales":["en"]},"email_templates":{"locales":{"en":{"password_reset":{"subject":"{{secret}}","text":"","html":""}}}}}}))
+        .send().await.expect("invalid template update");
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

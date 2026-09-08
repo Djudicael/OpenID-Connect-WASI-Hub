@@ -160,6 +160,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/realms/{id}", get(realms::get))
         .route("/api/realms/{id}", put(realms::update))
         .route("/api/realms/{id}", delete(realms::delete))
+        .route(
+            "/api/realms/{id}/email-template-preview",
+            post(realms::preview_email_template),
+        )
         .route("/api/realms/{id}/export", post(realm_transfer::export))
         .route(
             "/api/realms/import",

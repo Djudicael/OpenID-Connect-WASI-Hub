@@ -24,6 +24,7 @@ pub mod protocol_mapper;
 pub mod pushed_authorization_request;
 
 pub mod realm;
+pub mod realm_presentation;
 pub mod realm_signing_keys;
 pub mod required_action;
 pub mod response_type;
@@ -72,6 +73,9 @@ pub use protocol_mapper::{ClientScopeAssignment, ProtocolMapper, ProtocolMapperT
 pub use pushed_authorization_request::PushedAuthorizationRequest;
 
 pub use realm::Realm;
+pub use realm_presentation::{
+    EmailTemplate, RealmEmailTemplates, RealmLocalization, RealmPresentation, RealmTheme,
+};
 pub use realm_signing_keys::RealmSigningKeys;
 pub use required_action::{
     AuthenticationFlowConfig, RequiredActionKind, RequiredActionSession, StepUpPolicy, TermsPolicy,

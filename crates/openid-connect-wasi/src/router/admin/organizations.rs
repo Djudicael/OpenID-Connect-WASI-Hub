@@ -14,6 +14,7 @@ use oidc_repository::mapper::pg_err;
 use oidc_repository::repositories::group_repo::GroupRepo;
 use oidc_repository::repositories::identity_provider_repo::IdentityProviderRepo;
 use oidc_repository::repositories::organization_repo::OrganizationRepo;
+use oidc_repository::repositories::realm_repo::RealmRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 use oidc_repository::with_transaction;
 use serde::Deserialize;
@@ -784,11 +785,28 @@ pub async fn create_invitation(
         state.config.issuer.trim_end_matches('/'),
         urlencoding::encode(&token)
     );
-    if let Err(error) = state
-        .email_sender
-        .send_organization_invitation(&email, &organization.name, &invitation_url)
-        .await
-    {
+    let realm = match RealmRepo.find_by_id(&mut conn, organization.realm_id).await {
+        Ok(Some(realm)) => realm,
+        Ok(None) => return not_found(),
+        Err(error) => return repository_error("load invitation realm", error),
+    };
+    let presentation = oidc_core::models::RealmPresentation::from_realm_config(&realm.config);
+    let locale = presentation.resolve_locale(None, None);
+    let expires_in = format!("{} hours", request.expires_in_hours);
+    let message = match presentation.render_email(
+        "organization_invitation",
+        &locale,
+        &[
+            ("realm_name", realm.display_name.as_str()),
+            ("organization_name", organization.name.as_str()),
+            ("action_url", invitation_url.as_str()),
+            ("expires_in", expires_in.as_str()),
+        ],
+    ) {
+        Ok(message) => message,
+        Err(error) => return repository_error("render organization invitation", error),
+    };
+    if let Err(error) = state.email_sender.send_email(&email, &message).await {
         tracing::warn!("failed to send organization invitation to {email}: {error}");
     }
 

@@ -5,7 +5,7 @@ use axum::extract::State;
 use serde::{Deserialize, Serialize};
 
 use oidc_core::OidcError;
-use oidc_core::models::PasswordResetToken;
+use oidc_core::models::{PasswordResetToken, RealmPresentation};
 use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, sha2_256_hex};
 use oidc_repository::mapper::pg_err;
 use oidc_repository::repositories::password_reset_token_repo::PasswordResetTokenRepo;
@@ -114,11 +114,20 @@ pub async fn password_reset_request_handler(
     );
 
     // Best-effort email sending — don't fail the request if email fails
-    if let Err(e) = state
-        .email_sender
-        .send_password_reset_email(&req.email, &reset_url)
-        .await
-    {
+    let presentation = RealmPresentation::from_realm_config(&realm.config);
+    let locale = presentation.resolve_locale(Some(&user.locale), None);
+    let user_name = user.username.as_deref().unwrap_or(&user.email);
+    let message = presentation.render_email(
+        "password_reset",
+        &locale,
+        &[
+            ("realm_name", realm.display_name.as_str()),
+            ("user_name", user_name),
+            ("action_url", reset_url.as_str()),
+            ("expires_in", "15 minutes"),
+        ],
+    )?;
+    if let Err(e) = state.email_sender.send_email(&req.email, &message).await {
         tracing::warn!(
             "Failed to send password reset email to {}: {}",
             req.email,

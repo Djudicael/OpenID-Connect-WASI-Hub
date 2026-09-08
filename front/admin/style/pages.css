@@ -1,5 +1,10 @@
 /* Page-specific styles */
 
+.email-template-editor { min-height: 8rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.email-preview { margin-top: 1rem; padding: 1rem; border: 1px solid var(--color-border); border-radius: var(--radius-md); }
+.email-preview pre { white-space: pre-wrap; font: inherit; color: var(--color-text-muted); }
+.email-preview iframe { width: 100%; min-height: 12rem; border: 1px solid var(--color-border); background: white; }
+
 /* Login */
 .login-box { max-width: 24rem; margin: 4rem auto 0; padding: 2rem; background: var(--color-surface); border-radius: var(--radius-md); box-shadow: var(--shadow-md); }
 .login-title { font-size: 1.5rem; font-weight: 600; margin-bottom: 0.25rem; text-align: center; }

@@ -102,7 +102,17 @@ pub async fn profile_handler(
     let permissions = UserRoleRepo
         .find_effective_permissions(&mut conn, account.user.id)
         .await?;
-    Ok(Json(public_profile(&account.user, !permissions.is_empty())))
+    let realm = RealmRepo
+        .find_by_id(&mut conn, account.user.realm_id)
+        .await?
+        .ok_or_else(|| OidcError::NotFound("realm".into()))?;
+    let presentation = oidc_core::models::RealmPresentation::from_realm_config(&realm.config);
+    let mut profile = public_profile(&account.user, !permissions.is_empty());
+    profile["presentation"] = json!({
+        "theme": presentation.theme,
+        "localization": presentation.localization,
+    });
+    Ok(Json(profile))
 }
 
 #[derive(Debug, Deserialize)]

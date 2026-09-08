@@ -160,6 +160,9 @@ pub async fn create(State(state): State<AppState>, auth: AdminAuth, body: String
     {
         return (StatusCode::BAD_REQUEST, Json(json!({"error":message}))).into_response();
     }
+    if let Err(message) = oidc_core::models::RealmPresentation::validate_realm_config(&config) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error":message}))).into_response();
+    }
     let realm = oidc_core::models::Realm {
         id: realm_id,
         name: req.name,
@@ -286,12 +289,68 @@ pub async fn update(
         {
             return (StatusCode::BAD_REQUEST, Json(json!({"error":message}))).into_response();
         }
+        if let Err(message) = oidc_core::models::RealmPresentation::validate_realm_config(&v) {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error":message}))).into_response();
+        }
         realm.config = v;
     }
     match RealmRepo.update(&mut conn, &realm).await {
         Ok(()) => Json(json!({"updated": true})).into_response(),
         Err(e) => {
             tracing::error!("update realm error: {e}");
+            internal_error()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct EmailTemplatePreviewRequest {
+    template: String,
+    locale: String,
+}
+
+pub async fn preview_email_template(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+    Json(req): Json<EmailTemplatePreviewRequest>,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    if let Some(r) = realm_or_forbidden(&auth, id) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let realm = match RealmRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(realm)) => realm,
+        Ok(None) => return not_found(),
+        Err(error) => {
+            tracing::error!("email template preview realm fetch failed: {error}");
+            return internal_error();
+        }
+    };
+    let presentation = oidc_core::models::RealmPresentation::from_realm_config(&realm.config);
+    match presentation.render_email(
+        &req.template,
+        &req.locale,
+        &[
+            ("realm_name", realm.display_name.as_str()),
+            ("user_name", "Alex Morgan"),
+            ("organization_name", "Example Organization"),
+            ("action_url", "https://identity.example.test/action/sample"),
+            ("expires_in", "24 hours"),
+        ],
+    ) {
+        Ok(message) => Json(message).into_response(),
+        Err(oidc_core::OidcError::InvalidInput(message)) => {
+            (StatusCode::BAD_REQUEST, Json(json!({"error":message}))).into_response()
+        }
+        Err(error) => {
+            tracing::error!("email template preview failed: {error}");
             internal_error()
         }
     }

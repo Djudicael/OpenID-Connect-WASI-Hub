@@ -1096,6 +1096,7 @@ catch(error){{message.className='error';message.textContent=error.message;button
 async fn per_realm_login_page_handler(
     State(state): State<AppState>,
     Path(realm): Path<String>,
+    headers: axum::http::HeaderMap,
     Query(params): Query<HashMap<String, String>>,
 ) -> axum::response::Response {
     let mut conn = match wasi_pg_client::Connection::connect(&state.db_config).await {
@@ -1140,50 +1141,47 @@ async fn per_realm_login_page_handler(
             .into_response();
     }
 
-    // Extract theme from config JSONB
-    let theme = realm_entity.config.get("theme");
-    let login_title = theme
-        .and_then(|t| t.get("login_title"))
-        .and_then(|v| v.as_str())
-        .unwrap_or(&realm_entity.display_name);
-    let logo_url = theme
-        .and_then(|t| t.get("logo_url"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let primary_color = theme
-        .and_then(|t| t.get("primary_color"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("#2563eb");
-    let bg_color = theme
-        .and_then(|t| t.get("bg_color"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("#f8fafc");
+    let presentation =
+        oidc_core::models::RealmPresentation::from_realm_config(&realm_entity.config);
+    let requested_locales = params.get("ui_locales").map(String::as_str);
+    let accept_language = headers
+        .get(axum::http::header::ACCEPT_LANGUAGE)
+        .and_then(|v| v.to_str().ok());
+    let locale = presentation.resolve_locale(requested_locales, accept_language);
+    let theme = &presentation.theme;
+    let login_title = if theme.login_title.is_empty() {
+        &realm_entity.display_name
+    } else {
+        &theme.login_title
+    };
 
     let return_to = params.get("return_to").cloned().unwrap_or_default();
     let state_param = params.get("state").cloned().unwrap_or_default();
+    let script_nonce = uuid::Uuid::new_v4().simple().to_string();
 
     let html = format!(
         r##"<!DOCTYPE html>
-<html lang="en">
+<html lang="{locale}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{} - Sign In</title>
+    <title>{title} - {page_title}</title>
+    {favicon}
     <style>
-        :root {{ --primary: {}; --bg: {}; }}
+        :root {{ --primary: {primary}; --bg: {background}; --card: {card}; --text: {text}; --font: {font}; }}
         * {{ box-sizing: border-box; }}
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: var(--font);
             display: flex; align-items: center; justify-content: center;
             min-height: 100vh; margin: 0; background: var(--bg);
         }}
         .login-box {{
-            background: #fff; padding: 2.5rem; border-radius: 12px;
+            background: var(--card); color: var(--text); padding: 2.5rem; border-radius: 12px;
             box-shadow: 0 4px 16px rgba(0,0,0,0.08); width: 100%; max-width: 24rem;
             text-align: center;
         }}
         .logo {{ max-height: 3rem; margin-bottom: 1rem; }}
-        h1 {{ font-size: 1.5rem; font-weight: 600; margin: 0 0 0.25rem 0; color: #111; }}
+        h1 {{ font-size: 1.5rem; font-weight: 600; margin: 0 0 0.25rem 0; color: var(--text); }}
         .subtitle {{ color: #6b7280; margin-bottom: 1.5rem; font-size: 0.875rem; }}
         .form {{ display: flex; flex-direction: column; gap: 1rem; text-align: left; }}
         label {{ display: block; font-size: 0.875rem; font-weight: 500; margin-bottom: 0.25rem; color: #374151; }}
@@ -1196,8 +1194,13 @@ async fn per_realm_login_page_handler(
         .pw-wrap input {{ padding-right: 2.5rem; }}
         .toggle-pw {{
             position: absolute; right: 0.5rem; top: 50%; transform: translateY(-50%);
-            background: none; border: none; cursor: pointer; font-size: 1rem; color: #9ca3af;
+            display: grid; place-items: center; width: 2rem; height: 2rem; padding: 0;
+            background: none; border: none; border-radius: 4px; cursor: pointer; color: #6b7280;
         }}
+        .toggle-pw:hover {{ color: var(--text); background: rgba(107,114,128,0.08); }}
+        .toggle-pw:focus-visible {{ outline: 2px solid var(--primary); outline-offset: 1px; }}
+        .toggle-pw svg {{ display: block; width: 1.125rem; height: 1.125rem; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }}
+        .toggle-pw svg[hidden] {{ display: none; }}
         button[type="submit"] {{
             width: 100%; padding: 0.75rem; font-size: 1rem; font-weight: 500;
             background: var(--primary); color: #fff; border: none; border-radius: 6px;
@@ -1214,47 +1217,57 @@ async fn per_realm_login_page_handler(
 </head>
 <body>
     <div class="login-box">
-        {}
-        <h1>{}</h1>
-        <p class="subtitle">Sign in to continue</p>
-        <form class="form" id="loginForm">
+        {logo}
+        <h1>{title}</h1>
+        <p class="subtitle">{subtitle}</p>
+        <form class="form" id="loginForm" action="/realms/{realm_path}/login" method="post">
             <div>
-                <label for="email">Email</label>
-                <input id="email" type="email" placeholder="you@example.com" required autofocus />
+                <label for="email">{email_label}</label>
+                <input id="email" type="email" placeholder="{email_placeholder}" required autofocus />
             </div>
             <div>
-                <label for="password">Password</label>
+                <label for="password">{password_label}</label>
                 <div class="pw-wrap">
                     <input id="password" type="password" placeholder="••••••••" required />
-                    <button type="button" class="toggle-pw" id="togglePw" aria-label="Toggle password visibility">&#128065;</button>
+                    <button type="button" class="toggle-pw" id="togglePw" aria-label="{toggle_password}" aria-pressed="false">
+                        <svg id="showPasswordIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+                        <svg id="hidePasswordIcon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="m3 3 18 18"/><path d="M10.6 10.7a2 2 0 0 0 2.7 2.7"/><path d="M9.9 4.2A10.8 10.8 0 0 1 12 4c6.5 0 10 8 10 8a18.5 18.5 0 0 1-2.1 3.2"/><path d="M6.6 6.6C3.5 8.7 2 12 2 12s3.5 8 10 8a9.8 9.8 0 0 0 4.2-.9"/></svg>
+                    </button>
                 </div>
             </div>
-            <button type="submit" id="submitBtn">Sign In</button>
+            <button type="submit" id="submitBtn">{sign_in}</button>
             <div class="error" id="errorBox"></div>
         </form>
-        <div class="footer">Powered by OpenID Connect Hub</div>
+        <div class="footer">{footer}</div>
     </div>
-    <script>
+    <script nonce="{script_nonce}">
         (function() {{
             const form = document.getElementById('loginForm');
             const btn = document.getElementById('submitBtn');
             const errorBox = document.getElementById('errorBox');
             const togglePw = document.getElementById('togglePw');
             const pwInput = document.getElementById('password');
-            const returnTo = {};
-            const stateParam = {};
-            const realmName = '{}';
+            const showPasswordIcon = document.getElementById('showPasswordIcon');
+            const hidePasswordIcon = document.getElementById('hidePasswordIcon');
+            const returnTo = {return_to};
+            const stateParam = {state_param};
+            const realmName = {realm_json};
+            const signingIn = {signing_in_json};
+            const signIn = {sign_in_json};
+            const loginFailed = {login_failed_json};
 
             togglePw.addEventListener('click', function() {{
                 const isPw = pwInput.type === 'password';
                 pwInput.type = isPw ? 'text' : 'password';
-                togglePw.textContent = isPw ? String.fromCodePoint(0x1F576) : String.fromCodePoint(0x1F441);
+                togglePw.setAttribute('aria-pressed', String(isPw));
+                showPasswordIcon.hidden = isPw;
+                hidePasswordIcon.hidden = !isPw;
             }});
 
             form.addEventListener('submit', async function(e) {{
                 e.preventDefault();
                 btn.disabled = true;
-                btn.textContent = 'Signing in...';
+                btn.textContent = signingIn;
                 errorBox.style.display = 'none';
 
                 try {{
@@ -1280,18 +1293,18 @@ async fn per_realm_login_page_handler(
                             return;
                         }}
                     }}
-                    const res = await fetch('/realms/{}/login', {{
+                    const res = await fetch('/realms/' + encodeURIComponent(realmName) + '/login', {{
                         method: 'POST',
                         headers: {{ 'Content-Type': 'application/json' }},
                         body: JSON.stringify({{
                             email: document.getElementById('email').value,
                             password: pwInput.value,
-                            realm: '{}'
+                            realm: realmName
                         }})
                     }});
                     const data = await res.json();
                     if (!res.ok) {{
-                        throw new Error(data.error_description || data.error || 'Login failed');
+                        throw new Error(data.error_description || data.error || loginFailed);
                     }}
                     if (data.mfa_required || data.required_actions_pending) {{
                         const login = new URL('/login', window.location.origin);
@@ -1314,41 +1327,74 @@ async fn per_realm_login_page_handler(
                     errorBox.textContent = err.message;
                     errorBox.style.display = 'block';
                     btn.disabled = false;
-                    btn.textContent = 'Sign In';
+                    btn.textContent = signIn;
                 }}
             }});
         }})();
     </script>
 </body>
 </html>"##,
-        html_escape(login_title),
-        primary_color,
-        bg_color,
-        if logo_url.is_empty() {
+        locale = oidc_core::models::realm_presentation::escape_html(&locale),
+        title = html_escape(login_title),
+        page_title = html_escape(&presentation.message(&locale, "page_title")),
+        favicon = if theme.favicon_url.is_empty() {
+            String::new()
+        } else {
+            format!(
+                r#"<link rel="icon" href="{}">"#,
+                html_escape(&theme.favicon_url)
+            )
+        },
+        primary = theme.primary_color,
+        background = theme.background_color,
+        card = theme.card_color,
+        text = theme.text_color,
+        font = html_escape(&theme.font_family),
+        logo = if theme.logo_url.is_empty() {
             String::new()
         } else {
             format!(
                 r#"<img src="{}" alt="Logo" class="logo" />"#,
-                html_escape(logo_url)
+                html_escape(&theme.logo_url)
             )
         },
-        html_escape(login_title),
-        if return_to.is_empty() {
+        subtitle = html_escape(&presentation.message(&locale, "subtitle")),
+        email_label = html_escape(&presentation.message(&locale, "email")),
+        email_placeholder = html_escape(&presentation.message(&locale, "email_placeholder")),
+        password_label = html_escape(&presentation.message(&locale, "password")),
+        toggle_password = html_escape(&presentation.message(&locale, "toggle_password")),
+        sign_in = html_escape(&presentation.message(&locale, "sign_in")),
+        footer = html_escape(&theme.footer_text),
+        realm_path = html_escape(&realm),
+        return_to = if return_to.is_empty() {
             "null".to_string()
         } else {
-            format!("'{}'", html_escape(&return_to))
+            serde_json::to_string(&return_to).unwrap_or_else(|_| "null".into())
         },
-        if state_param.is_empty() {
+        state_param = if state_param.is_empty() {
             "null".to_string()
         } else {
-            format!("'{}'", html_escape(&state_param))
+            serde_json::to_string(&state_param).unwrap_or_else(|_| "null".into())
         },
-        html_escape(&realm),
-        html_escape(&realm),
-        html_escape(&realm)
+        realm_json = serde_json::to_string(&realm).unwrap_or_else(|_| "null".into()),
+        signing_in_json =
+            serde_json::to_string(&presentation.message(&locale, "signing_in")).unwrap(),
+        sign_in_json = serde_json::to_string(&presentation.message(&locale, "sign_in")).unwrap(),
+        login_failed_json =
+            serde_json::to_string(&presentation.message(&locale, "login_failed")).unwrap(),
+        script_nonce = script_nonce,
     );
 
-    Html(html).into_response()
+    let mut response = Html(html).into_response();
+    let policy = format!(
+        "default-src 'self'; script-src 'nonce-{script_nonce}'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+    );
+    if let Ok(value) = axum::http::HeaderValue::from_str(&policy) {
+        response
+            .headers_mut()
+            .insert(axum::http::header::CONTENT_SECURITY_POLICY, value);
+    }
+    response
 }
 
 fn html_escape(input: &str) -> String {

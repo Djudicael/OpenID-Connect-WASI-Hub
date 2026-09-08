@@ -19,3 +19,7 @@ export function importRealm(archive, password, replaceExisting, signal) {
     replace_existing: replaceExisting,
   }, signal);
 }
+
+export function previewEmailTemplate(id, template, locale, signal) {
+  return post(`/api/realms/${id}/email-template-preview`, { template, locale }, signal);
+}

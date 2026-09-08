@@ -156,6 +156,8 @@ fn route_is_authorized(method: &Method, path: &str, auth: &AdminAuth) -> bool {
         }
     } else if path.starts_with("/api/realms/") && path.ends_with("/export") {
         "realms:read"
+    } else if path.starts_with("/api/realms/") && path.ends_with("/email-template-preview") {
+        "realms:read"
     } else if path == "/api/realms" || path.starts_with("/api/realms/") {
         if read { "realms:read" } else { "realms:write" }
     } else if path == "/api/sessions" || path.starts_with("/api/sessions/") {
@@ -469,6 +471,11 @@ mod tests {
             (
                 Method::POST,
                 "/api/realms/01990000-0000-7000-8000-000000000001/export",
+                "realms:read",
+            ),
+            (
+                Method::POST,
+                "/api/realms/01990000-0000-7000-8000-000000000001/email-template-preview",
                 "realms:read",
             ),
             (Method::POST, "/api/realms/import", "realms:write"),

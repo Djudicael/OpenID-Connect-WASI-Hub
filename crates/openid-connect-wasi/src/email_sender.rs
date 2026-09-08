@@ -1,5 +1,5 @@
 use oidc_core::OidcError;
-use oidc_core::traits::EmailSender;
+use oidc_core::traits::{EmailMessage, EmailSender};
 use serde_json::json;
 
 /// Transactional email sender backed by the Resend HTTP API.
@@ -18,12 +18,13 @@ impl ResendEmailSender {
         }
     }
 
-    async fn send(&self, to: &str, subject: &str, text: String) -> Result<(), OidcError> {
+    async fn send(&self, to: &str, message: &EmailMessage) -> Result<(), OidcError> {
         let body = json!({
             "from": self.from,
             "to": [to],
-            "subject": subject,
-            "text": text,
+            "subject": message.subject,
+            "text": message.text,
+            "html": message.html,
         })
         .to_string();
 
@@ -72,39 +73,7 @@ impl ResendEmailSender {
 
 #[async_trait::async_trait]
 impl EmailSender for ResendEmailSender {
-    async fn send_password_reset_email(&self, to: &str, reset_url: &str) -> Result<(), OidcError> {
-        self.send(
-            to,
-            "Reset your password",
-            format!("Use this link to reset your password:\n\n{reset_url}\n\nIf you did not request this, ignore this email."),
-        )
-        .await
-    }
-
-    async fn send_email_verification(
-        &self,
-        to: &str,
-        verification_url: &str,
-    ) -> Result<(), OidcError> {
-        self.send(
-            to,
-            "Verify your email address",
-            format!("Use this link to verify your email address:\n\n{verification_url}"),
-        )
-        .await
-    }
-
-    async fn send_organization_invitation(
-        &self,
-        to: &str,
-        organization_name: &str,
-        invitation_url: &str,
-    ) -> Result<(), OidcError> {
-        self.send(
-            to,
-            &format!("Invitation to join {organization_name}"),
-            format!("You have been invited to join {organization_name}.\n\nAccept the invitation:\n{invitation_url}"),
-        )
-        .await
+    async fn send_email(&self, to: &str, message: &EmailMessage) -> Result<(), OidcError> {
+        self.send(to, message).await
     }
 }

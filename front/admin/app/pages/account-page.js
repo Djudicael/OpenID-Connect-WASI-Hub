@@ -35,11 +35,23 @@ class AccountPage extends BaseComponent {
         listLinkedIdentities(this.signal), listApplications(this.signal), listCibaRequests(this.signal),
       ]);
       authService.setAdministrationAccess(profile.administration_access);
+      this._applyPresentation(profile.presentation);
       this.setState({ profile, sessions: sessions.items || [], identities: identities.items || [], applications: applications.items || [], cibaRequests: ciba.items || [], loading: false });
     } catch (error) {
       if (error.name !== 'AbortError') handleApiError(error, 'Could not load your account');
       this.setState({ loading: false });
     }
+  }
+
+  _applyPresentation(presentation) {
+    const theme = presentation?.theme;
+    if (!theme) return;
+    const root = document.documentElement;
+    if (theme.primary_color) root.style.setProperty('--color-primary', theme.primary_color);
+    if (theme.background_color) root.style.setProperty('--color-bg', theme.background_color);
+    if (theme.card_color) root.style.setProperty('--color-surface', theme.card_color);
+    if (theme.text_color) root.style.setProperty('--color-text', theme.text_color);
+    if (theme.font_family) root.style.setProperty('--font-sans', theme.font_family);
   }
 
   _field(name, value) {
