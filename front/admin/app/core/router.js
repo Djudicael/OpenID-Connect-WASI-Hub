@@ -27,6 +27,7 @@ const routes = [
   { path: '/scopes/:id', component: 'scope-detail-page' },
   { path: '/authorization-services', component: 'authorization-services-page' },
   { path: '/identity-providers', component: 'identity-providers-page' },
+  { path: '/user-federation', component: 'user-federation-page' },
   { path: '/password-policies', component: 'password-policies-page' },
   { path: '/security', component: 'security-page', account: true },
   { path: '/maintenance', component: 'maintenance-page' },

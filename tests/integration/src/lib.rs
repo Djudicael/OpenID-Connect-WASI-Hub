@@ -56,6 +56,9 @@ pub mod scope_tests;
 pub mod social_login_tests;
 
 #[cfg(test)]
+pub mod user_federation_tests;
+
+#[cfg(test)]
 pub mod security_tests;
 
 #[cfg(test)]

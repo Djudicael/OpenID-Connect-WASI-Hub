@@ -37,6 +37,7 @@ import './pages/scopes-page.js';
 import './pages/scope-detail-page.js';
 import './pages/authorization-services-page.js';
 import './pages/identity-providers-page.js';
+import './pages/user-federation-page.js';
 import './pages/password-policies-page.js';
 import './pages/security-page.js';
 import './pages/maintenance-page.js';

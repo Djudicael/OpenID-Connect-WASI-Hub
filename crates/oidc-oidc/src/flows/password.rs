@@ -5,7 +5,7 @@ use oidc_core::models::Session;
 use oidc_core::models::audit_event::{ActorType, AuditEvent};
 use oidc_core::traits::hasher::{Argon2idHasher, Hasher};
 use oidc_core::traits::token_service::{AccessTokenExtraClaims, IdTokenExtraClaims, TokenService};
-use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, is_valid_email, sha2_256_hex};
+use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, sha2_256_hex};
 use oidc_repository::mapper::pg_err;
 use oidc_repository::repositories::audit_event_repo::AuditEventRepo;
 use oidc_repository::repositories::client_repo::ClientRepo;
@@ -14,6 +14,7 @@ use oidc_repository::repositories::organization_repo::OrganizationRepo;
 use oidc_repository::repositories::realm_repo::RealmRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::repositories::user_consent_repo::UserConsentRepo;
+use oidc_repository::repositories::user_federation_repo::UserFederationRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 use oidc_repository::with_transaction;
 
@@ -46,6 +47,59 @@ pub enum PasswordFlowOutcome {
 /// Resource Owner Password Credentials flow handler.
 pub struct PasswordFlow;
 
+async fn authenticate_directory(
+    state: &OidcState,
+    conn: &mut oidc_repository::Connection,
+    realm_id: uuid::Uuid,
+    identifier: &str,
+    password: &str,
+) -> Result<Option<(oidc_core::models::User, String)>, OidcError> {
+    let providers = UserFederationRepo.list_enabled(conn, realm_id).await?;
+    for provider in providers {
+        if provider.provider_type == oidc_core::models::UserFederationType::Kerberos {
+            continue;
+        }
+        match crate::federation::authenticate(state, &provider, identifier, password).await {
+            Ok(Some(directory_user)) => {
+                let user =
+                    crate::federation::import_user(conn, &provider, &directory_user, true).await?;
+                return Ok(Some((user, provider.provider_type.to_string())));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                // A failed provider must not prevent a lower-priority directory from authenticating.
+                tracing::warn!(provider_id = %provider.id, "directory authentication provider failed: {error}");
+            }
+        }
+    }
+    Ok(None)
+}
+
+async fn authenticate_kerberos_directory(
+    state: &OidcState,
+    conn: &mut oidc_repository::Connection,
+    realm_id: uuid::Uuid,
+    token: &str,
+) -> Result<Option<oidc_core::models::User>, OidcError> {
+    for provider in UserFederationRepo.list_enabled(conn, realm_id).await? {
+        if provider.provider_type != oidc_core::models::UserFederationType::Kerberos {
+            continue;
+        }
+        match crate::federation::authenticate_kerberos(state, &provider, token).await {
+            Ok(Some(directory_user)) => {
+                return crate::federation::import_user(conn, &provider, &directory_user, true)
+                    .await
+                    .map(Some);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(provider_id = %provider.id, "Kerberos authentication provider failed: {error}");
+            }
+        }
+    }
+    Ok(None)
+}
+
 impl PasswordFlow {
     /// Execute the password flow.
     ///
@@ -64,14 +118,15 @@ impl PasswordFlow {
         mfa_proof: Option<&LoginMfaProof>,
         requested_scopes: &[String],
         requested_acr_values: &[String],
+        kerberos_token: Option<&str>,
     ) -> Result<PasswordFlowOutcome, OidcError> {
         // --- Input validation ---
-        if !is_valid_email(email) {
+        if kerberos_token.is_none() && (email.trim().is_empty() || email.len() > 320) {
             return Err(OidcError::AuthenticationFailed(
                 "Invalid credentials".to_string(),
             ));
         }
-        if password.is_empty() || password.len() < 8 {
+        if kerberos_token.is_none() && (password.is_empty() || password.len() < 8) {
             return Err(OidcError::AuthenticationFailed(
                 "Invalid credentials".to_string(),
             ));
@@ -96,27 +151,65 @@ impl PasswordFlow {
             }
 
             // --- Brute-force protection: check failed attempts ---
-            let failure_count = AuditEventRepo
-                .count_recent_failures(&mut conn, email, realm.id)
-                .await?;
+            let failure_count = if kerberos_token.is_some() {
+                0
+            } else {
+                AuditEventRepo
+                    .count_recent_failures(&mut conn, email, realm.id)
+                    .await?
+            };
             if failure_count >= 5 {
                 return Err(OidcError::AuthorizationDenied(
                     "Too many failed attempts. Please try again later.".to_string(),
                 ));
             }
 
-            // Find user by email
-            let user = match UserRepo.find_by_email(&mut conn, realm.id, email).await? {
-                Some(u) => u,
-                None => {
-                    // Perform dummy hash verification to prevent timing oracle
-                    let _ = state.hasher.verify(
-                        "dummy",
-                        "$argon2id$v=19$m=19456,t=2,p=1$dummysalt$dummyhash",
-                    );
-                    return Err(OidcError::AuthenticationFailed(
-                        "Invalid credentials".to_string(),
-                    ));
+            // Resolve local users first, then enabled LDAP/Active Directory providers.
+            let mut federation_amr = None;
+            let user = if let Some(token) = kerberos_token {
+                match authenticate_kerberos_directory(state, &mut conn, realm.id, token).await? {
+                    Some(user) => {
+                        federation_amr = Some("kerberos".to_string());
+                        user
+                    }
+                    None => {
+                        return Err(OidcError::AuthenticationFailed(
+                            "Invalid credentials".to_string(),
+                        ));
+                    }
+                }
+            } else {
+                let local_user = if email.contains('@') {
+                    UserRepo.find_by_email(&mut conn, realm.id, email).await?
+                } else {
+                    UserRepo
+                        .find_by_username(&mut conn, realm.id, email)
+                        .await?
+                };
+                if local_user
+                    .as_ref()
+                    .and_then(|user| user.password_hash.as_ref())
+                    .is_some()
+                {
+                    local_user.expect("local password user was checked")
+                } else {
+                    match authenticate_directory(state, &mut conn, realm.id, email, password)
+                        .await?
+                    {
+                        Some((user, amr)) => {
+                            federation_amr = Some(amr);
+                            user
+                        }
+                        None => {
+                            let _ = state.hasher.verify(
+                                "dummy",
+                                "$argon2id$v=19$m=19456,t=2,p=1$dummysalt$dummyhash",
+                            );
+                            return Err(OidcError::AuthenticationFailed(
+                                "Invalid credentials".to_string(),
+                            ));
+                        }
+                    }
                 }
             };
 
@@ -134,23 +227,19 @@ impl PasswordFlow {
                 ));
             }
 
-            // Verify password
-            let password_hash = match user.password_hash {
-                Some(ref h) => h,
-                None => {
-                    return Err(OidcError::AuthenticationFailed(
-                        "Invalid credentials".to_string(),
-                    ));
-                }
-            };
-
-            let hasher = Argon2idHasher::new();
-            let valid = match hasher.verify(password, password_hash) {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::error!("Internal error: verify failed: {}", e);
-                    return Err(OidcError::Internal(e.to_string()));
-                }
+            // Directory passwords are verified by the configured gateway.
+            let valid = if federation_amr.is_some() {
+                true
+            } else {
+                let password_hash = user
+                    .password_hash
+                    .as_ref()
+                    .ok_or_else(|| OidcError::AuthenticationFailed("Invalid credentials".into()))?;
+                let hasher = Argon2idHasher::new();
+                hasher.verify(password, password_hash).map_err(|e| {
+                    tracing::error!("Internal error: verify failed: {e}");
+                    OidcError::Internal(e.to_string())
+                })?
             };
 
             if !valid {
@@ -191,7 +280,7 @@ impl PasswordFlow {
 
             let has_mfa = MfaRepo.find_totp(&mut conn, user.id).await?.is_some()
                 || !MfaRepo.list_webauthn(&mut conn, user.id).await?.is_empty();
-            let (acr, amr) = if has_mfa {
+            let (acr, mut amr) = if has_mfa {
                 match mfa_proof {
                     Some(proof) => {
                         let Some(verified) = mfa::verify_login(
@@ -211,11 +300,22 @@ impl PasswordFlow {
                     }
                 }
             } else {
-                (
-                    oidc_core::utils::ACR_BRONZE.to_string(),
-                    vec![oidc_core::utils::AMR_PWD.to_string()],
-                )
+                (oidc_core::utils::ACR_BRONZE.to_string(), {
+                    let mut methods = vec![oidc_core::utils::AMR_PWD.to_string()];
+                    if let Some(method) = federation_amr.clone() {
+                        methods.push(method);
+                    }
+                    methods
+                })
             };
+            if let Some(method) = federation_amr {
+                if method == "kerberos" {
+                    amr.retain(|value| value != oidc_core::utils::AMR_PWD);
+                }
+                if !amr.contains(&method) {
+                    amr.push(method);
+                }
+            }
 
             let mut actions = required_actions::pending_actions(&mut conn, &user, &realm).await?;
             let flow =
@@ -374,7 +474,12 @@ impl PasswordFlow {
                 user_id: Some(user.id),
                 realm_id: user.realm_id,
                 client_id: client.id,
-                grant_type: "password".to_string(),
+                grant_type: if amr.iter().any(|method| method == "kerberos") {
+                    "kerberos"
+                } else {
+                    "password"
+                }
+                .to_string(),
                 access_token_hash: sha2_256_hex(&access_token),
                 refresh_token_hash: Some(sha2_256_hex(&refresh_token)),
                 id_token_jti: None,

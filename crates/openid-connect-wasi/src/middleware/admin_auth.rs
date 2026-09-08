@@ -162,6 +162,12 @@ fn route_is_authorized(method: &Method, path: &str, auth: &AdminAuth) -> bool {
         if read { "roles:read" } else { "roles:write" }
     } else if path == "/api/groups" || path.starts_with("/api/groups/") {
         if read { "groups:read" } else { "groups:write" }
+    } else if path == "/api/user-federation" || path.starts_with("/api/user-federation/") {
+        if read {
+            "user_federation:read"
+        } else {
+            "user_federation:write"
+        }
     } else if path == "/api/identity-providers" || path.starts_with("/api/identity-providers/") {
         if read {
             "identity_providers:read"
@@ -456,6 +462,17 @@ mod tests {
                 Method::POST,
                 "/api/identity-providers",
                 "identity_providers:write",
+            ),
+            (Method::GET, "/api/user-federation", "user_federation:read"),
+            (
+                Method::POST,
+                "/api/user-federation",
+                "user_federation:write",
+            ),
+            (
+                Method::POST,
+                "/api/user-federation/01990000-0000-7000-8000-000000000001/sync",
+                "user_federation:write",
             ),
             (Method::GET, "/api/keys", "api_keys:read"),
             (Method::POST, "/api/keys", "api_keys:write"),

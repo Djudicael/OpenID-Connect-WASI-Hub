@@ -10,8 +10,8 @@ const adminLinks = [
   { path: '/organizations', label: 'Organizations' },
   { path: '/clients', label: 'Clients' },
   { path: '/realms', label: 'Realms' },
-  // TODO: Add when backend admin CRUD endpoints exist for identity providers
-  // { path: '/identity-providers', label: 'Identity Providers' },
+  { path: '/identity-providers', label: 'Identity Providers' },
+  { path: '/user-federation', label: 'User Federation' },
   { path: '/password-policies', label: 'Password Policies' },
   { path: '/sessions', label: 'Sessions' },
   { path: '/api-keys', label: 'API Keys' },

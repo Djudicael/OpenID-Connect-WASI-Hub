@@ -27,6 +27,7 @@ pub mod session_repo;
 pub mod signing_key_repo;
 pub mod social_login_state_repo;
 pub mod user_consent_repo;
+pub mod user_federation_repo;
 pub mod user_group_repo;
 pub mod user_repo;
 pub mod user_role_repo;

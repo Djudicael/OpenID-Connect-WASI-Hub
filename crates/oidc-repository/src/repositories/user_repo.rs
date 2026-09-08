@@ -34,6 +34,22 @@ const USER_COLUMNS: &str = r#"
 "#;
 
 impl UserRepo {
+    pub async fn find_by_username(
+        &self,
+        conn: &mut Connection,
+        realm_id: Uuid,
+        username: &str,
+    ) -> Result<Option<User>, OidcError> {
+        let sql = &format!(
+            "SELECT {USER_COLUMNS} FROM users WHERE realm_id = $1 AND LOWER(username) = LOWER($2) AND deleted_at IS NULL"
+        );
+        let row = conn
+            .query_one_params(sql, &[&realm_id, &username])
+            .await
+            .map_err(mapper::pg_err)?;
+        row.map(|row| Self::map_row(&row)).transpose()
+    }
+
     /// Find a user by its primary key.
     pub async fn find_by_id(
         &self,

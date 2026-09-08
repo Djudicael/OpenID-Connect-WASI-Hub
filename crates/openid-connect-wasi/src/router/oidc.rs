@@ -72,6 +72,9 @@ pub fn router() -> Router<AppState> {
         .route("/oidc/login", post(|State(state): State<AppState>, json: Json<oidc_oidc::endpoints::login::LoginRequest>| async move {
             oidc_oidc::endpoints::login::login_handler(State(state.oidc_state()), json).await
         }))
+        .route("/oidc/kerberos", post(|State(state): State<AppState>, headers: axum::http::HeaderMap, json: Json<oidc_oidc::endpoints::login::KerberosLoginRequest>| async move {
+            oidc_oidc::endpoints::login::kerberos_login_handler(State(state.oidc_state()), headers, json).await
+        }))
         .route("/oidc/required-actions/status", post(|State(state): State<AppState>, Json(req): Json<oidc_oidc::endpoints::required_actions::ActionTokenRequest>| async move {
             match oidc_oidc::endpoints::required_actions::status_handler(state.oidc_state(), req).await { Ok(v)=>v.into_response(), Err(e)=>oidc_oidc::errors::from_oidc_error(&e).into_response() }
         }))
@@ -212,6 +215,7 @@ pub fn router() -> Router<AppState> {
         )
         .route("/realms/{realm}/login", get(per_realm_login_page_handler))
         .route("/realms/{realm}/login", post(per_realm_login_handler))
+        .route("/realms/{realm}/protocol/openid-connect/kerberos", post(per_realm_kerberos_login_handler))
         .route("/realms/{realm}/organization/identity-provider", get(|State(state): State<AppState>, Path(realm): Path<String>, Query(query): Query<oidc_oidc::endpoints::organizations::OrganizationIdentityProviderQuery>| async move {
             match oidc_oidc::endpoints::organizations::discover_identity_provider(State(state.oidc_state()), Path(realm), Query(query)).await {
                 Ok(json) => json.into_response(),
@@ -588,6 +592,20 @@ async fn per_realm_login_handler(
         Ok(response) => response,
         Err(err) => err.into_response(),
     }
+}
+
+async fn per_realm_kerberos_login_handler(
+    State(state): State<AppState>,
+    Path(realm): Path<String>,
+    headers: axum::http::HeaderMap,
+    Json(mut request): Json<oidc_oidc::endpoints::login::KerberosLoginRequest>,
+) -> axum::response::Response {
+    request.realm = Some(realm.clone());
+    let realm_state = state
+        .oidc_state()
+        .with_issuer(format!("{}/realms/{}", state.config.issuer, realm));
+    oidc_oidc::endpoints::login::kerberos_login_handler(State(realm_state), headers, Json(request))
+        .await
 }
 
 /// Per-realm authorize handler (Keycloak-compatible).

@@ -6,6 +6,7 @@
 
 pub mod endpoints;
 pub mod errors;
+pub mod federation;
 pub mod flows;
 pub mod organization_claims;
 pub mod protocol_mappers;

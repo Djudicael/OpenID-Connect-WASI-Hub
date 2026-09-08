@@ -17,6 +17,7 @@ pub mod authorization_services;
 pub mod clients;
 pub mod organizations;
 pub mod realms;
+pub mod user_federation;
 pub mod users;
 
 pub fn internal_error() -> Response {
@@ -44,6 +45,22 @@ pub fn conflict() -> Response {
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/stats", get(audit::stats_handler))
+        .route(
+            "/api/user-federation",
+            get(user_federation::list).post(user_federation::create),
+        )
+        .route(
+            "/api/user-federation/{id}",
+            put(user_federation::update).delete(user_federation::delete_provider),
+        )
+        .route(
+            "/api/user-federation/{id}/test",
+            post(user_federation::test_connection),
+        )
+        .route(
+            "/api/user-federation/{id}/sync",
+            post(user_federation::sync),
+        )
         .route(
             "/api/authorization/resources",
             get(authorization_services::list_resources)

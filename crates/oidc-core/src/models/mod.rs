@@ -32,6 +32,7 @@ pub mod signing_key;
 pub mod social_login_state;
 pub mod user;
 pub mod user_consent;
+pub mod user_federation;
 
 pub use account_recovery_token::AccountRecoveryToken;
 pub use address::AddressClaim;
@@ -74,3 +75,6 @@ pub use signing_key::{Algorithm, SigningKey};
 pub use social_login_state::SocialLoginState;
 pub use user::User;
 pub use user_consent::UserConsent;
+pub use user_federation::{
+    DirectoryUser, FederatedDirectoryUser, UserFederationProvider, UserFederationType,
+};
