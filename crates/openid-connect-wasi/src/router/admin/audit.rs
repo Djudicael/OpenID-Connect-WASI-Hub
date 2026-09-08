@@ -810,6 +810,23 @@ pub async fn assign_client_scope(
     if client.realm_id != scope.realm_id {
         return bad_request();
     }
+    let mut policy_candidate = client.clone();
+    if !policy_candidate.allowed_scopes.contains(&scope.name) {
+        policy_candidate.allowed_scopes.push(scope.name.clone());
+    }
+    if let Err(error) = oidc_oidc::client_policies::enforce(
+        &mut conn,
+        &policy_candidate,
+        oidc_core::models::ClientRegistrationContext::Admin,
+    )
+    .await
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error":"client_policy_violation","error_description":error.to_string()})),
+        )
+            .into_response();
+    }
     match ScopeRepo
         .assign_to_client(&mut conn, client_id, req.scope_id, &req.assignment_type)
         .await

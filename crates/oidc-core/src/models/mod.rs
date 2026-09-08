@@ -9,6 +9,7 @@ pub mod authorization_detail;
 pub mod authorization_service;
 pub mod ciba;
 pub mod client;
+pub mod client_policy;
 pub mod device_code;
 pub mod email_verification_token;
 pub mod federated_identity;
@@ -48,6 +49,11 @@ pub use authorization_service::{
 };
 pub use ciba::{CIBA_GRANT_TYPE, CibaAuthenticationRequest, CibaClientConfig};
 pub use client::{Client, ClientType};
+pub use client_policy::{
+    ClientPolicy, ClientPolicyCondition, ClientPolicyEvaluation, ClientPolicyExecutor,
+    ClientPolicyProfile, ClientPolicyViolation, ClientRegistrationContext, MatchMode,
+    enforce_client_policies, evaluate_client_policies,
+};
 pub use device_code::DeviceCode;
 pub use email_verification_token::EmailVerificationToken;
 pub use federated_identity::FederatedIdentity;

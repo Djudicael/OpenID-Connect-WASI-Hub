@@ -6,6 +6,7 @@ pub mod audit_event_repo;
 pub mod auth_code_repo;
 pub mod authorization_service_repo;
 pub mod ciba_repo;
+pub mod client_policy_repo;
 pub mod client_repo;
 pub mod device_code_repo;
 pub mod email_verification_token_repo;

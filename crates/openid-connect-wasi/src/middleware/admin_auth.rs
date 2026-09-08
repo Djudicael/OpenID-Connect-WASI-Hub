@@ -146,6 +146,14 @@ fn route_is_authorized(method: &Method, path: &str, auth: &AdminAuth) -> bool {
         } else {
             "clients:write"
         }
+    } else if path.starts_with("/api/realms/")
+        && (path.contains("/client-policies") || path.contains("/client-policy-profiles"))
+    {
+        if read || path.ends_with("/evaluate") {
+            "clients:read"
+        } else {
+            "clients:write"
+        }
     } else if path.starts_with("/api/realms/") && path.ends_with("/export") {
         "realms:read"
     } else if path == "/api/realms" || path.starts_with("/api/realms/") {
@@ -442,6 +450,21 @@ mod tests {
             ),
             (Method::GET, "/api/clients", "clients:read"),
             (Method::POST, "/api/clients", "clients:write"),
+            (
+                Method::GET,
+                "/api/realms/01990000-0000-7000-8000-000000000001/client-policies",
+                "clients:read",
+            ),
+            (
+                Method::POST,
+                "/api/realms/01990000-0000-7000-8000-000000000001/client-policies/evaluate",
+                "clients:read",
+            ),
+            (
+                Method::POST,
+                "/api/realms/01990000-0000-7000-8000-000000000001/client-policy-profiles",
+                "clients:write",
+            ),
             (Method::GET, "/api/realms", "realms:read"),
             (
                 Method::POST,

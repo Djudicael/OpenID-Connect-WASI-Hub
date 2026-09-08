@@ -5,7 +5,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use oidc_core::models::ClientType;
+use oidc_core::models::{ClientRegistrationContext, ClientType};
 use oidc_core::utils::{generate_opaque_token, generate_uuid_v7};
 use oidc_repository::repositories::ciba_repo::CibaRepo;
 use oidc_repository::repositories::client_repo::ClientRepo;
@@ -285,6 +285,16 @@ pub async fn create(State(state): State<AppState>, auth: AdminAuth, body: String
         request_object_encryption_key_encrypted: None,
         request_object_encryption_key_pem: req.request_object_encryption_key_pem,
     };
+    if let Err(e) =
+        oidc_oidc::client_policies::enforce(&mut conn, &client, ClientRegistrationContext::Admin)
+            .await
+    {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(json!({"error":"client_policy_violation","error_description":e.to_string()})),
+        )
+            .into_response();
+    }
     match ClientRepo.create(&mut conn, &client).await {
         Ok(()) => {}
         Err(e) => {
@@ -450,6 +460,16 @@ pub async fn update(
     if let Some(v) = req.request_object_encryption_key_pem {
         client.request_object_encryption_key_pem = Some(v);
     }
+    if let Err(e) =
+        oidc_oidc::client_policies::enforce(&mut conn, &client, ClientRegistrationContext::Admin)
+            .await
+    {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(json!({"error":"client_policy_violation","error_description":e.to_string()})),
+        )
+            .into_response();
+    }
     match ClientRepo.update(&mut conn, &client).await {
         Ok(()) => Json(json!({"updated": true})).into_response(),
         Err(e) => {
@@ -547,6 +567,19 @@ pub async fn update_ciba(
         client
             .allowed_grant_types
             .retain(|v| v != oidc_core::models::CIBA_GRANT_TYPE);
+        if let Err(e) = oidc_oidc::client_policies::enforce(
+            &mut conn,
+            &client,
+            ClientRegistrationContext::Admin,
+        )
+        .await
+        {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(json!({"error":"client_policy_violation","error_description":e.to_string()})),
+            )
+                .into_response();
+        }
         if let Err(e) = ClientRepo.update(&mut conn, &client).await {
             tracing::error!("disable CIBA error: {e}");
             return internal_error();
@@ -584,6 +617,16 @@ pub async fn update_ciba(
         client
             .allowed_grant_types
             .push(oidc_core::models::CIBA_GRANT_TYPE.into());
+    }
+    if let Err(e) =
+        oidc_oidc::client_policies::enforce(&mut conn, &client, ClientRegistrationContext::Admin)
+            .await
+    {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(json!({"error":"client_policy_violation","error_description":e.to_string()})),
+        )
+            .into_response();
     }
     if let Err(e) = ClientRepo.update(&mut conn, &client).await {
         tracing::error!("enable CIBA grant error: {e}");

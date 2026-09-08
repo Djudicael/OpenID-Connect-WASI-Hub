@@ -41,6 +41,9 @@ pub mod client_roles_tests;
 pub mod ciba_tests;
 
 #[cfg(test)]
+pub mod client_policy_tests;
+
+#[cfg(test)]
 pub mod protocol_mapper_tests;
 
 #[cfg(test)]

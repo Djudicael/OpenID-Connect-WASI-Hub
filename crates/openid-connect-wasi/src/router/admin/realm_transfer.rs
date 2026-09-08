@@ -260,6 +260,8 @@ fn validate_snapshot(snapshot: &Snapshot) -> Result<(), String> {
     let direct = [
         "users",
         "clients",
+        "client_policy_profiles",
+        "client_policies",
         "signing_keys",
         "scopes",
         "realm_signing_keys",
@@ -288,6 +290,39 @@ fn validate_snapshot(snapshot: &Snapshot) -> Result<(), String> {
             .any(|row| row.get("realm_id").and_then(Value::as_str) != Some(realm_id.as_str()))
         {
             return Err(format!("The archive table {table} contains another realm"));
+        }
+    }
+    let profile_rows = snapshot.tables["client_policy_profiles"]
+        .as_array()
+        .ok_or("The archive client policy profiles are invalid")?;
+    let profile_ids: std::collections::HashSet<&str> = profile_rows
+        .iter()
+        .filter_map(|row| row.get("id").and_then(Value::as_str))
+        .collect();
+    for row in profile_rows {
+        let executors = row.get("executors").cloned().unwrap_or(Value::Null);
+        let parsed: Vec<oidc_core::models::ClientPolicyExecutor> =
+            serde_json::from_value(executors)
+                .map_err(|_| "The archive contains an invalid client policy profile")?;
+        if parsed.is_empty() {
+            return Err("The archive contains an empty client policy profile".into());
+        }
+    }
+    for row in snapshot.tables["client_policies"]
+        .as_array()
+        .ok_or("The archive client policies are invalid")?
+    {
+        let conditions: Vec<oidc_core::models::ClientPolicyCondition> =
+            serde_json::from_value(row.get("conditions").cloned().unwrap_or(Value::Null))
+                .map_err(|_| "The archive contains an invalid client policy condition")?;
+        let profiles: Vec<String> =
+            serde_json::from_value(row.get("profile_ids").cloned().unwrap_or(Value::Null))
+                .map_err(|_| "The archive contains invalid client policy profile references")?;
+        if conditions.is_empty()
+            || profiles.is_empty()
+            || profiles.iter().any(|id| !profile_ids.contains(id.as_str()))
+        {
+            return Err("The archive contains an incomplete client policy".into());
         }
     }
     for table in [

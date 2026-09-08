@@ -15,6 +15,7 @@ use crate::state::AppState;
 
 pub mod audit;
 pub mod authorization_services;
+pub mod client_policies;
 pub mod clients;
 pub mod organizations;
 pub mod realm_transfer;
@@ -47,6 +48,26 @@ pub fn conflict() -> Response {
 /// Build the admin API sub-router.
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route(
+            "/api/realms/{realm_id}/client-policy-profiles",
+            get(client_policies::list_profiles).post(client_policies::create_profile),
+        )
+        .route(
+            "/api/realms/{realm_id}/client-policy-profiles/{id}",
+            put(client_policies::update_profile).delete(client_policies::delete_profile),
+        )
+        .route(
+            "/api/realms/{realm_id}/client-policies",
+            get(client_policies::list_policies).post(client_policies::create_policy),
+        )
+        .route(
+            "/api/realms/{realm_id}/client-policies/evaluate",
+            post(client_policies::evaluate),
+        )
+        .route(
+            "/api/realms/{realm_id}/client-policies/{id}",
+            put(client_policies::update_policy).delete(client_policies::delete_policy),
+        )
         .route("/api/saml/clients", get(saml::list).post(saml::create))
         .route(
             "/api/saml/clients/{id}",
