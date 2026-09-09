@@ -1,5 +1,7 @@
 # Organizations
 
+[Documentation home](README.md) · [Use cases](README.md#use-cases)
+
 Organizations are business tenants inside a realm. They group members, verified email domains, identity providers, realm groups, and invitations while users and clients remain realm resources.
 
 ![Organization settings and domains](assets/organizations/organization-settings-and-domains.png)

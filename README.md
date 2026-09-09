@@ -25,6 +25,22 @@ A multi-tenant OpenID Connect / OAuth2 identity provider built in Rust with firs
 - **Workflows**: Event, scheduled, and manual triggers run durable user lifecycle actions with conditions, delays, retries, cancellation, and execution history. See the [workflows guide](docs/workflows.md).
 - **Realm presentation**: Customize sign-in and account colors, logos, fonts, localized labels, and HTML or plain-text email templates. See the [themes, localization, and email guide](docs/realm-themes-localization-email.md).
 
+## Documentation
+
+Open the [documentation home](docs/README.md) to navigate by goal, feature, or operational task. New deployments should begin with [core concepts](docs/concepts.md) and [the first-realm walkthrough](docs/getting-started.md).
+
+Common end-to-end journeys include:
+
+- [managing a workforce user lifecycle](docs/use-cases/workforce-user-lifecycle.md);
+- [building B2B organization multi-tenancy](docs/use-cases/b2b-organization-multitenancy.md);
+- [connecting a web application](docs/use-cases/web-application-sso.md);
+- [connecting a backend service](docs/use-cases/backend-service.md);
+- [choosing credentials and authorization for an agent](docs/use-cases/agent-identity.md);
+- [setting up a delegated helpdesk](docs/use-cases/delegated-helpdesk.md);
+- [operating a customer identity realm](docs/use-cases/customer-identity.md).
+
+The documentation home also includes production launch, API authorization, enterprise federation, MFA rollout, incident response, lifecycle automation, privacy, emergency access, and disaster-recovery journeys.
+
 ## Request correlation and tracing
 
 The backend preserves a valid W3C `traceparent` trace ID or platform-provided

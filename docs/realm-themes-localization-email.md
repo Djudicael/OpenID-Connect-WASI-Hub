@@ -1,5 +1,7 @@
 # Customize a realm's appearance and messages
 
+[Documentation home](README.md) · [Use cases](README.md#use-cases)
+
 Realm presentation settings give users a consistent sign-in, account, and administration experience. Administrators can set the visual identity, translate sign-in text, and customize transactional emails independently for each realm.
 
 Open **Realms**, select a realm, and scroll to **Theme**, **Localization**, or **Email Templates**. Save the realm after making changes. Administrators need permission to view the realm to preview templates and permission to manage the realm to save changes.

@@ -1,5 +1,7 @@
 # Approve sign-in on another device
 
+[Documentation home](README.md) · [Use cases](README.md#use-cases)
+
 Client-Initiated Backchannel Authentication (CIBA) lets an application start a sign-in for a known user without redirecting the application to a login page. The user reviews the request in **My Account** on a separate signed-in device. This works well for call centers, smart devices, command-line tools, and assisted service desks.
 
 ## Enable CIBA for an application

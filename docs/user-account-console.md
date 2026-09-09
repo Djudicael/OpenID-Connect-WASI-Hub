@@ -1,5 +1,7 @@
 # Manage your account
 
+[Documentation home](README.md) · [Use cases](README.md#use-cases)
+
 The account console lets you update the information associated with your account, change your password, review active sessions and offline access, remove application access, and manage linked sign-in methods.
 
 Open **My Account** after signing in.

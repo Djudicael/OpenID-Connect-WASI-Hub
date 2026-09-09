@@ -1,5 +1,7 @@
 # Protect APIs with Authorization Services
 
+[Documentation home](README.md) · [Use cases](README.md#use-cases)
+
 Authorization Services lets an application define protected resources, decide who may use them, and issue Requesting Party Tokens (RPTs) containing the permissions granted to a user. Use it when a simple application role is too broad, such as allowing members of the finance group to view one report while only its owner may edit it.
 
 ## Prepare the resource server

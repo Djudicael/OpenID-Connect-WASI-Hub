@@ -1,5 +1,7 @@
 # Back up or move a realm
 
+[Documentation home](README.md) · [Use cases](README.md#use-cases)
+
 Realm archives let administrators back up a realm or move it to another OpenID Connect Hub installation. An archive includes the realm settings and its persistent identity configuration:
 
 - users, password hashes, authenticator apps, passkeys, and unused recovery codes;

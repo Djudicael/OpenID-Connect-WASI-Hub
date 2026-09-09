@@ -1,5 +1,7 @@
 # Enforce client configuration with policies
 
+[Documentation home](README.md) · [Use cases](README.md#use-cases)
+
 Client policies let realm administrators apply the same application security rules consistently. A policy selects applications, then applies one or more reusable security profiles whenever an application is registered or changed. Delegated administrators need `clients:read` to view and test policies and `clients:write` to manage them.
 
 Open **Client Policies** in the administration console and select a realm.

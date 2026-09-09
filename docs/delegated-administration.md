@@ -1,5 +1,7 @@
 # Delegated administration
 
+[Documentation home](README.md) · [Use cases](README.md#use-cases)
+
 Delegated administration lets a user manage selected parts of a realm without receiving full administrator access. Permissions are collected from roles assigned directly to the user and roles inherited through groups.
 
 ![Creating a delegated administrator role](assets/delegated-administration/create-role.png)
@@ -45,7 +47,10 @@ Users inherit the permissions of every role assigned to their groups. Direct and
 | Roles and user role assignments | `roles:read` | `roles:write` |
 | Groups, membership, and group roles | `groups:read` | `groups:write` |
 | Identity providers | `identity_providers:read` | `identity_providers:write` |
+| User federation | `user_federation:read` | `user_federation:write` |
 | API keys | `api_keys:read` | `api_keys:write` |
+| Authorization Services | `authorization:read` | `authorization:write` |
+| Workflows and history | `workflows:read` | `workflows:write`, `workflows:execute` |
 | Maintenance operations | — | `maintenance:execute` |
 
 `resource:*` grants every action for one area, such as `users:*`. The `admin` permission grants full administration across realms and should be limited to trusted full administrators.

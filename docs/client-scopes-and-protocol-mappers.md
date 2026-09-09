@@ -1,5 +1,7 @@
 # Client scopes and protocol mappers
 
+[Documentation home](README.md) · [Use cases](README.md#use-cases)
+
 Client scopes group reusable token settings. Assign one client scope to several applications when they should receive the same claims, role lists, or API audiences.
 
 ![A client scope with an assigned application and protocol mappers](assets/client-scopes/scope-overview.png)

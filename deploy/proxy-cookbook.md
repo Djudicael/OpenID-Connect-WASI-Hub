@@ -1,5 +1,7 @@
 # Proxy cookbook for the two-WASI deployment
 
+[Documentation home](../docs/README.md) · [Operations](../docs/operations.md)
+
 This document provides copy-ready reverse-proxy examples for the browser-facing deployment where:
 
 - `oidc_admin_wasi.wasm` serves the admin SPA

@@ -1,5 +1,7 @@
 # Federation gateway contract
 
+[Documentation home](README.md) · [Use cases](README.md#use-cases)
+
 A federation gateway exposes directory and Kerberos operations over HTTPS. Every request uses `Content-Type: application/json` and `Authorization: Bearer <shared-secret>`.
 
 The request always contains `provider_type` (`ldap`, `active_directory`, or `kerberos`) and `config`, the JSON object saved for the provider.

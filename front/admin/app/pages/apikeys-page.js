@@ -71,7 +71,7 @@ class ApiKeysPage extends BaseComponent {
   }
 
   async _rotateKey(id) {
-    const confirmed = await ConfirmDialog.confirm('Rotate this API key? The old key will stop working immediately.', 'Rotate Key');
+    const confirmed = await ConfirmDialog.confirm('Rotate this API key? The old key will remain valid for 24 hours so you can update the workload safely.', 'Rotate Key');
     if (!confirmed) return;
     try {
       const data = await rotateApiKey(id);

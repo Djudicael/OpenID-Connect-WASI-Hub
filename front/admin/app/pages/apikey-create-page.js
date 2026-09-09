@@ -2,17 +2,36 @@ import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
 import { listAllRealms } from '../services/realm-service.js';
 import { resolveSelectedRealmId, setSelectedRealmId } from '../core/realm-context.js';
-import { listScopes } from '../services/scope-service.js';
 import { createApiKey } from '../services/apikey-service.js';
 import { navigate } from '../core/router.js';
 import { showToast } from '../components/ui/toast.js';
+
+const ADMIN_PERMISSIONS = [
+  'stats:read',
+  'users:read', 'users:write', 'users:impersonate',
+  'clients:read', 'clients:write',
+  'realms:read', 'realms:write',
+  'sessions:read', 'sessions:revoke',
+  'audit:read',
+  'scopes:read', 'scopes:write',
+  'roles:read', 'roles:write',
+  'groups:read', 'groups:write',
+  'identity_providers:read', 'identity_providers:write',
+  'user_federation:read', 'user_federation:write',
+  'api_keys:read', 'api_keys:write',
+  'authorization:read', 'authorization:write',
+  'workflows:read', 'workflows:write', 'workflows:execute',
+  'organizations:view', 'organizations:manage', 'organizations:members',
+  'maintenance:execute',
+  'admin',
+];
 
 class ApiKeyCreatePage extends BaseComponent {
   constructor() {
     super();
     this._state = {
       name: '',
-      selectedScopes: ['admin'],
+      selectedScopes: ['workflows:execute'],
       availableScopes: [],
       expiresInDays: '',
       realms: [],
@@ -40,15 +59,8 @@ class ApiKeyCreatePage extends BaseComponent {
     }
   }
 
-  async _loadScopes(realmId) {
-    try {
-      const data = await listScopes(realmId);
-      const scopes = (data.items || []).map(s => s.name);
-      this.setState({ availableScopes: scopes });
-    } catch (err) {
-      showToast('Failed to load scopes', 'error');
-      this.setState({ availableScopes: [] });
-    }
+  _loadScopes() {
+    this.setState({ availableScopes: ADMIN_PERMISSIONS });
   }
 
   _onRealmChange(e) {
@@ -148,7 +160,7 @@ class ApiKeyCreatePage extends BaseComponent {
             </select>
           </div>
           <div class="field">
-            <label class="field-label">Scopes *</label>
+            <label class="field-label">Permissions *</label>
             <div class="scope-list">
               ${availableScopes.length === 0
         ? html`<div class="hint">No scopes available for this realm</div>`
@@ -163,7 +175,7 @@ class ApiKeyCreatePage extends BaseComponent {
                     </label>
                   `)}
             </div>
-            <div class="hint">Select at least one scope</div>
+            <div class="hint"><code>workflows:execute</code> is sufficient for a workflow scheduler. <code>admin</code> grants full administration access.</div>
           </div>
           <div class="field">
             <label class="field-label">Expires In (days)</label>

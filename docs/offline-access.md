@@ -1,5 +1,7 @@
 # Manage offline access
 
+[Documentation home](README.md) · [Use cases](README.md#use-cases)
+
 Offline access lets an approved application continue working for a user after the user signs out. Common examples include scheduled synchronization, background uploads, and a desktop application that needs to reconnect without opening the sign-in page each time.
 
 The user must approve offline access during an interactive sign-in. An application cannot obtain it through silent sign-in, password credentials, client credentials, device authorization, or token exchange.

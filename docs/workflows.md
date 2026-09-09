@@ -1,5 +1,7 @@
 # Automate user lifecycle tasks
 
+[Documentation home](README.md) · [Use cases](README.md#use-cases)
+
 Workflows let realm administrators apply a sequence of actions when a user event occurs, on a schedule, or when an administrator starts the workflow for one user. Every execution is recorded so delayed, failed, and completed work can be reviewed.
 
 Open **Workflows** in the administration console and select a realm.
@@ -50,7 +52,48 @@ Choose **Create workflow**. The configured workflow appears below the editor and
 
 ## Process scheduled and delayed actions
 
-Choose **Process due actions** to start scheduled batches and continue actions whose waiting period has ended. Configure your deployment scheduler to invoke the same operation regularly when you rely on schedules or delayed actions.
+Choose **Process due actions** to start scheduled batches and continue actions whose waiting period has ended.
+
+Scheduled and delayed work needs a periodic wake-up. The application does not keep a timer running by itself: an external scheduler must regularly call the authenticated operation.
+
+### Create the scheduler credential
+
+Use a dedicated API key for the scheduler:
+
+1. Sign in to the administration console with an account allowed to create API keys.
+2. Open **API Keys** in the left menu and choose **Create Key**.
+3. Select the same realm as the workflows, enter a name such as `Workflow scheduler`, and select only `workflows:execute` under **Permissions**.
+4. Set an expiration period that matches your key rotation policy and choose **Create Key**.
+5. Copy the generated key immediately and save it in the secret store used by your scheduler. The complete key is shown only once. If it is lost, rotate the key from **API Keys** and save the replacement.
+
+This generated API key is the credential used below. It is not a user password or an OIDC client secret. The key is restricted to the realm selected when it was created.
+
+Open **Realms**, select the realm, and copy the UUID at the end of the browser address when you need the `{realm_id}` value.
+
+### Configure the scheduled call
+
+```http
+POST /api/realms/{realm_id}/workflows/run-due
+X-API-Key: <scheduler API key>
+Content-Type: application/json
+
+{"limit":500}
+```
+
+Each call starts scheduled workflows that are due and resumes delayed executions whose waiting period has ended. Calling it when nothing is due has no effect.
+
+For example, a scheduler can run this request, with the base address, realm UUID, and secret supplied by the deployment environment:
+
+```sh
+curl --fail-with-body \
+  --request POST \
+  --header "X-API-Key: $WORKFLOW_SCHEDULER_KEY" \
+  --header "Content-Type: application/json" \
+  --data '{"limit":500}' \
+  "https://identity.example.com/api/realms/$REALM_ID/workflows/run-due"
+```
+
+Use a scheduler provided by your hosting environment, such as a Kubernetes CronJob, a systemd timer, or a platform scheduling service. Choose a call interval shorter than the delay you are willing to add. For example, calling the operation every minute means a due action will normally begin within one minute. The **Process due actions** button performs the same operation and is useful for testing or occasional manual processing.
 
 Event actions without a delay run as soon as the matching event is recorded. Manual actions without a delay run when you choose **Run now**.
 

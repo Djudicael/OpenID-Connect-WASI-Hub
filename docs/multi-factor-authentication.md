@@ -1,5 +1,7 @@
 # Multi-factor authentication
 
+[Documentation home](README.md) · [Use cases](README.md#use-cases)
+
 Multi-factor authentication adds a second check after the password. You can use an authenticator app, a passkey, or a one-time recovery code.
 
 ![Sign-in security settings](assets/multi-factor-authentication/security-settings.png)

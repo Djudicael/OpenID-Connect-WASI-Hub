@@ -1,5 +1,7 @@
 # Client roles and composite roles
 
+[Documentation home](README.md) · [Use cases](README.md#use-cases)
+
 Roles let you give users and groups a named set of access rights. Use a **realm role** when the role applies across the realm. Use a **client role** when the role belongs to one application.
 
 ![Create a client role](assets/client-roles/create-client-role.png)

@@ -1,5 +1,7 @@
 # Connect LDAP, Active Directory, and Kerberos
 
+[Documentation home](README.md) · [Use cases](README.md#use-cases)
+
 User federation lets people use an existing company directory account in a realm. LDAP and Active Directory users can sign in with their directory username and password. Kerberos users can use browser-integrated sign-in through HTTP Negotiate.
 
 ## Before you begin

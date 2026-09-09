@@ -1,5 +1,7 @@
 # Configure sign-in actions
 
+[Documentation home](README.md) · [Use cases](README.md#use-cases)
+
 Authentication flows let realm administrators require users to finish account setup before an application receives access. A user sees each action after entering valid sign-in credentials and continues to the application only after every action is complete.
 
 ## Configure the realm flow

@@ -55,7 +55,7 @@ class ApiKeyDetailPage extends BaseComponent {
   }
 
   async _rotateKey() {
-    if (!confirm('Rotate this API key? The old key will stop working immediately.')) return;
+    if (!confirm('Rotate this API key? The old key will remain valid for 24 hours so you can update the workload safely.')) return;
 
     const key = this._state.key;
     if (!key) return;

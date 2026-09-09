@@ -1,5 +1,7 @@
 # Connect applications and identity providers with SAML 2.0
 
+[Documentation home](README.md) · [Use cases](README.md#use-cases)
+
 The hub can sign users into SAML applications and can accept sign-in from an external SAML identity provider. Both configurations use metadata XML so endpoints and certificates are exchanged together.
 
 ## Connect a SAML application
