@@ -29,7 +29,7 @@ pub fn validate_scope(scope: &str, allowed: &[String]) -> Result<Vec<String>, Oi
     let requested: Vec<String> = scope.split(' ').map(|s| s.to_string()).collect();
 
     for s in &requested {
-        if !allowed.contains(s) {
+        if !crate::organization_claims::is_scope_allowed(s, allowed) {
             return Err(OidcError::InvalidScope(format!(
                 "scope '{s}' is not allowed"
             )));

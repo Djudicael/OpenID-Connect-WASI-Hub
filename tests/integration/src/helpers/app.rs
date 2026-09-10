@@ -5,7 +5,8 @@
 //! `reqwest` client for making HTTP requests in integration tests.
 
 use oidc_repository::repositories::{
-    client_repo::ClientRepo, realm_repo::RealmRepo, user_repo::UserRepo,
+    client_repo::ClientRepo, realm_repo::RealmRepo, role_repo::RoleRepo, user_repo::UserRepo,
+    user_role_repo::UserRoleRepo,
 };
 use uuid::Uuid;
 
@@ -192,6 +193,90 @@ impl TestApp {
     /// The HTTP client (redirect policy: none).
     pub fn client(&self) -> &reqwest::Client {
         &self.client
+    }
+
+    /// Send an authorization request with a real password-authenticated
+    /// browser session when the URL contains a `login_hint`.
+    pub async fn authorize_get(
+        &self,
+        url: &str,
+        password: Option<&str>,
+    ) -> Result<reqwest::Response, reqwest::Error> {
+        let login_hint = url::Url::parse(url).ok().and_then(|parsed| {
+            parsed
+                .query_pairs()
+                .find(|(key, _)| key == "login_hint")
+                .map(|(_, value)| value.into_owned())
+        });
+
+        let mut request = self.client.get(url);
+        let mut session_cookie = None;
+        if let Some(email) = login_hint {
+            let login = self
+                .client
+                .post(format!("{}/oidc/login", self.url()))
+                .json(&serde_json::json!({
+                    "email": email,
+                    "password": password.unwrap_or(fixtures::TEST_USER_PASSWORD),
+                }))
+                .send()
+                .await?;
+            assert_eq!(
+                login.status(),
+                reqwest::StatusCode::OK,
+                "test browser login should succeed"
+            );
+            let cookie = login
+                .headers()
+                .get(reqwest::header::SET_COOKIE)
+                .expect("login should set a session cookie")
+                .to_str()
+                .expect("session cookie should be valid ASCII")
+                .split(';')
+                .next()
+                .expect("session cookie should have a value")
+                .to_string();
+            request = request.header(reqwest::header::COOKIE, &cookie);
+            session_cookie = Some(cookie);
+        }
+
+        let response = request.send().await?;
+        if response.status() != reqwest::StatusCode::OK || session_cookie.is_none() {
+            return Ok(response);
+        }
+
+        // Most authorization tests exercise the complete successful flow. If
+        // the server asks for first-time consent, act as the browser user and
+        // approve the displayed grant before returning the final response.
+        let body = response.text().await?;
+        let marker = "name=\"consent_token\" value=\"";
+        let Some(start) = body.find(marker).map(|index| index + marker.len()) else {
+            return self
+                .client
+                .get(url)
+                .header(reqwest::header::COOKIE, session_cookie.unwrap())
+                .send()
+                .await;
+        };
+        let Some(end) = body[start..].find('"').map(|index| start + index) else {
+            return self
+                .client
+                .get(url)
+                .header(reqwest::header::COOKIE, session_cookie.unwrap())
+                .send()
+                .await;
+        };
+        let mut approval_url =
+            url::Url::parse(url).expect("authorization test URL should be valid");
+        approval_url
+            .query_pairs_mut()
+            .append_pair("consent_action", "allow")
+            .append_pair("consent_token", &body[start..end]);
+        self.client
+            .get(approval_url)
+            .header(reqwest::header::COOKIE, session_cookie.unwrap())
+            .send()
+            .await
     }
 
     /// The master realm ID seeded during setup.
@@ -410,6 +495,26 @@ async fn seed_baseline_data(conn: &mut oidc_repository::Connection) -> (Uuid, St
         .create(conn, &user)
         .await
         .expect("failed to seed admin user");
+
+    let now = chrono::Utc::now();
+    let admin_role = oidc_core::models::Role {
+        id: Uuid::new_v4(),
+        realm_id,
+        name: "test-admin".to_string(),
+        description: Some("Test administrator".to_string()),
+        permissions: vec!["admin".to_string()],
+        created_at: now,
+        updated_at: now,
+        client_id: None,
+    };
+    RoleRepo
+        .create(conn, &admin_role)
+        .await
+        .expect("failed to seed admin role");
+    UserRoleRepo
+        .assign(conn, user.id, admin_role.id)
+        .await
+        .expect("failed to assign admin role");
 
     // Admin UI client — PasswordFlow::execute defaults to "admin-ui"
     // so the client_id must match exactly.

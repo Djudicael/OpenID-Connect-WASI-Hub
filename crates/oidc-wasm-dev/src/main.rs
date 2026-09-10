@@ -1214,6 +1214,8 @@ async fn start_backend_wasmtime(state: &Arc<Mutex<WasmDevState>>) -> Result<()> 
 
     let mut cmd = Command::new("wasmtime");
     cmd.arg("serve")
+        .arg("-W")
+        .arg("component-model-async=y")
         .arg("--addr")
         .arg(format!("{BIND_ADDRESS}:{port}"))
         .arg("--max-instance-reuse-count")
@@ -1222,6 +1224,8 @@ async fn start_backend_wasmtime(state: &Arc<Mutex<WasmDevState>>) -> Result<()> 
         .arg("300s")
         .arg("-S")
         .arg("cli=y")
+        .arg("-S")
+        .arg("p3=y")
         .arg("-S")
         .arg("inherit-env=y")
         .arg("-S")

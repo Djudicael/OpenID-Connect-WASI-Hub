@@ -2,6 +2,7 @@
 
 use axum::Json;
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
@@ -13,9 +14,16 @@ use crate::middleware::admin_auth::AdminAuth;
 use crate::state::AppState;
 
 pub mod audit;
+pub mod authorization_services;
+pub mod client_policies;
 pub mod clients;
+pub mod organizations;
+pub mod realm_transfer;
 pub mod realms;
+pub mod saml;
+pub mod user_federation;
 pub mod users;
+pub mod workflows;
 
 pub fn internal_error() -> Response {
     (
@@ -41,22 +49,224 @@ pub fn conflict() -> Response {
 /// Build the admin API sub-router.
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route(
+            "/api/realms/{realm_id}/workflows",
+            get(workflows::list).post(workflows::create),
+        )
+        .route(
+            "/api/realms/{realm_id}/workflows/executions",
+            get(workflows::executions),
+        )
+        .route(
+            "/api/realms/{realm_id}/workflows/run-due",
+            post(workflows::run_due),
+        )
+        .route(
+            "/api/realms/{realm_id}/workflows/{id}",
+            put(workflows::update).delete(workflows::delete_workflow),
+        )
+        .route(
+            "/api/realms/{realm_id}/workflows/{id}/activate",
+            post(workflows::activate),
+        )
+        .route(
+            "/api/realms/{realm_id}/workflows/executions/{id}/retry",
+            post(workflows::retry),
+        )
+        .route(
+            "/api/realms/{realm_id}/workflows/executions/{id}/cancel",
+            post(workflows::cancel),
+        )
+        .route(
+            "/api/realms/{realm_id}/client-policy-profiles",
+            get(client_policies::list_profiles).post(client_policies::create_profile),
+        )
+        .route(
+            "/api/realms/{realm_id}/client-policy-profiles/{id}",
+            put(client_policies::update_profile).delete(client_policies::delete_profile),
+        )
+        .route(
+            "/api/realms/{realm_id}/client-policies",
+            get(client_policies::list_policies).post(client_policies::create_policy),
+        )
+        .route(
+            "/api/realms/{realm_id}/client-policies/evaluate",
+            post(client_policies::evaluate),
+        )
+        .route(
+            "/api/realms/{realm_id}/client-policies/{id}",
+            put(client_policies::update_policy).delete(client_policies::delete_policy),
+        )
+        .route("/api/saml/clients", get(saml::list).post(saml::create))
+        .route(
+            "/api/saml/clients/{id}",
+            put(saml::update).delete(saml::delete_client),
+        )
         .route("/api/stats", get(audit::stats_handler))
+        .route(
+            "/api/user-federation",
+            get(user_federation::list).post(user_federation::create),
+        )
+        .route(
+            "/api/user-federation/{id}",
+            put(user_federation::update).delete(user_federation::delete_provider),
+        )
+        .route(
+            "/api/user-federation/{id}/test",
+            post(user_federation::test_connection),
+        )
+        .route(
+            "/api/user-federation/{id}/sync",
+            post(user_federation::sync),
+        )
+        .route(
+            "/api/authorization/resources",
+            get(authorization_services::list_resources)
+                .post(authorization_services::create_resource),
+        )
+        .route(
+            "/api/authorization/resources/{id}",
+            put(authorization_services::update_resource)
+                .delete(authorization_services::delete_resource),
+        )
+        .route(
+            "/api/authorization/policies",
+            get(authorization_services::list_policies).post(authorization_services::create_policy),
+        )
+        .route(
+            "/api/authorization/policies/{id}",
+            put(authorization_services::update_policy)
+                .delete(authorization_services::delete_policy),
+        )
+        .route(
+            "/api/authorization/permissions",
+            get(authorization_services::list_permissions)
+                .post(authorization_services::create_permission),
+        )
+        .route(
+            "/api/authorization/permissions/{id}",
+            put(authorization_services::update_permission)
+                .delete(authorization_services::delete_permission),
+        )
+        .route(
+            "/api/authorization/tickets",
+            get(authorization_services::list_tickets),
+        )
+        .route(
+            "/api/authorization/tickets/{id}",
+            delete(authorization_services::revoke_ticket),
+        )
+        .route(
+            "/api/authorization/rpts",
+            get(authorization_services::list_rpts),
+        )
+        .route(
+            "/api/authorization/rpts/{id}",
+            delete(authorization_services::revoke_rpt),
+        )
         .route("/api/users", get(users::list))
         .route("/api/users", post(users::create))
         .route("/api/users/{id}", get(users::get))
         .route("/api/users/{id}", put(users::update))
         .route("/api/users/{id}", delete(users::delete))
+        .route("/api/users/{id}/mfa", get(users::get_mfa))
+        .route("/api/users/{id}/mfa", delete(users::reset_mfa))
+        .route(
+            "/api/users/{id}/required-actions",
+            get(users::get_required_actions).put(users::replace_required_actions),
+        )
         .route("/api/clients", get(clients::list))
         .route("/api/clients", post(clients::create))
         .route("/api/clients/{id}", get(clients::get))
         .route("/api/clients/{id}", put(clients::update))
         .route("/api/clients/{id}", delete(clients::delete))
+        .route(
+            "/api/clients/{id}/ciba",
+            get(clients::get_ciba).put(clients::update_ciba),
+        )
         .route("/api/realms", get(realms::list))
         .route("/api/realms", post(realms::create))
         .route("/api/realms/{id}", get(realms::get))
         .route("/api/realms/{id}", put(realms::update))
         .route("/api/realms/{id}", delete(realms::delete))
+        .route(
+            "/api/realms/{id}/email-template-preview",
+            post(realms::preview_email_template),
+        )
+        .route("/api/realms/{id}/export", post(realm_transfer::export))
+        .route(
+            "/api/realms/import",
+            post(realm_transfer::import).layer(DefaultBodyLimit::max(25 * 1024 * 1024)),
+        )
+        .route("/api/organizations", get(organizations::list))
+        .route("/api/organizations", post(organizations::create))
+        .route("/api/organizations/{id}", get(organizations::get))
+        .route("/api/organizations/{id}", put(organizations::update))
+        .route("/api/organizations/{id}", delete(organizations::delete))
+        .route(
+            "/api/organizations/{id}/domains",
+            get(organizations::list_domains),
+        )
+        .route(
+            "/api/organizations/{id}/domains",
+            post(organizations::add_domain),
+        )
+        .route(
+            "/api/organizations/{id}/domains/{domain_id}",
+            delete(organizations::delete_domain),
+        )
+        .route(
+            "/api/organizations/{id}/domains/{domain_id}/verify",
+            post(organizations::verify_domain),
+        )
+        .route(
+            "/api/organizations/{id}/members",
+            get(organizations::list_members),
+        )
+        .route(
+            "/api/organizations/{id}/members",
+            post(organizations::add_member),
+        )
+        .route(
+            "/api/organizations/{id}/members/{user_id}",
+            delete(organizations::remove_member),
+        )
+        .route(
+            "/api/organizations/{id}/identity-providers",
+            get(organizations::list_identity_providers),
+        )
+        .route(
+            "/api/organizations/{id}/identity-providers",
+            post(organizations::link_identity_provider),
+        )
+        .route(
+            "/api/organizations/{id}/identity-providers/{identity_provider_id}",
+            delete(organizations::unlink_identity_provider),
+        )
+        .route(
+            "/api/organizations/{id}/invitations",
+            get(organizations::list_invitations),
+        )
+        .route(
+            "/api/organizations/{id}/invitations",
+            post(organizations::create_invitation),
+        )
+        .route(
+            "/api/organizations/{id}/invitations/{invitation_id}",
+            delete(organizations::revoke_invitation),
+        )
+        .route(
+            "/api/organizations/{id}/groups",
+            get(organizations::list_groups),
+        )
+        .route(
+            "/api/organizations/{id}/groups",
+            post(organizations::link_group),
+        )
+        .route(
+            "/api/organizations/{id}/groups/{group_id}",
+            delete(organizations::unlink_group),
+        )
         .route("/api/sessions", get(audit::list_sessions))
         .route("/api/sessions/{id}/revoke", post(audit::revoke_session))
         .route("/api/audit/events", get(audit::list))
@@ -65,11 +275,45 @@ pub fn router() -> Router<AppState> {
         .route("/api/scopes/{id}", get(audit::get_scope))
         .route("/api/scopes/{id}", put(audit::update_scope))
         .route("/api/scopes/{id}", delete(audit::delete_scope))
+        .route(
+            "/api/scopes/{id}/mappers",
+            get(audit::list_protocol_mappers),
+        )
+        .route(
+            "/api/scopes/{id}/mappers",
+            post(audit::create_protocol_mapper),
+        )
+        .route(
+            "/api/scopes/{id}/mappers/{mapper_id}",
+            put(audit::update_protocol_mapper),
+        )
+        .route(
+            "/api/scopes/{id}/mappers/{mapper_id}",
+            delete(audit::delete_protocol_mapper),
+        )
+        .route("/api/clients/{id}/scopes", get(audit::list_client_scopes))
+        .route("/api/clients/{id}/scopes", post(audit::assign_client_scope))
+        .route(
+            "/api/clients/{id}/scopes/{scope_id}",
+            delete(audit::unassign_client_scope),
+        )
         .route("/api/roles", get(audit::list_roles))
         .route("/api/roles", post(audit::create_role))
         .route("/api/roles/{id}", get(audit::get_role))
         .route("/api/roles/{id}", put(audit::update_role))
         .route("/api/roles/{id}", delete(audit::delete_role))
+        .route(
+            "/api/roles/{id}/composites",
+            get(audit::list_role_composites),
+        )
+        .route(
+            "/api/roles/{id}/composites",
+            post(audit::add_role_composite),
+        )
+        .route(
+            "/api/roles/{id}/composites/{child_id}",
+            delete(audit::remove_role_composite),
+        )
         .route("/api/users/{id}/roles", get(users::list_roles))
         .route("/api/users/{id}/roles", post(users::assign_role))
         .route(
@@ -136,8 +380,31 @@ pub fn router() -> Router<AppState> {
         ))
 }
 
-pub fn admin_or_forbidden(_auth: &AdminAuth) -> Option<Response> {
-    None
+pub fn admin_or_forbidden(auth: &AdminAuth) -> Option<Response> {
+    (!auth.route_authorized)
+        .then(|| (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))).into_response())
+}
+
+/// Resolve a requested realm against the caller's authenticated realm.
+/// User and API-key administrators cannot read or mutate another realm.
+pub fn scoped_realm(
+    auth: &AdminAuth,
+    requested: Option<uuid::Uuid>,
+) -> Result<Option<uuid::Uuid>, Response> {
+    if auth.is_global_admin() {
+        return Ok(requested);
+    }
+    match (auth.realm_id, requested) {
+        (Some(auth_realm), Some(requested_realm)) if auth_realm != requested_realm => {
+            Err((StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))).into_response())
+        }
+        (Some(auth_realm), None) => Ok(Some(auth_realm)),
+        (_, requested) => Ok(requested),
+    }
+}
+
+pub fn realm_or_forbidden(auth: &AdminAuth, realm_id: uuid::Uuid) -> Option<Response> {
+    scoped_realm(auth, Some(realm_id)).err()
 }
 
 pub async fn connect(state: &AppState) -> Result<Connection, Response> {

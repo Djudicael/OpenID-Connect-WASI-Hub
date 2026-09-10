@@ -4,6 +4,7 @@ import { authService } from '../auth/auth-service.js';
 const routes = [
   { path: '/login', component: 'login-page', public: true },
   { path: '/callback', component: 'login-page', public: true },
+  { path: '/account', component: 'account-page', account: true },
   { path: '/admin', component: 'dashboard-page' },
   { path: '/', component: 'dashboard-page' },
   { path: '/users', component: 'users-page' },
@@ -12,8 +13,11 @@ const routes = [
   { path: '/roles/:id', component: 'role-detail-page' },
   { path: '/groups', component: 'groups-page' },
   { path: '/groups/:id', component: 'group-detail-page' },
+  { path: '/organizations', component: 'organizations-page' },
+  { path: '/organizations/:id', component: 'organization-detail-page' },
   { path: '/clients', component: 'clients-page' },
   { path: '/clients/:id', component: 'client-detail-page' },
+  { path: '/saml-clients', component: 'saml-clients-page' },
   { path: '/realms', component: 'realms-page' },
   { path: '/realms/:id', component: 'realm-detail-page' },
   { path: '/sessions', component: 'sessions-page' },
@@ -21,8 +25,14 @@ const routes = [
   { path: '/api-keys/create', component: 'apikey-create-page' },
   { path: '/api-keys/:id', component: 'apikey-detail-page' },
   { path: '/scopes', component: 'scopes-page' },
+  { path: '/scopes/:id', component: 'scope-detail-page' },
+  { path: '/authorization-services', component: 'authorization-services-page' },
   { path: '/identity-providers', component: 'identity-providers-page' },
+  { path: '/user-federation', component: 'user-federation-page' },
   { path: '/password-policies', component: 'password-policies-page' },
+  { path: '/client-policies', component: 'client-policies-page' },
+  { path: '/workflows', component: 'workflows-page' },
+  { path: '/security', component: 'security-page', account: true },
   { path: '/maintenance', component: 'maintenance-page' },
   { path: '/audit', component: 'audit-page' },
 ];
@@ -88,9 +98,13 @@ class RouterOutlet extends HTMLElement {
         return;
       }
 
-      if (!authService.hasValidSession() || !authService.hasAdminAccess()) {
+      if (!authService.hasValidSession()) {
         authService.clearSession();
         this._navigate('/login');
+        return;
+      }
+      if (!route.account && !authService.hasAdminAccess()) {
+        this._navigate('/account');
         return;
       }
     }
@@ -100,9 +114,8 @@ class RouterOutlet extends HTMLElement {
       && route.path === '/login'
       && authService.isAuthenticated()
       && authService.hasValidSession()
-      && authService.hasAdminAccess()
     ) {
-      this._navigate('/');
+      this._navigate(authService.hasAdminAccess() ? '/' : '/account');
       return;
     }
 

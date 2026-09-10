@@ -5,6 +5,7 @@
 Repository-local skills live in `.agents/skills/` and are plain Markdown so any coding agent (including Codex, Claude Code, and OpenCode) can use them. Before a matching task, read the complete skill instructions and follow them together with this file.
 
 - Dependency, Rust toolchain, Cargo lockfile, or npm package updates: read `.agents/skills/update-dependencies/SKILL.md`.
+- Feature, API, configuration, deployment, UI, or security documentation updates: read `.agents/skills/update-project-docs/SKILL.md`.
 
 ## Project Context
 
@@ -15,7 +16,7 @@ This is the **OpenID Connect WASI Hub** — a production-grade identity provider
 - **Dev target**: native (`x86_64` or `aarch64`)
 - **Build command (native)**: `cargo build --release`
 - **Build command (WASI)**: `cargo build -p openid-connect-wasi --target wasm32-wasip2 --release`
-- **Run (WASI)**: `wasmtime run --wasi inherit-network --wasi inherit-env target/wasm32-wasip2/release/openid_connect_wasi.wasm`
+- **Run (WASI)**: `wasmtime serve -W component-model-async=y -S p3=y -S inherit-network=y -S inherit-env=y -S tcp=y -S allow-ip-name-lookup=y target/wasm32-wasip2/release/openid_connect_wasi.wasm`
 
 ### Workspace Layout
 - `crates/oidc-core/` — Pure domain logic. No I/O. No framework deps.

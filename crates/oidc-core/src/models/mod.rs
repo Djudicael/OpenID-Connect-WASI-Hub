@@ -6,25 +6,38 @@ pub mod api_key;
 pub mod audit_event;
 pub mod auth_code;
 pub mod authorization_detail;
+pub mod authorization_service;
+pub mod ciba;
 pub mod client;
+pub mod client_policy;
 pub mod device_code;
 pub mod email_verification_token;
 pub mod federated_identity;
 pub mod group;
 pub mod identity_provider;
+pub mod mfa;
+pub mod offline_session;
+pub mod organization;
 pub mod password_policy;
 pub mod password_reset_token;
+pub mod protocol_mapper;
 pub mod pushed_authorization_request;
 
 pub mod realm;
+pub mod realm_presentation;
 pub mod realm_signing_keys;
+pub mod required_action;
 pub mod response_type;
 pub mod role;
+pub mod saml;
 pub mod scope;
 pub mod session;
 pub mod signing_key;
 pub mod social_login_state;
 pub mod user;
+pub mod user_consent;
+pub mod user_federation;
+pub mod workflow;
 
 pub use account_recovery_token::AccountRecoveryToken;
 pub use address::AddressClaim;
@@ -32,22 +45,55 @@ pub use api_key::ApiKey;
 pub use audit_event::{ActorType, AuditEvent};
 pub use auth_code::{AuthCode, CodeChallengeMethod};
 pub use authorization_detail::{AuthorizationDetail, AuthorizationDetails};
+pub use authorization_service::{
+    AuthorizationContext, AuthorizationPermission, AuthorizationPolicy, PermissionTicket,
+    ProtectedResource, RptGrant,
+};
+pub use ciba::{CIBA_GRANT_TYPE, CibaAuthenticationRequest, CibaClientConfig};
 pub use client::{Client, ClientType};
+pub use client_policy::{
+    ClientPolicy, ClientPolicyCondition, ClientPolicyEvaluation, ClientPolicyExecutor,
+    ClientPolicyProfile, ClientPolicyViolation, ClientRegistrationContext, MatchMode,
+    enforce_client_policies, evaluate_client_policies,
+};
 pub use device_code::DeviceCode;
 pub use email_verification_token::EmailVerificationToken;
 pub use federated_identity::FederatedIdentity;
 pub use group::Group;
 pub use identity_provider::{IdentityProvider, IdentityProviderType};
+pub use mfa::{MfaCeremony, RecoveryCode, TotpCredential, WebauthnCredential};
+pub use offline_session::OfflineSessionPolicy;
+pub use organization::{
+    Organization, OrganizationDomain, OrganizationDomainKind, OrganizationGroupLink,
+    OrganizationIdentityProviderLink, OrganizationInvitation, OrganizationInvitationStatus,
+    OrganizationMember, OrganizationMembership, OrganizationMembershipKind,
+};
 pub use password_policy::{PasswordPolicy, PasswordPolicyViolation};
 pub use password_reset_token::PasswordResetToken;
+pub use protocol_mapper::{ClientScopeAssignment, ProtocolMapper, ProtocolMapperType};
 pub use pushed_authorization_request::PushedAuthorizationRequest;
 
 pub use realm::Realm;
+pub use realm_presentation::{
+    EmailTemplate, RealmEmailTemplates, RealmLocalization, RealmPresentation, RealmTheme,
+};
 pub use realm_signing_keys::RealmSigningKeys;
+pub use required_action::{
+    AuthenticationFlowConfig, RequiredActionKind, RequiredActionSession, StepUpPolicy, TermsPolicy,
+};
 pub use response_type::ResponseType;
 pub use role::Role;
+pub use saml::{SamlPendingRequest, SamlRealmKey, SamlServiceProvider};
 pub use scope::Scope;
 pub use session::Session;
 pub use signing_key::{Algorithm, SigningKey};
 pub use social_login_state::SocialLoginState;
 pub use user::User;
+pub use user_consent::UserConsent;
+pub use user_federation::{
+    DirectoryUser, FederatedDirectoryUser, UserFederationProvider, UserFederationType,
+};
+pub use workflow::{
+    Workflow, WorkflowAction, WorkflowCondition, WorkflowExecution, WorkflowExecutionStatus,
+    WorkflowSchedule, WorkflowStep,
+};

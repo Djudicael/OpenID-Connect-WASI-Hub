@@ -5,13 +5,15 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use oidc_core::models::ClientType;
+use oidc_core::models::{ClientRegistrationContext, ClientType};
 use oidc_core::utils::{generate_opaque_token, generate_uuid_v7};
+use oidc_repository::repositories::ciba_repo::CibaRepo;
 use oidc_repository::repositories::client_repo::ClientRepo;
 
 use crate::middleware::admin_auth::AdminAuth;
 use crate::router::admin::{
     admin_or_forbidden, bad_request, conflict, connect, internal_error, not_found,
+    realm_or_forbidden, scoped_realm,
 };
 use crate::state::AppState;
 
@@ -40,6 +42,10 @@ pub async fn list(
     if let Some(r) = admin_or_forbidden(&auth) {
         return r;
     }
+    let realm_id = match scoped_realm(&auth, query.realm_id) {
+        Ok(value) => value,
+        Err(response) => return response,
+    };
     let mut conn = match connect(&state).await {
         Ok(c) => c,
         Err(r) => return r,
@@ -47,7 +53,7 @@ pub async fn list(
     let clients = match ClientRepo
         .list(
             &mut conn,
-            query.realm_id,
+            realm_id,
             query.search.as_deref(),
             query.limit,
             query.offset,
@@ -61,7 +67,7 @@ pub async fn list(
         }
     };
     let total = ClientRepo
-        .count(&mut conn, query.realm_id)
+        .count(&mut conn, realm_id)
         .await
         .unwrap_or_else(|e| {
             tracing::warn!("failed to count clients: {e}");
@@ -185,6 +191,9 @@ pub async fn create(State(state): State<AppState>, auth: AdminAuth, body: String
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
+    if let Some(response) = realm_or_forbidden(&auth, req.realm_id) {
+        return response;
+    }
     let mut conn = match connect(&state).await {
         Ok(c) => c,
         Err(r) => return r,
@@ -276,6 +285,16 @@ pub async fn create(State(state): State<AppState>, auth: AdminAuth, body: String
         request_object_encryption_key_encrypted: None,
         request_object_encryption_key_pem: req.request_object_encryption_key_pem,
     };
+    if let Err(e) =
+        oidc_oidc::client_policies::enforce(&mut conn, &client, ClientRegistrationContext::Admin)
+            .await
+    {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(json!({"error":"client_policy_violation","error_description":e.to_string()})),
+        )
+            .into_response();
+    }
     match ClientRepo.create(&mut conn, &client).await {
         Ok(()) => {}
         Err(e) => {
@@ -441,6 +460,16 @@ pub async fn update(
     if let Some(v) = req.request_object_encryption_key_pem {
         client.request_object_encryption_key_pem = Some(v);
     }
+    if let Err(e) =
+        oidc_oidc::client_policies::enforce(&mut conn, &client, ClientRegistrationContext::Admin)
+            .await
+    {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(json!({"error":"client_policy_violation","error_description":e.to_string()})),
+        )
+            .into_response();
+    }
     match ClientRepo.update(&mut conn, &client).await {
         Ok(()) => Json(json!({"updated": true})).into_response(),
         Err(e) => {
@@ -466,6 +495,147 @@ pub async fn delete(
         Ok(()) => Json(json!({"deleted": true})).into_response(),
         Err(e) => {
             tracing::error!("delete client error: {e}");
+            internal_error()
+        }
+    }
+}
+
+pub async fn get_ciba(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let client = match ClientRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(c)) => c,
+        Ok(None) => return not_found(),
+        Err(e) => {
+            tracing::error!("get CIBA client error: {e}");
+            return internal_error();
+        }
+    };
+    if let Some(r) = realm_or_forbidden(&auth, client.realm_id) {
+        return r;
+    }
+    match CibaRepo.config(&mut conn,id).await {
+        Ok(Some(c))=>Json(json!({"enabled":true,"delivery_mode":c.delivery_mode,"client_notification_endpoint":c.client_notification_endpoint,"request_lifetime_seconds":c.request_lifetime_seconds,"polling_interval_seconds":c.polling_interval_seconds})).into_response(),
+        Ok(None)=>Json(json!({"enabled":false,"delivery_mode":"poll","client_notification_endpoint":null,"request_lifetime_seconds":300,"polling_interval_seconds":5})).into_response(),
+        Err(e)=>{tracing::error!("get CIBA config error: {e}");internal_error()}
+    }
+}
+
+#[derive(Deserialize)]
+pub struct CibaConfigRequest {
+    enabled: bool,
+    delivery_mode: Option<String>,
+    client_notification_endpoint: Option<String>,
+    request_lifetime_seconds: Option<i32>,
+    polling_interval_seconds: Option<i32>,
+}
+
+pub async fn update_ciba(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+    Json(req): Json<CibaConfigRequest>,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let mut client = match ClientRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(c)) => c,
+        Ok(None) => return not_found(),
+        Err(e) => {
+            tracing::error!("update CIBA client error: {e}");
+            return internal_error();
+        }
+    };
+    if let Some(r) = realm_or_forbidden(&auth, client.realm_id) {
+        return r;
+    }
+    if !req.enabled {
+        client
+            .allowed_grant_types
+            .retain(|v| v != oidc_core::models::CIBA_GRANT_TYPE);
+        if let Err(e) = oidc_oidc::client_policies::enforce(
+            &mut conn,
+            &client,
+            ClientRegistrationContext::Admin,
+        )
+        .await
+        {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(json!({"error":"client_policy_violation","error_description":e.to_string()})),
+            )
+                .into_response();
+        }
+        if let Err(e) = ClientRepo.update(&mut conn, &client).await {
+            tracing::error!("disable CIBA error: {e}");
+            return internal_error();
+        }
+        if let Err(e) = conn
+            .execute_params("DELETE FROM ciba_client_configs WHERE client_id=$1", &[&id])
+            .await
+        {
+            tracing::error!("delete CIBA config error: {e}");
+            return internal_error();
+        }
+        return Json(json!({"updated":true,"enabled":false})).into_response();
+    }
+    let config = oidc_core::models::CibaClientConfig {
+        client_id: id,
+        delivery_mode: req.delivery_mode.unwrap_or_else(|| "poll".into()),
+        client_notification_endpoint: req
+            .client_notification_endpoint
+            .filter(|v| !v.trim().is_empty()),
+        request_lifetime_seconds: req.request_lifetime_seconds.unwrap_or(300),
+        polling_interval_seconds: req.polling_interval_seconds.unwrap_or(5),
+    };
+    if let Err(e) = oidc_oidc::endpoints::ciba::validate_config(&config) {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(json!({"error":"invalid_request","error_description":e.to_string()})),
+        )
+            .into_response();
+    }
+    if !client
+        .allowed_grant_types
+        .iter()
+        .any(|v| v == oidc_core::models::CIBA_GRANT_TYPE)
+    {
+        client
+            .allowed_grant_types
+            .push(oidc_core::models::CIBA_GRANT_TYPE.into());
+    }
+    if let Err(e) =
+        oidc_oidc::client_policies::enforce(&mut conn, &client, ClientRegistrationContext::Admin)
+            .await
+    {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(json!({"error":"client_policy_violation","error_description":e.to_string()})),
+        )
+            .into_response();
+    }
+    if let Err(e) = ClientRepo.update(&mut conn, &client).await {
+        tracing::error!("enable CIBA grant error: {e}");
+        return internal_error();
+    }
+    match CibaRepo.save_config(&mut conn, &config).await {
+        Ok(()) => Json(json!({"updated":true,"enabled":true})).into_response(),
+        Err(e) => {
+            tracing::error!("save CIBA config error: {e}");
             internal_error()
         }
     }

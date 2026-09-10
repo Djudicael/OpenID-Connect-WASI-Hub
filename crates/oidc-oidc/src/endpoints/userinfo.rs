@@ -7,7 +7,6 @@ use axum::response::{IntoResponse, Response};
 use serde_json::json;
 
 use oidc_repository::repositories::group_repo::GroupRepo;
-use oidc_repository::repositories::role_repo::RoleRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 
@@ -74,11 +73,6 @@ pub async fn userinfo_handler(
         }
     }
 
-    let user_id = match claims.sub.parse() {
-        Ok(id) => id,
-        Err(_) => return unauthorized_response(None),
-    };
-
     let mut conn = match state.connect().await {
         Ok(c) => c,
         Err(_) => return internal_error_response(),
@@ -99,6 +93,11 @@ pub async fn userinfo_handler(
         return unauthorized_response(None);
     }
 
+    // The public `sub` can be pairwise and therefore is not necessarily a UUID.
+    // The server-side session always carries the internal user identifier.
+    let Some(user_id) = session.user_id else {
+        return unauthorized_response(None);
+    };
     let user = match UserRepo.find_by_id(&mut conn, user_id).await {
         Ok(Some(u)) => u,
         Ok(None) => return unauthorized_response(None),
@@ -108,7 +107,7 @@ pub async fn userinfo_handler(
     let scopes: std::collections::HashSet<String> = session.scope.into_iter().collect();
 
     let mut claims = json!({
-        "sub": user.id.to_string(),
+        "sub": claims.sub,
     });
 
     if scopes.contains("email")
@@ -182,15 +181,19 @@ pub async fn userinfo_handler(
         }
     }
 
-    // Always include roles and groups in UserInfo when available
-    if let Ok(roles) = RoleRepo.find_by_user_id(&mut conn, user.id).await
-        && !roles.is_empty()
+    // Include effective realm and client roles, including composite inheritance.
+    if let Ok(role_claims) = crate::role_claims::resolve_role_claims(&mut conn, user.id).await
         && let Some(obj) = claims.as_object_mut()
     {
-        obj.insert(
-            "roles".to_string(),
-            json!(roles.iter().map(|r| r.name.clone()).collect::<Vec<_>>()),
-        );
+        if let Some(roles) = role_claims.roles {
+            obj.insert("roles".to_string(), json!(roles));
+        }
+        if let Some(realm_access) = role_claims.realm_access {
+            obj.insert("realm_access".to_string(), realm_access);
+        }
+        if let Some(resource_access) = role_claims.resource_access {
+            obj.insert("resource_access".to_string(), resource_access);
+        }
     }
     if let Ok(groups) = GroupRepo.find_by_user_id(&mut conn, user.id).await
         && !groups.is_empty()
@@ -200,6 +203,42 @@ pub async fn userinfo_handler(
             "groups".to_string(),
             json!(groups.iter().map(|g| g.name.clone()).collect::<Vec<_>>()),
         );
+    }
+
+    if scopes
+        .iter()
+        .any(|scope| scope == "organization" || scope.starts_with("organization:"))
+        && let Ok(Some(organization)) = crate::organization_claims::resolve_organization_claim(
+            &mut conn,
+            user.id,
+            &scopes.iter().cloned().collect::<Vec<_>>(),
+        )
+        .await
+        && let Some(obj) = claims.as_object_mut()
+    {
+        obj.insert("organization".to_string(), organization);
+    }
+
+    let granted_scopes = scopes.iter().cloned().collect::<Vec<_>>();
+    match crate::protocol_mappers::resolve_mapped_claims(
+        &mut conn,
+        session.client_id,
+        Some(&user),
+        &granted_scopes,
+    )
+    .await
+    {
+        Ok(mapped) => {
+            if let Some(obj) = claims.as_object_mut() {
+                for (name, value) in mapped.userinfo {
+                    obj.insert(name, value);
+                }
+            }
+        }
+        Err(error) => {
+            tracing::error!("userinfo protocol mapper error: {error}");
+            return internal_error_response();
+        }
     }
 
     let _ = conn.close().await;

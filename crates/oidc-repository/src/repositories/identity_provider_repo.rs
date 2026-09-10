@@ -12,7 +12,8 @@ const IDP_COLUMNS: &str = r#"
     id, realm_id, alias, display_name, provider_type, enabled,
     issuer, authorization_url, token_url, userinfo_url, jwks_url,
     client_id, client_secret, scopes,
-    auto_create_users, link_users_by_email, deleted_at
+    auto_create_users, link_users_by_email, deleted_at,
+    saml_metadata_xml, saml_attribute_mapping
 "#;
 
 impl IdentityProviderRepo {
@@ -80,13 +81,14 @@ impl IdentityProviderRepo {
                 id, realm_id, alias, display_name, provider_type, enabled,
                 issuer, authorization_url, token_url, userinfo_url, jwks_url,
                 client_id, client_secret, scopes,
-                auto_create_users, link_users_by_email
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                auto_create_users, link_users_by_email, saml_metadata_xml, saml_attribute_mapping
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
         "#;
         let provider_type_str = match entity.provider_type {
             IdentityProviderType::Oidc => "oidc",
             IdentityProviderType::Google => "google",
             IdentityProviderType::GitHub => "github",
+            IdentityProviderType::Saml => "saml",
         };
         conn.execute_params(
             sql,
@@ -107,6 +109,8 @@ impl IdentityProviderRepo {
                 &mapper::to_json_value_vec(&entity.scopes),
                 &entity.auto_create_users,
                 &entity.link_users_by_email,
+                &entity.saml_metadata_xml,
+                &entity.saml_attribute_mapping,
             ],
         )
         .await
@@ -125,13 +129,15 @@ impl IdentityProviderRepo {
                 alias = $1, display_name = $2, provider_type = $3, enabled = $4,
                 issuer = $5, authorization_url = $6, token_url = $7, userinfo_url = $8,
                 jwks_url = $9, client_id = $10, client_secret = $11, scopes = $12,
-                auto_create_users = $13, link_users_by_email = $14
-            WHERE id = $15 AND deleted_at IS NULL
+                auto_create_users = $13, link_users_by_email = $14,
+                saml_metadata_xml = $15, saml_attribute_mapping = $16
+            WHERE id = $17 AND deleted_at IS NULL
         "#;
         let provider_type_str = match entity.provider_type {
             IdentityProviderType::Oidc => "oidc",
             IdentityProviderType::Google => "google",
             IdentityProviderType::GitHub => "github",
+            IdentityProviderType::Saml => "saml",
         };
         conn.execute_params(
             sql,
@@ -150,6 +156,8 @@ impl IdentityProviderRepo {
                 &mapper::to_json_value_vec(&entity.scopes),
                 &entity.auto_create_users,
                 &entity.link_users_by_email,
+                &entity.saml_metadata_xml,
+                &entity.saml_attribute_mapping,
                 &entity.id,
             ],
         )
@@ -172,6 +180,7 @@ impl IdentityProviderRepo {
         let provider_type = match provider_type_str.as_str() {
             "google" => IdentityProviderType::Google,
             "github" => IdentityProviderType::GitHub,
+            "saml" => IdentityProviderType::Saml,
             _ => IdentityProviderType::Oidc,
         };
         Ok(IdentityProvider {
@@ -192,6 +201,8 @@ impl IdentityProviderRepo {
             auto_create_users: mapper::bool_(row, 14)?,
             link_users_by_email: mapper::bool_(row, 15)?,
             deleted_at: mapper::opt_datetime(row, 16)?,
+            saml_metadata_xml: mapper::opt_string(row, 17)?,
+            saml_attribute_mapping: mapper::json_value(row, 18)?,
         })
     }
 }

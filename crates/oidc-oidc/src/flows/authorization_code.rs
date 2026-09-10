@@ -2,11 +2,12 @@
 
 use oidc_core::OidcError;
 use oidc_core::models::Session;
-use oidc_core::traits::token_service::{IdTokenExtraClaims, TokenService};
+use oidc_core::traits::token_service::{AccessTokenExtraClaims, IdTokenExtraClaims, TokenService};
 use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, sha2_256_hex, verify_s256};
 use oidc_repository::mapper::pg_err;
 use oidc_repository::repositories::auth_code_repo::AuthCodeRepo;
 use oidc_repository::repositories::client_repo::ClientRepo;
+use oidc_repository::repositories::realm_repo::RealmRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 use oidc_repository::with_transaction;
@@ -87,35 +88,80 @@ impl AuthorizationCodeFlow {
             };
             let audience = client.client_id.clone();
             let scopes = auth_code.scope.clone();
+            let offline_session = scopes.iter().any(|scope| scope == "offline_access");
+            let offline_policy = if offline_session {
+                let realm = RealmRepo
+                    .find_by_id(&mut conn, auth_code.realm_id)
+                    .await?
+                    .ok_or_else(|| OidcError::NotFound("realm".into()))?;
+                Some(oidc_core::models::OfflineSessionPolicy::from_realm_config(
+                    &realm.config,
+                ))
+            } else {
+                None
+            };
+            let organization =
+                crate::organization_claims::resolve_organization_claim(&mut conn, user.id, &scopes)
+                    .await?;
+            let role_claims = crate::role_claims::resolve_role_claims(&mut conn, user.id).await?;
+            let mapped_claims = crate::protocol_mappers::resolve_mapped_claims(
+                &mut conn,
+                client.id,
+                Some(&user),
+                &scopes,
+            )
+            .await?;
+            let include_access_roles = scopes.iter().any(|scope| scope == "roles");
 
             // Generate sid early so it can be included in both the ID token and session
             let sid = oidc_core::utils::generate_sid().unwrap_or_default();
 
             let token_svc = state.token_service_for_realm(auth_code.realm_id).await?;
             let access_token = token_svc
-                .issue_access_token(
+                .issue_access_token_with_extra(
                     &subject,
                     &audience,
                     &scopes,
                     dpop_jkt,
                     auth_code.authorization_details.as_ref(),
                     Some(auth_code.resource.as_slice()),
+                    Some(AccessTokenExtraClaims {
+                        custom_claims: mapped_claims.access_token.clone(),
+                        additional_audiences: mapped_claims.access_audiences.clone(),
+                        organization: organization.clone(),
+                        realm_access: include_access_roles
+                            .then(|| role_claims.realm_access.clone())
+                            .flatten(),
+                        resource_access: include_access_roles
+                            .then(|| role_claims.resource_access.clone())
+                            .flatten(),
+                    }),
                 )
                 .await?;
 
             let at_hash = oidc_core::utils::compute_at_hash(&access_token);
             let c_hash = oidc_core::utils::compute_c_hash(code);
 
-            // Resolve ACR/AMR based on the authentication method and requested ACR values
-            // For authorization_code flow, the user authenticated via password (pwd)
-            let resolved_acr_amr = oidc_core::utils::resolve_acr_amr("pwd", &auth_code.acr_values)
-                .map_err(OidcError::LoginRequired)?;
+            // Use the assurance established before the code was issued.
+            let resolved_acr_amr = oidc_core::utils::ResolvedAcrAmr {
+                acr: auth_code
+                    .auth_acr
+                    .clone()
+                    .unwrap_or_else(|| oidc_core::utils::ACR_BRONZE.to_string()),
+                amr: if auth_code.auth_amr.is_empty() {
+                    vec![oidc_core::utils::AMR_PWD.to_string()]
+                } else {
+                    auth_code.auth_amr.clone()
+                },
+            };
 
             // Resolve claims locale based on user preference and requested claims_locales
             let resolved_locale =
                 oidc_core::utils::resolve_locale(&user.locale, &auth_code.claims_locales);
 
             let id_token_extra = IdTokenExtraClaims {
+                custom_claims: mapped_claims.id_token,
+                additional_audiences: mapped_claims.id_audiences,
                 nonce: auth_code.nonce.clone(),
                 at_hash: Some(at_hash),
                 c_hash: Some(c_hash),
@@ -152,18 +198,9 @@ impl AuthorizationCodeFlow {
                 } else {
                     None
                 },
-                // Fetch user roles and groups for ID token
-                roles: {
-                    let roles = oidc_repository::repositories::role_repo::RoleRepo
-                        .find_by_user_id(&mut conn, user.id)
-                        .await
-                        .unwrap_or_default();
-                    if roles.is_empty() {
-                        None
-                    } else {
-                        Some(roles.iter().map(|r| r.name.clone()).collect())
-                    }
-                },
+                roles: role_claims.roles,
+                realm_access: role_claims.realm_access,
+                resource_access: role_claims.resource_access,
                 groups: {
                     let groups = oidc_repository::repositories::group_repo::GroupRepo
                         .find_by_user_id(&mut conn, user.id)
@@ -175,6 +212,7 @@ impl AuthorizationCodeFlow {
                         Some(groups.iter().map(|g| g.name.clone()).collect())
                     }
                 },
+                organization,
             };
 
             let id_token = token_svc
@@ -190,6 +228,11 @@ impl AuthorizationCodeFlow {
             let refresh_hash = Some(sha2_256_hex(&refresh_token_value));
             let token_family_id = generate_uuid_v7();
             let now = chrono::Utc::now();
+            let offline_max_expires_at =
+                offline_policy.map(|policy| now + chrono::Duration::seconds(policy.max_seconds));
+            let refresh_expires_at = offline_policy
+                .map(|policy| now + chrono::Duration::seconds(policy.idle_seconds))
+                .or_else(|| Some(now + chrono::Duration::days(7)));
 
             let session = Session {
                 id: generate_uuid_v7(),
@@ -204,7 +247,9 @@ impl AuthorizationCodeFlow {
                 scope: scopes.clone(),
                 revoked: false,
                 expires_at: now + chrono::Duration::minutes(15),
-                refresh_expires_at: Some(now + chrono::Duration::days(7)),
+                refresh_expires_at,
+                offline_session,
+                offline_max_expires_at,
                 created_at: now,
                 last_used_at: None,
                 token_family_id: Some(token_family_id),
@@ -214,6 +259,8 @@ impl AuthorizationCodeFlow {
                 family_revoked: false,
                 authorization_details: auth_code.authorization_details.clone(),
                 resource: auth_code.resource.clone(),
+                acr: resolved_acr_amr.acr.clone(),
+                amr: resolved_acr_amr.amr.clone(),
             };
 
             SessionRepo.create(&mut conn, &session).await?;
@@ -225,6 +272,7 @@ impl AuthorizationCodeFlow {
                 "token_type": token_type,
                 "expires_in": 900,
                 "refresh_token": refresh_token_value,
+                "refresh_expires_in": refresh_expires_at.map(|expiry| (expiry - now).num_seconds()),
                 "id_token": id_token,
                 "scope": scopes.join(" "),
             }))

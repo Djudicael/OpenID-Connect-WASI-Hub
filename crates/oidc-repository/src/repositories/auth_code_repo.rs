@@ -19,7 +19,7 @@ impl AuthCodeRepo {
         let code_hash = oidc_core::utils::sha2_256_hex(code);
         let sql = r#"
             SELECT id, code, client_id, user_id, realm_id, redirect_uri,
-                               scope, code_challenge, code_challenge_method, nonce, used, claims_request, display, response_type, acr_values, claims_locales, expires_at, response_mode, authorization_details, resource
+                               scope, code_challenge, code_challenge_method, nonce, used, claims_request, display, response_type, acr_values, claims_locales, expires_at, response_mode, authorization_details, resource, auth_acr, auth_amr
             FROM authorization_codes
             WHERE code = $1 AND NOT used AND expires_at > NOW() FOR UPDATE
         "#;
@@ -36,8 +36,8 @@ impl AuthCodeRepo {
         let sql = r#"
             INSERT INTO authorization_codes (
                             id, code, client_id, user_id, realm_id, redirect_uri,
-                            scope, code_challenge, code_challenge_method, nonce, used, claims_request, display, response_type, acr_values, claims_locales, expires_at, response_mode, authorization_details, resource
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+                            scope, code_challenge, code_challenge_method, nonce, used, claims_request, display, response_type, acr_values, claims_locales, expires_at, response_mode, authorization_details, resource, auth_acr, auth_amr
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
         "#;
         conn.execute_params(
             sql,
@@ -62,6 +62,8 @@ impl AuthCodeRepo {
                 &entity.response_mode,
                 &entity.authorization_details,
                 &mapper::to_json_value_vec(&entity.resource),
+                &entity.auth_acr,
+                &mapper::to_json_value_vec(&entity.auth_amr),
             ],
         )
         .await
@@ -120,6 +122,8 @@ impl AuthCodeRepo {
             response_mode: mapper::opt_string(row, 17)?,
             authorization_details: row.get::<serde_json::Value>(18).ok(),
             resource: mapper::json_string_vec(row, 19)?,
+            auth_acr: mapper::opt_string(row, 20)?,
+            auth_amr: mapper::json_string_vec(row, 21)?,
         })
     }
 }

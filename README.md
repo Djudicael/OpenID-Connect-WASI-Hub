@@ -8,8 +8,38 @@ A multi-tenant OpenID Connect / OAuth2 identity provider built in Rust with firs
 - **Multi-Tenancy** — Per-realm users, clients, sessions, scopes, and branded login pages
 - **WASI Preview 2** — Runs as a WASM component via `wasmtime serve` with no filesystem access
 - **Admin Console** — Native Web Components management UI (no React/Vue/Angular), primarily tested behind a same-origin proxy deployment
-- **Security** — Argon2id password hashing, HMAC-protected session cookies, brute-force protection, CSRF tokens
+- **User Account Console** — Self-service profile, password, session, approved application, linked identity, and MFA management. See the [account guide](docs/user-account-console.md).
+- **Authentication Flows** — Ordered required actions, realm-wide profile and security checks, versioned terms acceptance, and policy-driven MFA step-up. See the [authentication flow guide](docs/authentication-flows.md).
+- **Security** — Argon2id password hashing, TOTP, passkeys, one-time recovery codes, protected session cookies, brute-force protection, and CSRF tokens. See the [MFA guide](docs/multi-factor-authentication.md).
 - **PostgreSQL** — All state persisted in PostgreSQL via `wasi-pg-client`
+- **Organizations** — B2B tenants with invitations, verified domains, identity providers, groups, roles, and OIDC claims. See the [organization guide](docs/organizations.md).
+
+- **Client and Composite Roles** — Application-specific roles, nested role inheritance, group assignments, and structured token claims. See the [roles guide](docs/client-and-composite-roles.md).
+- **Client Scopes and Protocol Mappers** — Reusable default or optional scopes with configurable user, role, fixed, and audience claims. See the [client scopes guide](docs/client-scopes-and-protocol-mappers.md).
+- **Authorization Services**: Protected resources, contextual policies, permission tickets, entitlements, and revocable RPTs. See the [Authorization Services guide](docs/authorization-services.md).
+- **User federation**: Direct LDAP and Active Directory password authentication, directory synchronization, group mapping, and gateway-backed Kerberos browser sign-in. See the [User Federation guide](docs/user-federation.md).
+- **SAML 2.0**: Signed and encrypted SAML application sign-in, upstream identity brokering, metadata exchange, and single logout. See the [SAML guide](docs/saml.md).
+- **Realm portability**: Password-protected realm backup, restore, and transfer including users, credentials, applications, roles, organizations, and signing keys. See the [realm import and export guide](docs/realm-import-export.md).
+- **CIBA**: Applications can start a sign-in that the user approves from a separate signed-in device, using poll or ping delivery. See the [CIBA guide](docs/ciba.md).
+- **Client Policies**: Ordered conditions and reusable security profiles enforce approved client settings for administration and dynamic registration. See the [client policies guide](docs/client-policies.md).
+- **Workflows**: Event, scheduled, and manual triggers run durable user lifecycle actions with conditions, delays, retries, cancellation, and execution history. See the [workflows guide](docs/workflows.md).
+- **Realm presentation**: Customize sign-in and account colors, logos, fonts, localized labels, and HTML or plain-text email templates. See the [themes, localization, and email guide](docs/realm-themes-localization-email.md).
+
+## Documentation
+
+Open the [documentation home](docs/README.md) to navigate by goal, feature, or operational task. New deployments should begin with [core concepts](docs/concepts.md) and [the first-realm walkthrough](docs/getting-started.md).
+
+Common end-to-end journeys include:
+
+- [managing a workforce user lifecycle](docs/use-cases/workforce-user-lifecycle.md);
+- [building B2B organization multi-tenancy](docs/use-cases/b2b-organization-multitenancy.md);
+- [connecting a web application](docs/use-cases/web-application-sso.md);
+- [connecting a backend service](docs/use-cases/backend-service.md);
+- [choosing credentials and authorization for an agent](docs/use-cases/agent-identity.md);
+- [setting up a delegated helpdesk](docs/use-cases/delegated-helpdesk.md);
+- [operating a customer identity realm](docs/use-cases/customer-identity.md).
+
+The documentation home also includes production launch, API authorization, enterprise federation, MFA rollout, incident response, lifecycle automation, privacy, emergency access, and disaster-recovery journeys.
 
 ## Request correlation and tracing
 
@@ -44,9 +74,9 @@ cp .env.template .env
 
 ### Prerequisites
 
-- Rust 1.85+ with `wasm32-wasip2` target
+- Rust 1.96 with `wasm32-wasip2` target
 - Podman (for PostgreSQL container)
-- wasmtime ≥ 20 (for running the WASM component)
+- wasmtime ≥ 48.0.1 (for WASI 0.3 support used by `wasi-pg-client`)
 - Node.js 20+ (for frontend dev server)
 
 ```bash
@@ -128,6 +158,10 @@ cargo build --release -p openid-connect-wasi --target wasm32-wasip2
 | `OIDC_SIGNING_KID` | `key-1` | Key ID for the global RSA signing key |
 | `OIDC_ED25519_KEY` | *(auto-generated)* | Ed25519 private key in PKCS#8 PEM format (global fallback; per-realm keys preferred in production) |
 | `OIDC_ED25519_KID` | `ed-key-1` | Key ID for the global Ed25519 signing key |
+| `OIDC_RESEND_API_KEY` | *(none)* | Resend API key; requires `OIDC_EMAIL_FROM` to enable delivery |
+| `OIDC_EMAIL_FROM` | *(none)* | Verified sender for reset, verification, and organization invitation email |
+| `OIDC_RESEND_ENDPOINT` | `https://api.resend.com/emails` | Resend-compatible email API URL |
+| `OIDC_DNS_OVER_HTTPS_URL` | `https://cloudflare-dns.com/dns-query` | JSON DNS-over-HTTPS endpoint used to verify organization domains |
 
 ### Dev / E2E
 
@@ -184,8 +218,10 @@ cargo build --release -p openid-connect-wasi --target wasm32-wasip2
 
 The server accepts **two** authentication methods on protected admin endpoints:
 
-1. **Bearer Token** — OIDC access token with `admin` scope in the `Authorization: Bearer <token>` header
+1. **Bearer Token** — OIDC access token for a user whose direct or group roles grant the required administration permission.
 2. **API Key** — `X-API-Key: <key>` or `Authorization: Bearer <api_key>` header
+
+The `admin` permission grants full administration. Delegated roles and API keys can use independent resource/action permissions such as `users:read`, `users:write`, and `sessions:revoke`. See the [delegated administration guide](docs/delegated-administration.md) for the complete permission reference. Organization administration also supports resource-scoped permissions such as `organizations:<organization-uuid>:view`.
 
 ## Deployment Posture
 
@@ -345,7 +381,9 @@ Then start `wasmtime serve` with the required WASI worlds enabled:
 
 ```bash
 wasmtime serve \
+  -W component-model-async=y \
   -S cli=y \
+  -S p3=y \
   -S inherit-env=y \
   -S inherit-network=y \
   -S tcp=y \
@@ -386,6 +424,7 @@ Realms (tenants) are fully isolated:
 - **Users** — per-realm user directories with independent email namespaces
 - **Clients** — OAuth2/OIDC clients scoped to a single realm
 - **Sessions** — login sessions tied to a realm
+- **Offline access** — user-approved application grants with idle and maximum lifetimes
 - **Scopes** — realm-specific permission definitions
 - **API Keys** — realm-scoped admin keys
 - **Signing Keys** — each realm can have its own RSA + Ed25519 keypair for cryptographic isolation

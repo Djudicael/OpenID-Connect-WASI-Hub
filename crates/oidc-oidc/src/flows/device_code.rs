@@ -105,17 +105,54 @@ impl DeviceCodeFlow {
             };
             let audience = client.client_id.clone();
             let scopes = dc.scope.clone();
+            if scopes.iter().any(|scope| scope == "offline_access") {
+                return Err(OidcError::InvalidScope(
+                    "offline_access requires an interactive authorization code flow".into(),
+                ));
+            }
+            let organization =
+                crate::organization_claims::resolve_organization_claim(&mut conn, user.id, &scopes)
+                    .await?;
+            let role_claims = crate::role_claims::resolve_role_claims(&mut conn, user.id).await?;
+            let mapped_claims = crate::protocol_mappers::resolve_mapped_claims(
+                &mut conn,
+                client.id,
+                Some(&user),
+                &scopes,
+            )
+            .await?;
+            let include_access_roles = scopes.iter().any(|scope| scope == "roles");
 
             let sid = oidc_core::utils::generate_sid().unwrap_or_default();
 
             let token_svc = state.token_service_for_realm(dc.realm_id).await?;
             let access_token = token_svc
-                .issue_access_token(&subject, &audience, &scopes, dpop_jkt, None, None)
+                .issue_access_token_with_extra(
+                    &subject,
+                    &audience,
+                    &scopes,
+                    dpop_jkt,
+                    None,
+                    None,
+                    Some(oidc_core::traits::token_service::AccessTokenExtraClaims {
+                        custom_claims: mapped_claims.access_token.clone(),
+                        additional_audiences: mapped_claims.access_audiences.clone(),
+                        organization: organization.clone(),
+                        realm_access: include_access_roles
+                            .then(|| role_claims.realm_access.clone())
+                            .flatten(),
+                        resource_access: include_access_roles
+                            .then(|| role_claims.resource_access.clone())
+                            .flatten(),
+                    }),
+                )
                 .await?;
 
             let at_hash = oidc_core::utils::compute_at_hash(&access_token);
 
             let id_token_extra = IdTokenExtraClaims {
+                custom_claims: mapped_claims.id_token,
+                additional_audiences: mapped_claims.id_audiences,
                 nonce: None,
                 at_hash: Some(at_hash),
                 c_hash: None,
@@ -143,8 +180,11 @@ impl DeviceCodeFlow {
                 amr: Some(vec![oidc_core::utils::AMR_DEVICE_CODE.to_string()]),
                 azp: None, // Device code flow does not currently support resource indicators
                 address: None,
-                roles: None,
+                roles: role_claims.roles,
+                realm_access: role_claims.realm_access,
+                resource_access: role_claims.resource_access,
                 groups: None,
+                organization,
             };
 
             let id_token = token_svc
@@ -175,6 +215,8 @@ impl DeviceCodeFlow {
                 revoked: false,
                 expires_at: now + chrono::Duration::minutes(15),
                 refresh_expires_at: Some(now + chrono::Duration::days(7)),
+                offline_session: false,
+                offline_max_expires_at: None,
                 created_at: now,
                 last_used_at: None,
                 token_family_id: Some(token_family_id),
@@ -184,6 +226,8 @@ impl DeviceCodeFlow {
                 family_revoked: false,
                 authorization_details: None,
                 resource: vec![],
+                acr: oidc_core::utils::ACR_BRONZE.to_string(),
+                amr: vec![oidc_core::utils::AMR_PWD.to_string()],
             };
 
             SessionRepo.create(&mut conn, &session).await?;

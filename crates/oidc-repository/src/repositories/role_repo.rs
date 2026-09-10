@@ -24,7 +24,7 @@ pub struct RoleRepo;
 
 /// Column list for role SELECT queries (order must match map_row indices).
 const ROLE_COLUMNS: &str = r#"
-    id, realm_id, name, description, permissions, created_at, updated_at
+    id, realm_id, name, description, permissions, created_at, updated_at, client_id
 "#;
 
 impl RoleRepo {
@@ -50,7 +50,7 @@ impl RoleRepo {
         name: &str,
     ) -> Result<Option<Role>, OidcError> {
         let sql = &format!(
-            "SELECT {ROLE_COLUMNS} FROM roles WHERE realm_id = $1 AND name = $2 AND deleted_at IS NULL"
+            "SELECT {ROLE_COLUMNS} FROM roles WHERE realm_id = $1 AND client_id IS NULL AND name = $2 AND deleted_at IS NULL"
         );
         let row = conn
             .query_one_params(sql, &[&realm_id, &name])
@@ -59,12 +59,28 @@ impl RoleRepo {
         row.map(|r| Self::map_row(&r)).transpose()
     }
 
+    pub async fn find_by_client_and_name(
+        &self,
+        conn: &mut Connection,
+        client_id: Uuid,
+        name: &str,
+    ) -> Result<Option<Role>, OidcError> {
+        let sql = &format!(
+            "SELECT {ROLE_COLUMNS} FROM roles WHERE client_id = $1 AND name = $2 AND deleted_at IS NULL"
+        );
+        conn.query_one_params(sql, &[&client_id, &name])
+            .await
+            .map_err(mapper::pg_err)?
+            .map(|row| Self::map_row(&row))
+            .transpose()
+    }
+
     /// Insert a new role.
     pub async fn create(&self, conn: &mut Connection, entity: &Role) -> Result<(), OidcError> {
         let sql = r#"
             INSERT INTO roles (
-                id, realm_id, name, description, permissions, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+                id, realm_id, name, description, permissions, created_at, updated_at, client_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         "#;
         conn.execute_params(
             sql,
@@ -76,6 +92,7 @@ impl RoleRepo {
                 &mapper::to_json_value_vec(&entity.permissions),
                 &entity.created_at,
                 &entity.updated_at,
+                &entity.client_id,
             ],
         )
         .await
@@ -220,6 +237,54 @@ impl RoleRepo {
             .collect::<Result<Vec<_>, _>>()
     }
 
+    /// Find direct, group-derived, and recursively inherited composite roles.
+    pub async fn find_effective_by_user_id(
+        &self,
+        conn: &mut Connection,
+        user_id: Uuid,
+    ) -> Result<Vec<Role>, OidcError> {
+        let sql = format!(
+            "WITH RECURSIVE direct_roles(id) AS (\
+               SELECT role_id FROM user_roles WHERE user_id = $1 \
+               UNION SELECT gr.role_id FROM group_roles gr JOIN user_groups ug ON ug.group_id = gr.group_id WHERE ug.user_id = $1\
+             ), effective(id) AS (\
+               SELECT id FROM direct_roles \
+               UNION SELECT rc.child_role_id FROM role_composites rc JOIN effective e ON rc.parent_role_id = e.id\
+             ) SELECT roles.id, roles.realm_id, roles.name, roles.description, roles.permissions, roles.created_at, roles.updated_at, roles.client_id FROM roles JOIN effective ON effective.id = roles.id WHERE roles.deleted_at IS NULL ORDER BY roles.name"
+        );
+        conn.query_params(&sql, &[&user_id])
+            .await
+            .map_err(mapper::pg_err)?
+            .into_rows()
+            .iter()
+            .map(Self::map_row)
+            .collect()
+    }
+
+    /// Return effective role names together with the owning OAuth client identifier.
+    pub async fn find_effective_names_by_user_id(
+        &self,
+        conn: &mut Connection,
+        user_id: Uuid,
+    ) -> Result<Vec<(String, Option<String>)>, OidcError> {
+        conn.query_params(
+            "WITH RECURSIVE direct_roles(id) AS (\
+               SELECT role_id FROM user_roles WHERE user_id = $1 \
+               UNION SELECT gr.role_id FROM group_roles gr JOIN user_groups ug ON ug.group_id = gr.group_id WHERE ug.user_id = $1\
+             ), effective(id) AS (\
+               SELECT id FROM direct_roles \
+               UNION SELECT rc.child_role_id FROM role_composites rc JOIN effective e ON rc.parent_role_id = e.id\
+             ) SELECT DISTINCT r.name, c.client_id FROM roles r JOIN effective e ON e.id = r.id LEFT JOIN clients c ON c.id = r.client_id AND c.deleted_at IS NULL WHERE r.deleted_at IS NULL AND (r.client_id IS NULL OR c.id IS NOT NULL) ORDER BY c.client_id NULLS FIRST, r.name",
+            &[&user_id],
+        )
+        .await
+        .map_err(mapper::pg_err)?
+        .into_rows()
+        .iter()
+        .map(|row| Ok((mapper::string(row, 0)?, mapper::opt_string(row, 1)?)))
+        .collect()
+    }
+
     fn map_row(row: &wasi_pg_client::Row) -> Result<Role, OidcError> {
         Ok(Role {
             id: mapper::uuid(row, 0)?,
@@ -229,6 +294,7 @@ impl RoleRepo {
             permissions: mapper::json_string_vec(row, 4)?,
             created_at: mapper::datetime(row, 5)?,
             updated_at: mapper::datetime(row, 6)?,
+            client_id: mapper::opt_uuid(row, 7)?,
         })
     }
 }

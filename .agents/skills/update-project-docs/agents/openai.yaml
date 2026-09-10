@@ -1,0 +1,4 @@
+interface:
+  display_name: "Update Project Docs"
+  short_description: "Refresh guides, references, and UI screenshots"
+  default_prompt: "Use $update-project-docs to synchronize the project documentation and screenshots with the implemented behavior."

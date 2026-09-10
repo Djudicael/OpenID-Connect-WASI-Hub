@@ -218,7 +218,23 @@ impl AppState {
             signing_key: None,
             ed25519_key: None,
         };
-        Self::from_config(config)
+        let mut state = Self::from_config(config);
+        match (
+            std::env::var("OIDC_RESEND_API_KEY"),
+            std::env::var("OIDC_EMAIL_FROM"),
+        ) {
+            (Ok(api_key), Ok(from)) if !api_key.is_empty() && !from.is_empty() => {
+                state.email_sender = Arc::new(crate::email_sender::ResendEmailSender::new(
+                    api_key,
+                    from,
+                    std::env::var("OIDC_RESEND_ENDPOINT").ok(),
+                ));
+            }
+            _ => tracing::warn!(
+                "OIDC_RESEND_API_KEY and OIDC_EMAIL_FROM are not both set; email delivery uses the development logger"
+            ),
+        }
+        state
     }
 
     /// Build the OIDC state used by `oidc-oidc` handlers.

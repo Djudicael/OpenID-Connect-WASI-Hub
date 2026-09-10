@@ -4,9 +4,15 @@
 
 #![allow(missing_docs)]
 
+pub mod client_policies;
+pub mod direct_ldap;
 pub mod endpoints;
 pub mod errors;
+pub mod federation;
 pub mod flows;
+pub mod organization_claims;
+pub mod protocol_mappers;
+pub mod role_claims;
 pub mod session_cookie;
 pub mod state;
 pub mod tokens;

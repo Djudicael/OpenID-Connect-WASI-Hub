@@ -1,6 +1,7 @@
 //! OAuth2/OIDC grant flows.
 
 pub mod authorization_code;
+pub mod ciba;
 pub mod client_credentials;
 pub mod device_code;
 pub mod jwt_bearer;

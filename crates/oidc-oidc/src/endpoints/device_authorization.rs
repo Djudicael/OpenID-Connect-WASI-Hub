@@ -107,14 +107,14 @@ pub async fn device_authorization_handler(
             .collect()
     };
 
-    // Validate requested scopes against client's allowed scopes
-    for s in &scopes {
-        if !client.allowed_scopes.contains(s) {
-            return Err(OidcError::InvalidScope(format!(
-                "Client not authorized for scope: {}",
-                s
-            )));
-        }
+    let mut conn = state.connect().await?;
+    let scopes = oidc_repository::repositories::scope_repo::ScopeRepo
+        .resolve_names_for_client(&mut conn, client.id, &scopes, &client.allowed_scopes)
+        .await?;
+    if scopes.iter().any(|scope| scope == "offline_access") {
+        return Err(oidc_core::OidcError::InvalidScope(
+            "offline_access requires an interactive authorization code flow".into(),
+        ));
     }
 
     let now = chrono::Utc::now();
@@ -137,7 +137,6 @@ pub async fn device_authorization_handler(
         created_at: now,
     };
 
-    let mut conn = state.connect().await?;
     DeviceCodeRepo.create(&mut conn, &dc).await?;
 
     Ok(Json(json!({

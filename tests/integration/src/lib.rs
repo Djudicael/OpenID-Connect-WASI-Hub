@@ -29,6 +29,27 @@ pub mod helpers;
 pub mod apikey_tests;
 
 #[cfg(test)]
+pub mod account_tests;
+
+#[cfg(test)]
+pub mod required_actions_tests;
+
+#[cfg(test)]
+pub mod client_roles_tests;
+
+#[cfg(test)]
+pub mod ciba_tests;
+
+#[cfg(test)]
+pub mod client_policy_tests;
+
+#[cfg(test)]
+pub mod workflow_tests;
+
+#[cfg(test)]
+pub mod protocol_mapper_tests;
+
+#[cfg(test)]
 pub mod db_tests;
 
 #[cfg(test)]
@@ -42,6 +63,9 @@ pub mod scope_tests;
 
 #[cfg(test)]
 pub mod social_login_tests;
+
+#[cfg(test)]
+pub mod user_federation_tests;
 
 #[cfg(test)]
 pub mod security_tests;

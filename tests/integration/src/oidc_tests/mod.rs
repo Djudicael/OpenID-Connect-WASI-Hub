@@ -508,9 +508,7 @@ async fn test_authorization_code_flow_with_pkce() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize request failed");
 
@@ -678,9 +676,7 @@ async fn test_admin_ui_authorization_code_flow_includes_admin_scope() {
     );
 
     let authorize_resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize request failed");
 
@@ -733,6 +729,471 @@ async fn test_admin_ui_authorization_code_flow_includes_admin_scope() {
 // ===================================================================
 // Group 4: Refresh Token Rotation
 // ===================================================================
+
+#[tokio::test]
+async fn test_offline_access_rotates_survives_logout_and_revokes_as_a_family() {
+    let app = TestApp::new().await;
+    let client_id = "offline-client";
+    let client_secret = "OfflineClientSecret123!";
+    let redirect_uri = "https://offline.example.com/callback";
+    let client_db_id = app
+        .seed_client_with_secret(client_id, client_secret, &[redirect_uri])
+        .await;
+
+    let mut conn = app.db_conn().await;
+    let allowed_scopes = json!(["openid", "profile", "offline_access"]);
+    conn.execute_params(
+        "UPDATE clients SET allowed_scopes=$1 WHERE id=$2",
+        &[&allowed_scopes, &client_db_id],
+    )
+    .await
+    .expect("offline_access should be allowed for the test client");
+    let realm_config = json!({
+        "offline_sessions": {"idle_seconds": 864000, "max_seconds": 3456000}
+    });
+    conn.execute_params(
+        "UPDATE realms SET config=$1 WHERE id=$2",
+        &[&realm_config, &app.master_realm_id()],
+    )
+    .await
+    .expect("offline session policy should be configurable");
+
+    let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let challenge = pkce_s256_challenge(verifier);
+    let authorize_url = format!(
+        "{}/oidc/authorize?client_id={}&redirect_uri={}&response_type=code&scope=openid+profile+offline_access&prompt=consent&state=offline&code_challenge={}&code_challenge_method=S256&login_hint={}",
+        app.url(),
+        urlencoding::encode(client_id),
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(&challenge),
+        urlencoding::encode(fixtures::TEST_USER_EMAIL),
+    );
+    let authorize = app
+        .authorize_get(&authorize_url, None)
+        .await
+        .expect("offline authorization request failed");
+    assert_eq!(authorize.status(), StatusCode::TEMPORARY_REDIRECT);
+    let (code, _) = parse_redirect_params(
+        authorize
+            .headers()
+            .get("location")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+    );
+
+    let token_response = app
+        .client()
+        .post(format!("{}/oidc/token", app.url()))
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", code.as_str()),
+            ("redirect_uri", redirect_uri),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+            ("code_verifier", verifier),
+        ])
+        .send()
+        .await
+        .expect("offline code exchange failed");
+    assert_eq!(token_response.status(), StatusCode::OK);
+    let tokens: Value = token_response.json().await.unwrap();
+    assert_eq!(tokens["refresh_expires_in"], 864000);
+    let first_refresh = tokens["refresh_token"].as_str().unwrap().to_string();
+    let id_token = tokens["id_token"].as_str().unwrap().to_string();
+
+    let first_hash = oidc_core::utils::sha2_256_hex(&first_refresh);
+    let first_session = oidc_repository::repositories::session_repo::SessionRepo
+        .find_by_refresh_token_hash(&mut conn, &first_hash)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(first_session.offline_session);
+    let absolute_expiry = first_session.offline_max_expires_at.unwrap();
+    assert_eq!((absolute_expiry - first_session.created_at).num_days(), 40);
+
+    let logout = app
+        .client()
+        .get(format!(
+            "{}/oidc/logout?id_token_hint={}",
+            app.url(),
+            urlencoding::encode(&id_token)
+        ))
+        .send()
+        .await
+        .expect("logout failed");
+    assert!(logout.status().is_success() || logout.status().is_redirection());
+
+    let refresh_response = app
+        .client()
+        .post(format!("{}/oidc/token", app.url()))
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", first_refresh.as_str()),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+        ])
+        .send()
+        .await
+        .expect("offline refresh after logout failed");
+    assert_eq!(refresh_response.status(), StatusCode::OK);
+    let refreshed: Value = refresh_response.json().await.unwrap();
+    let second_refresh = refreshed["refresh_token"].as_str().unwrap().to_string();
+    let second_hash = oidc_core::utils::sha2_256_hex(&second_refresh);
+    let second_session = oidc_repository::repositories::session_repo::SessionRepo
+        .find_by_refresh_token_hash(&mut conn, &second_hash)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(second_session.offline_session);
+    assert_eq!(second_session.offline_max_expires_at, Some(absolute_expiry));
+    assert_eq!(
+        second_session.authorization_details,
+        first_session.authorization_details
+    );
+
+    let revoke = app
+        .client()
+        .post(format!("{}/oidc/revoke", app.url()))
+        .form(&[
+            ("token", second_refresh.as_str()),
+            ("token_type_hint", "refresh_token"),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+        ])
+        .send()
+        .await
+        .expect("offline token revocation failed");
+    assert_eq!(revoke.status(), StatusCode::OK);
+    let family = second_session.token_family_id.unwrap();
+    let family_rows = oidc_repository::repositories::session_repo::SessionRepo
+        .list(
+            &mut conn,
+            second_session.user_id,
+            Some(second_session.realm_id),
+            Some(true),
+            20,
+            0,
+        )
+        .await
+        .unwrap();
+    assert!(
+        family_rows
+            .iter()
+            .filter(|session| session.token_family_id == Some(family))
+            .all(|session| session.family_revoked)
+    );
+}
+
+#[tokio::test]
+async fn test_offline_access_requires_code_and_interactive_consent() {
+    let app = TestApp::new().await;
+    let client_id = "offline-consent-client";
+    let redirect_uri = "https://offline.example.com/callback";
+    let client_db_id = app.seed_public_client(client_id, &[redirect_uri]).await;
+    let mut conn = app.db_conn().await;
+    let allowed_scopes = json!(["openid", "offline_access"]);
+    conn.execute_params(
+        "UPDATE clients SET allowed_scopes=$1 WHERE id=$2",
+        &[&allowed_scopes, &client_db_id],
+    )
+    .await
+    .unwrap();
+
+    let implicit_url = format!(
+        "{}/oidc/authorize?client_id={}&redirect_uri={}&response_type=token&scope=openid+offline_access&nonce=n&login_hint={}",
+        app.url(),
+        client_id,
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(fixtures::TEST_USER_EMAIL)
+    );
+    let implicit = app.authorize_get(&implicit_url, None).await.unwrap();
+    let implicit_location = implicit
+        .headers()
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert_eq!(
+        parse_redirect_query(implicit_location, "error").as_deref(),
+        Some("invalid_scope")
+    );
+
+    let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let silent_url = format!(
+        "{}/oidc/authorize?client_id={}&redirect_uri={}&response_type=code&scope=openid+offline_access&prompt=none&code_challenge={}&code_challenge_method=S256&login_hint={}",
+        app.url(),
+        client_id,
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(&pkce_s256_challenge(verifier)),
+        urlencoding::encode(fixtures::TEST_USER_EMAIL)
+    );
+    let silent = app.authorize_get(&silent_url, None).await.unwrap();
+    let silent_location = silent.headers().get("location").unwrap().to_str().unwrap();
+    assert_eq!(
+        parse_redirect_query(silent_location, "error").as_deref(),
+        Some("consent_required")
+    );
+}
+
+#[tokio::test]
+async fn test_uma_ticket_rpt_entitlement_enforcement_and_revocation() {
+    use oidc_core::models::{AuthorizationPermission, AuthorizationPolicy};
+    use oidc_repository::repositories::authorization_service_repo::AuthorizationServiceRepo;
+
+    let app = TestApp::new().await;
+    let client_id = "documents-api";
+    let client_secret = "DocumentsApiSecret123!";
+    let client_db_id = app
+        .seed_client_with_secret(client_id, client_secret, &[])
+        .await;
+    let mut conn = app.db_conn().await;
+    let grants = json!([
+        "client_credentials",
+        "urn:ietf:params:oauth:grant-type:uma-ticket"
+    ]);
+    conn.execute_params(
+        "UPDATE clients SET allowed_grant_types=$1 WHERE id=$2",
+        &[&grants, &client_db_id],
+    )
+    .await
+    .unwrap();
+
+    let user_id: uuid::Uuid = conn
+        .query_one_params(
+            "SELECT id FROM users WHERE email=$1",
+            &[&fixtures::TEST_USER_EMAIL],
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .get(0)
+        .unwrap();
+    let user_token = login(&app).await["access_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let pat_response = app
+        .client()
+        .post(format!("{}/oidc/token", app.url()))
+        .form(&[
+            ("grant_type", "client_credentials"),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(pat_response.status(), StatusCode::OK);
+    let pat = pat_response.json::<Value>().await.unwrap()["access_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let registered = app.client()
+        .post(format!("{}/realms/master/authz/protection/resource_set", app.url()))
+        .bearer_auth(&pat)
+        .json(&json!({"name":"quarterly-report","uris":["/reports/quarterly"],"resource_scopes":["view","edit"],"attributes":{"classification":"internal"}}))
+        .send().await.unwrap();
+    assert_eq!(registered.status(), StatusCode::OK);
+    let resource_id: uuid::Uuid = registered.json::<Value>().await.unwrap()["_id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+
+    let now = chrono::Utc::now();
+    let policy = AuthorizationPolicy {
+        id: uuid::Uuid::now_v7(),
+        realm_id: app.master_realm_id(),
+        resource_server_id: client_db_id,
+        name: "named-user".into(),
+        description: None,
+        policy_type: "user".into(),
+        logic: "positive".into(),
+        config: json!({"users":[user_id]}),
+        created_at: now,
+        updated_at: now,
+    };
+    AuthorizationServiceRepo
+        .create_policy(&mut conn, &policy)
+        .await
+        .unwrap();
+    let permission = AuthorizationPermission {
+        id: uuid::Uuid::now_v7(),
+        realm_id: app.master_realm_id(),
+        resource_server_id: client_db_id,
+        name: "view-report".into(),
+        description: None,
+        resources: vec![resource_id],
+        scopes: vec!["view".into()],
+        policies: vec![policy.id],
+        decision_strategy: "unanimous".into(),
+        created_at: now,
+        updated_at: now,
+    };
+    AuthorizationServiceRepo
+        .create_permission(&mut conn, &permission)
+        .await
+        .unwrap();
+
+    let ticket_response = app
+        .client()
+        .post(format!(
+            "{}/realms/master/authz/protection/permission",
+            app.url()
+        ))
+        .bearer_auth(&pat)
+        .json(&json!({"resource_id":resource_id,"resource_scopes":["view"],"requester":user_id}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ticket_response.status(), StatusCode::OK);
+    let ticket = ticket_response.json::<Value>().await.unwrap()["ticket"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let rpt_response = app
+        .client()
+        .post(format!(
+            "{}/realms/master/protocol/openid-connect/token",
+            app.url()
+        ))
+        .form(&[
+            ("grant_type", "urn:ietf:params:oauth:grant-type:uma-ticket"),
+            ("ticket", ticket.as_str()),
+            ("claim_token", user_token.as_str()),
+            ("claim_token_format", "urn:ietf:params:oauth:token-type:jwt"),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(rpt_response.status(), StatusCode::OK);
+    let rpt_body = rpt_response.json::<Value>().await.unwrap();
+    let initial_rpt = rpt_body["access_token"].as_str().unwrap().to_string();
+    let rpt_claims = decode_jwt_payload(&initial_rpt);
+    assert_eq!(
+        rpt_claims["authorization"]["permissions"][0]["rsid"],
+        resource_id.to_string()
+    );
+    assert_eq!(
+        rpt_claims["authorization"]["permissions"][0]["scopes"],
+        json!(["view"])
+    );
+
+    let permission_parameter = format!("{resource_id}#view");
+    let upgraded_response = app
+        .client()
+        .post(format!(
+            "{}/realms/master/protocol/openid-connect/token",
+            app.url()
+        ))
+        .form(&[
+            ("grant_type", "urn:ietf:params:oauth:grant-type:uma-ticket"),
+            ("audience", client_id),
+            ("permission", permission_parameter.as_str()),
+            ("rpt", initial_rpt.as_str()),
+            ("claim_token", user_token.as_str()),
+            ("claim_token_format", "urn:ietf:params:oauth:token-type:jwt"),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(upgraded_response.status(), StatusCode::OK);
+    let upgraded_body = upgraded_response.json::<Value>().await.unwrap();
+    assert_eq!(upgraded_body["upgraded"], true);
+    let rpt = upgraded_body["access_token"].as_str().unwrap().to_string();
+
+    let old_introspection = app
+        .client()
+        .post(format!("{}/oidc/introspect", app.url()))
+        .form(&[
+            ("token", initial_rpt.as_str()),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(old_introspection.status(), StatusCode::OK);
+    assert_eq!(
+        old_introspection.json::<Value>().await.unwrap()["active"],
+        false
+    );
+
+    let entitlement = app
+        .client()
+        .post(format!(
+            "{}/realms/master/authz/entitlement/{client_id}",
+            app.url()
+        ))
+        .bearer_auth(&user_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(entitlement.status(), StatusCode::OK);
+    assert!(entitlement.json::<Value>().await.unwrap()["access_token"].is_string());
+
+    let decision = app
+        .client()
+        .post(format!(
+            "{}/realms/master/authz/protection/permission/evaluate/{client_id}",
+            app.url()
+        ))
+        .bearer_auth(&rpt)
+        .json(&json!({"resource_id":resource_id,"scopes":["view"]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(decision.status(), StatusCode::OK);
+    assert_eq!(decision.json::<Value>().await.unwrap()["result"], true);
+
+    let introspection = app
+        .client()
+        .post(format!("{}/oidc/introspect", app.url()))
+        .form(&[
+            ("token", rpt.as_str()),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(introspection.status(), StatusCode::OK);
+    assert_eq!(introspection.json::<Value>().await.unwrap()["active"], true);
+
+    let revoked = app
+        .client()
+        .post(format!("{}/oidc/revoke", app.url()))
+        .form(&[
+            ("token", rpt.as_str()),
+            ("token_type_hint", "access_token"),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+        ])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(revoked.status(), StatusCode::OK);
+    let denied = app
+        .client()
+        .post(format!(
+            "{}/realms/master/authz/protection/permission/evaluate/{client_id}",
+            app.url()
+        ))
+        .bearer_auth(&rpt)
+        .json(&json!({"resource_id":resource_id,"scopes":["view"]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+}
 
 #[tokio::test]
 async fn test_refresh_token_rotation() {
@@ -827,9 +1288,7 @@ async fn test_refresh_token_cannot_be_redeemed_by_different_client() {
     );
 
     let authorize_resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize request failed");
 
@@ -1904,9 +2363,7 @@ async fn test_redirect_uri_exact_match_rejected() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize request failed");
 
@@ -1969,9 +2426,7 @@ async fn test_id_token_contains_nonce() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize request failed");
 
@@ -2057,9 +2512,7 @@ async fn test_id_token_contains_hashes() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize request failed");
 
@@ -2620,9 +3073,7 @@ async fn test_userinfo_profile_scope_returns_standard_claims() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, Some("ClaimsPass1!"))
         .await
         .expect("authorize failed");
     assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
@@ -2712,9 +3163,7 @@ async fn test_authorize_with_display_parameter() {
         );
 
         let resp = app
-            .client()
-            .get(&authorize_url)
-            .send()
+            .authorize_get(&authorize_url, None)
             .await
             .expect("authorize failed");
         assert_eq!(
@@ -2751,9 +3200,7 @@ async fn test_authorize_with_claims_parameter() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize failed");
     assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
@@ -2786,9 +3233,7 @@ async fn test_implicit_flow_token_response_type() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize failed");
     assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
@@ -2822,9 +3267,7 @@ async fn test_implicit_flow_id_token_response_type() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize failed");
     assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
@@ -2858,9 +3301,7 @@ async fn test_hybrid_flow_code_token_response_type() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize failed");
     assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
@@ -2899,9 +3340,7 @@ async fn test_hybrid_flow_code_id_token_response_type() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize failed");
     assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
@@ -2940,9 +3379,7 @@ async fn test_hybrid_flow_code_id_token_token_response_type() {
     );
 
     let resp = app
-        .client()
-        .get(&authorize_url)
-        .send()
+        .authorize_get(&authorize_url, None)
         .await
         .expect("authorize failed");
     assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);

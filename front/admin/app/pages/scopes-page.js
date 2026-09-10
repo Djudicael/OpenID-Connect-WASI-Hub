@@ -4,6 +4,7 @@ import { listScopes, createScope, deleteScope } from '../services/scope-service.
 import { listAllRealms } from '../services/realm-service.js';
 import { resolveSelectedRealmId, setSelectedRealmId } from '../core/realm-context.js';
 import { showToast } from '../components/ui/toast.js';
+import { navigate } from '../core/router.js';
 
 class ScopesPage extends BaseComponent {
   constructor() {
@@ -103,7 +104,7 @@ class ScopesPage extends BaseComponent {
       { key: 'name', label: 'Name' },
       { key: 'description', label: 'Description', render: (v) => v || '-' },
       { key: 'enabled', label: 'Enabled', render: (v) => v ? html`<span style="color:var(--color-success)">Yes</span>` : html`<span style="color:var(--color-danger)">No</span>` },
-      { key: 'id', label: 'Actions', render: (_, row) => html`<div style="display:flex;gap:0.5rem"><c-button size="sm" variant="danger" @click=${() => this._deleteScope(row.id)}>Delete</c-button></div>` },
+      { key: 'id', label: 'Actions', render: (_, row) => html`<div style="display:flex;gap:0.5rem"><c-button size="sm" @click=${() => navigate(`/scopes/${row.id}`)}>Manage</c-button><c-button size="sm" variant="danger" @click=${() => this._deleteScope(row.id)}>Delete</c-button></div>` },
     ];
 
     return html`<c-page-layout title="Scopes">

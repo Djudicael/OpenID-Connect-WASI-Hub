@@ -9,7 +9,9 @@ use oidc_core::models::ClientType;
 
 use oidc_repository::repositories::client_repo::ClientRepo;
 
+use crate::endpoints::authorization_services::{self, UMA_GRANT_TYPE};
 use crate::flows::authorization_code::AuthorizationCodeFlow;
+use crate::flows::ciba::CibaFlow;
 use crate::flows::client_credentials::ClientCredentialsFlow;
 use crate::flows::device_code::DeviceCodeFlow;
 use crate::flows::jwt_bearer::JwtBearerFlow;
@@ -142,7 +144,17 @@ pub async fn token_handler_with_endpoint_uri(
             .await?
         }
         "client_credentials" => {
-            ClientCredentialsFlow::execute(&state, &client, dpop_jkt.as_deref()).await?
+            let requested_scopes = params
+                .get("scope")
+                .map(|value| {
+                    value
+                        .split_whitespace()
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            ClientCredentialsFlow::execute(&state, &client, &requested_scopes, dpop_jkt.as_deref())
+                .await?
         }
         "refresh_token" => {
             let refresh_token = params
@@ -155,6 +167,10 @@ pub async fn token_handler_with_endpoint_uri(
             let device_code = params.get("device_code").ok_or(OidcError::InvalidRequest)?;
 
             DeviceCodeFlow::execute(&state, device_code, &client_id, dpop_jkt.as_deref()).await?
+        }
+        oidc_core::models::CIBA_GRANT_TYPE => {
+            let auth_req_id = params.get("auth_req_id").ok_or(OidcError::InvalidRequest)?;
+            CibaFlow::execute(&state, auth_req_id, &client_id, dpop_jkt.as_deref()).await?
         }
         "urn:ietf:params:oauth:grant-type:jwt-bearer" => {
             let assertion = params.get("assertion").ok_or(OidcError::InvalidRequest)?;
@@ -195,6 +211,10 @@ pub async fn token_handler_with_endpoint_uri(
                 dpop_jkt.as_deref(),
             )
             .await?
+        }
+        UMA_GRANT_TYPE => {
+            authorization_services::uma_ticket_grant(&state, &client, &params, dpop_jkt.as_deref())
+                .await?
         }
         _ => return Err(OidcError::UnsupportedGrantType),
     };

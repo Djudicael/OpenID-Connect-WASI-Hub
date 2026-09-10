@@ -18,9 +18,9 @@
     "lit-html": "^3.3.3"
   },
   "devDependencies": {
-    "@playwright/test": "1.62.1",
+    "@playwright/test": "1.63.0",
     "express": "^5.2.1",
     "nodemon": "^3",
-    "playwright": "1.62.1"
+    "playwright": "1.63.0"
   }
 }

@@ -11,7 +11,7 @@ const GROUP_COLUMNS: &str = r#"
 
 /// Column list for role SELECT queries (order must match RoleRepo::map_row indices).
 const ROLE_COLUMNS: &str = r#"
-    r.id, r.realm_id, r.name, r.description, r.permissions, r.created_at, r.updated_at
+    r.id, r.realm_id, r.name, r.description, r.permissions, r.created_at, r.updated_at, r.client_id
 "#;
 
 /// Column list for user SELECT queries (order must match UserRepo::map_row indices).
@@ -144,6 +144,7 @@ impl UserGroupRepo {
             permissions: mapper::json_string_vec(row, 4)?,
             created_at: mapper::datetime(row, 5)?,
             updated_at: mapper::datetime(row, 6)?,
+            client_id: mapper::opt_uuid(row, 7)?,
         })
     }
 

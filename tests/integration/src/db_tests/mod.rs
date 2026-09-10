@@ -8,10 +8,14 @@ use oidc_core::models::audit_event::{ActorType, AuditEvent};
 use oidc_core::models::auth_code::CodeChallengeMethod;
 use oidc_core::models::signing_key::{Algorithm, SigningKey};
 use oidc_core::models::{ApiKey, AuthCode, Client, ClientType, Realm, ResponseType, Session, User};
+use oidc_core::models::{
+    Organization, OrganizationDomain, OrganizationDomainKind, OrganizationMembership,
+    OrganizationMembershipKind,
+};
 use oidc_repository::repositories::{
     api_key_repo::ApiKeyRepo, audit_event_repo::AuditEventRepo, auth_code_repo::AuthCodeRepo,
-    client_repo::ClientRepo, realm_repo::RealmRepo, session_repo::SessionRepo,
-    signing_key_repo::SigningKeyRepo, user_repo::UserRepo,
+    client_repo::ClientRepo, organization_repo::OrganizationRepo, realm_repo::RealmRepo,
+    session_repo::SessionRepo, signing_key_repo::SigningKeyRepo, user_repo::UserRepo,
 };
 use std::net::IpAddr;
 use std::str::FromStr;
@@ -29,6 +33,217 @@ fn test_realm(name: &str, display_name: &str) -> Realm {
         config: serde_json::Value::Object(serde_json::Map::new()),
         deleted_at: None,
     }
+}
+
+#[tokio::test]
+async fn test_organization_managed_member_lifecycle_and_claim_configuration() {
+    let mut conn = test_conn().await;
+    let realm = test_realm("organization-lifecycle", "Organization Lifecycle");
+    RealmRepo.create(&mut conn, &realm).await.unwrap();
+    let organization = Organization {
+        id: Uuid::new_v4(),
+        realm_id: realm.id,
+        name: "Acme Corporation".into(),
+        alias: "acme".into(),
+        enabled: true,
+        attributes: serde_json::json!({"plan": "enterprise", "internal": "private"}),
+        claim_attribute_names: vec!["plan".into()],
+        redirect_url: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    OrganizationRepo
+        .create(&mut conn, &organization)
+        .await
+        .unwrap();
+    assert_eq!(
+        OrganizationRepo
+            .find_by_id(&mut conn, organization.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .claim_attribute_names,
+        vec!["plan"]
+    );
+
+    let managed = test_user(realm.id, "managed@example.test");
+    let unmanaged = test_user(realm.id, "unmanaged@example.test");
+    UserRepo.create(&mut conn, &managed).await.unwrap();
+    UserRepo.create(&mut conn, &unmanaged).await.unwrap();
+    for (user_id, kind) in [
+        (managed.id, OrganizationMembershipKind::Managed),
+        (unmanaged.id, OrganizationMembershipKind::Unmanaged),
+    ] {
+        OrganizationRepo
+            .add_member(
+                &mut conn,
+                &OrganizationMembership {
+                    organization_id: organization.id,
+                    user_id,
+                    kind,
+                    joined_at: Utc::now(),
+                },
+            )
+            .await
+            .unwrap();
+    }
+
+    let mut disabled_organization = organization.clone();
+    disabled_organization.enabled = false;
+    OrganizationRepo
+        .update(&mut conn, &disabled_organization)
+        .await
+        .unwrap();
+    assert!(
+        OrganizationRepo
+            .is_managed_user_blocked(&mut conn, managed.id)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !OrganizationRepo
+            .is_managed_user_blocked(&mut conn, unmanaged.id)
+            .await
+            .unwrap()
+    );
+    OrganizationRepo
+        .update(&mut conn, &organization)
+        .await
+        .unwrap();
+
+    OrganizationRepo
+        .remove_member(&mut conn, organization.id, managed.id)
+        .await
+        .unwrap();
+    assert!(
+        UserRepo
+            .find_by_id(&mut conn, managed.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    OrganizationRepo
+        .remove_member(&mut conn, organization.id, unmanaged.id)
+        .await
+        .unwrap();
+    assert!(
+        UserRepo
+            .find_by_id(&mut conn, unmanaged.id)
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    let managed_on_delete = test_user(realm.id, "managed-delete@example.test");
+    let unmanaged_on_delete = test_user(realm.id, "unmanaged-delete@example.test");
+    UserRepo
+        .create(&mut conn, &managed_on_delete)
+        .await
+        .unwrap();
+    UserRepo
+        .create(&mut conn, &unmanaged_on_delete)
+        .await
+        .unwrap();
+    for (user_id, kind) in [
+        (managed_on_delete.id, OrganizationMembershipKind::Managed),
+        (
+            unmanaged_on_delete.id,
+            OrganizationMembershipKind::Unmanaged,
+        ),
+    ] {
+        OrganizationRepo
+            .add_member(
+                &mut conn,
+                &OrganizationMembership {
+                    organization_id: organization.id,
+                    user_id,
+                    kind,
+                    joined_at: Utc::now(),
+                },
+            )
+            .await
+            .unwrap();
+    }
+    OrganizationRepo
+        .delete(&mut conn, organization.id)
+        .await
+        .unwrap();
+    assert!(
+        UserRepo
+            .find_by_id(&mut conn, managed_on_delete.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        UserRepo
+            .find_by_id(&mut conn, unmanaged_on_delete.id)
+            .await
+            .unwrap()
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn test_organization_name_is_unique_within_realm() {
+    let mut conn = test_conn().await;
+    let realm = test_realm("organization-uniqueness", "Organization Uniqueness");
+    RealmRepo.create(&mut conn, &realm).await.unwrap();
+    let base = Organization {
+        id: Uuid::new_v4(),
+        realm_id: realm.id,
+        name: "Acme".into(),
+        alias: "acme".into(),
+        enabled: true,
+        attributes: serde_json::json!({}),
+        claim_attribute_names: vec![],
+        redirect_url: None,
+        created_at: Utc::now(),
+        updated_at: Utc::now(),
+    };
+    OrganizationRepo.create(&mut conn, &base).await.unwrap();
+    let mut duplicate_name = base.clone();
+    duplicate_name.id = Uuid::new_v4();
+    duplicate_name.alias = "other-alias".into();
+    conn.execute("SAVEPOINT duplicate_name").await.unwrap();
+    assert!(matches!(
+        OrganizationRepo.create(&mut conn, &duplicate_name).await,
+        Err(oidc_core::OidcError::Conflict(_))
+    ));
+    conn.execute("ROLLBACK TO SAVEPOINT duplicate_name")
+        .await
+        .unwrap();
+
+    let mut second = base.clone();
+    second.id = Uuid::new_v4();
+    second.name = "Other Organization".into();
+    second.alias = "other".into();
+    OrganizationRepo.create(&mut conn, &second).await.unwrap();
+    let domain = OrganizationDomain {
+        id: Uuid::new_v4(),
+        organization_id: base.id,
+        domain: "example.test".into(),
+        kind: OrganizationDomainKind::Exact,
+        verified: false,
+        verification_token_hash: None,
+    };
+    OrganizationRepo
+        .add_domain(&mut conn, &domain)
+        .await
+        .unwrap();
+    let mut duplicate_domain = domain.clone();
+    duplicate_domain.id = Uuid::new_v4();
+    duplicate_domain.organization_id = second.id;
+    conn.execute("SAVEPOINT duplicate_domain").await.unwrap();
+    assert!(matches!(
+        OrganizationRepo
+            .add_domain(&mut conn, &duplicate_domain)
+            .await,
+        Err(oidc_core::OidcError::Conflict(_))
+    ));
+    conn.execute("ROLLBACK TO SAVEPOINT duplicate_domain")
+        .await
+        .unwrap();
 }
 
 /// Helper to create a test user with default fields.
@@ -323,6 +538,8 @@ async fn test_session_crud() {
         realm_id: realm.id,
         client_id: client.id,
         grant_type: "authorization_code".to_string(),
+        acr: "urn:oidc-hub:acr:bronze".to_string(),
+        amr: vec!["pwd".to_string()],
         access_token_hash: "hash123".to_string(),
         refresh_token_hash: Some("refresh_hash".to_string()),
         id_token_jti: Some("jti123".to_string()),
@@ -330,6 +547,8 @@ async fn test_session_crud() {
         revoked: false,
         expires_at: now + chrono::Duration::hours(1),
         refresh_expires_at: Some(now + chrono::Duration::days(30)),
+        offline_session: false,
+        offline_max_expires_at: None,
         created_at: now,
         last_used_at: None,
         token_family_id: Some(Uuid::new_v4()),
@@ -490,6 +709,8 @@ async fn test_auth_code_crud() {
         display: None,
         response_type: ResponseType::CODE,
         acr_values: vec![],
+        auth_acr: Some("urn:oidc-hub:acr:bronze".to_string()),
+        auth_amr: vec!["pwd".to_string()],
         claims_locales: vec![],
         expires_at: Utc::now() + chrono::Duration::minutes(10),
         response_mode: None,
@@ -714,6 +935,8 @@ async fn test_session_token_hash_index_performance() {
             realm_id: realm.id,
             client_id: client.id,
             grant_type: "authorization_code".to_string(),
+            acr: "urn:oidc-hub:acr:bronze".to_string(),
+            amr: vec!["pwd".to_string()],
             access_token_hash: format!("hash_{:04}", i),
             refresh_token_hash: Some(format!("refresh_{:04}", i)),
             id_token_jti: None,
@@ -721,6 +944,8 @@ async fn test_session_token_hash_index_performance() {
             revoked: false,
             expires_at: now + chrono::Duration::hours(1),
             refresh_expires_at: Some(now + chrono::Duration::days(7)),
+            offline_session: false,
+            offline_max_expires_at: None,
             created_at: now,
             last_used_at: None,
             token_family_id: None,
@@ -923,6 +1148,8 @@ async fn test_cascade_delete_sessions_on_user_delete() {
         realm_id: realm.id,
         client_id: client.id,
         grant_type: "authorization_code".to_string(),
+        acr: "urn:oidc-hub:acr:bronze".to_string(),
+        amr: vec!["pwd".to_string()],
         access_token_hash: "cascade_hash".to_string(),
         refresh_token_hash: Some("cascade_refresh_hash".to_string()),
         id_token_jti: None,
@@ -930,6 +1157,8 @@ async fn test_cascade_delete_sessions_on_user_delete() {
         revoked: false,
         expires_at: now + chrono::Duration::minutes(15),
         refresh_expires_at: Some(now + chrono::Duration::days(7)),
+        offline_session: false,
+        offline_max_expires_at: None,
         created_at: now,
         last_used_at: None,
         token_family_id: None,
@@ -1021,6 +1250,8 @@ async fn test_expired_session_cleanup() {
         realm_id: realm.id,
         client_id: client.id,
         grant_type: "authorization_code".to_string(),
+        acr: "urn:oidc-hub:acr:bronze".to_string(),
+        amr: vec!["pwd".to_string()],
         access_token_hash: "expired_session_hash".to_string(),
         refresh_token_hash: Some("expired_refresh_hash".to_string()),
         id_token_jti: None,
@@ -1028,6 +1259,8 @@ async fn test_expired_session_cleanup() {
         revoked: false,
         expires_at: now - chrono::Duration::minutes(5), // expired 5 minutes ago
         refresh_expires_at: Some(now - chrono::Duration::hours(1)),
+        offline_session: false,
+        offline_max_expires_at: None,
         created_at: now - chrono::Duration::hours(1),
         last_used_at: None,
         token_family_id: None,
@@ -1116,6 +1349,8 @@ async fn test_expired_auth_code_cleanup() {
         display: None,
         response_type: ResponseType::CODE,
         acr_values: vec![],
+        auth_acr: Some("urn:oidc-hub:acr:bronze".to_string()),
+        auth_amr: vec!["pwd".to_string()],
         claims_locales: vec![],
         expires_at: Utc::now() - chrono::Duration::minutes(5), // expired 5 minutes ago
         response_mode: None,

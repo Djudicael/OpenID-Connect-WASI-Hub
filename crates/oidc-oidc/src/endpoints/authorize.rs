@@ -6,6 +6,10 @@
 use axum::extract::Query;
 use axum::http::HeaderMap;
 use axum::response::{Html, IntoResponse, Redirect, Response};
+use base64::Engine;
+use hmac::{Hmac, Mac};
+use serde::{Deserialize, Serialize};
+use sha2::Sha256;
 use std::collections::HashMap;
 
 use oidc_core::OidcError;
@@ -15,6 +19,7 @@ use oidc_core::utils::{generate_uuid_v7, html_escape};
 use oidc_repository::repositories::client_repo::ClientRepo;
 use oidc_repository::repositories::realm_repo::RealmRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
+use oidc_repository::repositories::user_consent_repo::UserConsentRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 
 use crate::session_cookie;
@@ -99,6 +104,8 @@ enum AuthorizeResult {
     Redirect(String),
     /// HTML auto-submitting form (form_post mode).
     FormPost { html: String },
+    /// Interactive server-rendered page used to select an organization.
+    Page { html: String },
 }
 
 impl IntoResponse for AuthorizeResult {
@@ -106,6 +113,7 @@ impl IntoResponse for AuthorizeResult {
         match self {
             Self::Redirect(url) => Redirect::temporary(&url).into_response(),
             Self::FormPost { html, .. } => Html(html).into_response(),
+            Self::Page { html } => Html(html).into_response(),
         }
     }
 }
@@ -131,6 +139,122 @@ fn merge_protected_authorize_params(
     Ok(())
 }
 
+#[derive(Serialize, Deserialize)]
+struct ConsentToken {
+    user_id: uuid::Uuid,
+    client_id: uuid::Uuid,
+    scopes: Vec<String>,
+    expires_at: i64,
+}
+
+fn create_consent_token(
+    state: &OidcState,
+    user_id: uuid::Uuid,
+    client_id: uuid::Uuid,
+    scopes: &[String],
+) -> Result<String, OidcError> {
+    let payload = ConsentToken {
+        user_id,
+        client_id,
+        scopes: scopes.to_vec(),
+        expires_at: chrono::Utc::now().timestamp() + 300,
+    };
+    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+        serde_json::to_vec(&payload).map_err(|error| OidcError::Internal(error.to_string()))?,
+    );
+    let key = state.decode_encryption_key()?;
+    let mut mac = Hmac::<Sha256>::new_from_slice(&key)
+        .map_err(|error| OidcError::Internal(error.to_string()))?;
+    mac.update(encoded.as_bytes());
+    Ok(format!(
+        "{encoded}.{}",
+        hex::encode(mac.finalize().into_bytes())
+    ))
+}
+
+fn verify_consent_token(
+    state: &OidcState,
+    value: &str,
+    user_id: uuid::Uuid,
+    client_id: uuid::Uuid,
+    scopes: &[String],
+) -> bool {
+    let Some((encoded, signature)) = value.rsplit_once('.') else {
+        return false;
+    };
+    let Ok(signature) = hex::decode(signature) else {
+        return false;
+    };
+    let Ok(key) = state.decode_encryption_key() else {
+        return false;
+    };
+    let Ok(mut mac) = Hmac::<Sha256>::new_from_slice(&key) else {
+        return false;
+    };
+    mac.update(encoded.as_bytes());
+    if mac.verify_slice(&signature).is_err() {
+        return false;
+    }
+    let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(encoded) else {
+        return false;
+    };
+    let Ok(payload) = serde_json::from_slice::<ConsentToken>(&bytes) else {
+        return false;
+    };
+    payload.user_id == user_id
+        && payload.client_id == client_id
+        && payload.scopes == scopes
+        && payload.expires_at >= chrono::Utc::now().timestamp()
+}
+
+fn render_consent_html(
+    action: &str,
+    params: &HashMap<String, String>,
+    client_name: &str,
+    scopes: &[String],
+    token: &str,
+) -> String {
+    let hidden = params
+        .iter()
+        .filter(|(key, _)| {
+            !matches!(
+                key.as_str(),
+                "request" | "request_uri" | "consent_action" | "consent_token"
+            )
+        })
+        .map(|(key, value)| {
+            format!(
+                "<input type=\"hidden\" name=\"{}\" value=\"{}\">",
+                html_escape(key),
+                html_escape(value)
+            )
+        })
+        .collect::<String>();
+    let scope_items = scopes
+        .iter()
+        .map(|scope| {
+            let description = match scope.as_str() {
+                "openid" => "Sign you in and identify your account",
+                "profile" => "View your name and profile information",
+                "email" => "View your email address",
+                "address" => "View your postal address",
+                "phone" => "View your phone number",
+                "offline_access" => "Keep access when you are away",
+                _ => scope.as_str(),
+            };
+            format!("<li>{}</li>", html_escape(description))
+        })
+        .collect::<String>();
+    format!(
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Approve access</title><style>body{{font:16px system-ui;background:#f4f6f8;color:#182230;margin:0}}main{{max-width:560px;margin:8vh auto;background:white;padding:2rem;border-radius:12px;box-shadow:0 8px 30px #0002}}h1{{margin-top:0}}li{{margin:.75rem 0}}.actions{{display:flex;gap:.75rem;justify-content:flex-end;margin-top:2rem}}button{{padding:.7rem 1rem;border-radius:6px;border:1px solid #98a2b3;background:white;font-weight:600}}button[name=consent_action][value=allow]{{background:#175cd3;color:white;border-color:#175cd3}}</style></head><body><main><h1>Approve access</h1><p><strong>{}</strong> wants permission to:</p><ul>{}</ul><p>You can remove this access later from your account.</p><form method="get" action="{}">{}<input type="hidden" name="consent_token" value="{}"><div class="actions"><button name="consent_action" value="deny">Deny</button><button name="consent_action" value="allow">Allow</button></div></form></main></body></html>"#,
+        html_escape(client_name),
+        scope_items,
+        html_escape(action),
+        hidden,
+        html_escape(token),
+    )
+}
+
 /// Authorization endpoint handler.
 /// Validates the request, generates an authorization code, and redirects back to the client.
 ///
@@ -138,7 +262,7 @@ fn merge_protected_authorize_params(
 /// - `prompt=none`: Returns `login_required` if no authenticated session exists.
 ///   If a valid session cookie is present, the user is authenticated silently (SSO).
 /// - `prompt=login`: Forces re-authentication (ignores session cookie, proceeds to login page).
-/// - `prompt=consent`: Pass-through (auto-consent for now).
+/// - `prompt=consent`: Always asks the user to approve the requested access.
 /// - `max_age`: If the user's auth_time exceeds max_age, requires re-authentication.
 pub async fn authorize_handler(
     state: OidcState,
@@ -833,6 +957,21 @@ async fn authorize_inner(
 
     // --- Scope validation ---
     let requested_scopes: Vec<String> = scope.split(' ').map(|s| s.to_string()).collect();
+    let requested_scopes = oidc_repository::repositories::scope_repo::ScopeRepo
+        .resolve_names_for_client(
+            &mut conn,
+            client.id,
+            &requested_scopes,
+            &client.allowed_scopes,
+        )
+        .await
+        .map_err(|_| {
+            (
+                redirect_uri.clone(),
+                "invalid_scope".to_string(),
+                "A requested scope is not allowed for this client".to_string(),
+            )
+        })?;
 
     // Require "openid" scope for OIDC
     if !requested_scopes.contains(&"openid".to_string()) {
@@ -842,16 +981,15 @@ async fn authorize_inner(
             "The 'openid' scope is required".to_string(),
         ));
     }
-
-    // Validate requested scopes against client's allowed scopes
-    for s in &requested_scopes {
-        if !client.allowed_scopes.contains(s) {
-            return Err((
-                redirect_uri.clone(),
-                "invalid_scope".to_string(),
-                format!("Scope '{}' is not allowed for this client", s),
-            ));
-        }
+    let offline_access_requested = requested_scopes
+        .iter()
+        .any(|scope| scope == "offline_access");
+    if offline_access_requested && !response_type.has_code() {
+        return Err((
+            redirect_uri.clone(),
+            "invalid_scope".to_string(),
+            "The 'offline_access' scope requires an authorization code flow".to_string(),
+        ));
     }
 
     // --- prompt parameter handling (OIDC Core §3.1.2.1) ---
@@ -936,19 +1074,13 @@ async fn authorize_inner(
     };
 
     // prompt=none: If the user is not authenticated, return login_required.
-    if prompt_values.contains(&"none")
-        && cookie_user.is_none()
-        && !params.contains_key("login_hint")
-        && id_token_hint_subject.is_none()
-    {
+    if prompt_values.contains(&"none") && cookie_user.is_none() {
         return Err((
             redirect_uri.clone(),
             "login_required".to_string(),
             "The Authorization Server requires End-User authentication.".to_string(),
         ));
     }
-    // If a valid session cookie, login_hint, or id_token_hint exists, we proceed.
-
     // prompt=consent: Pass-through — we auto-consent for now.
 
     // --- max_age parameter handling (OIDC Core §3.1.2.1) ---
@@ -980,96 +1112,22 @@ async fn authorize_inner(
                 }
             }
         } else {
-            // No session cookie — if login_hint is provided, proceed.
-            // Otherwise, redirect to login.
-            let login_hint = params.get("login_hint");
-            if login_hint.is_none() {
-                let login_url = build_login_url(
-                    &format!(
-                        "/oidc/authorize?{}",
-                        serde_urlencoded::to_string(&params).unwrap_or_default()
-                    ),
-                    state_param.as_ref(),
-                );
-                return Ok(AuthorizeResult::Redirect(login_url));
-            }
+            let login_url = build_login_url(
+                &format!(
+                    "/oidc/authorize?{}",
+                    serde_urlencoded::to_string(&params).unwrap_or_default()
+                ),
+                state_param.as_ref(),
+            );
+            return Ok(AuthorizeResult::Redirect(login_url));
         }
     }
 
     // --- User authentication ---
-    // Priority: 1) session cookie  2) login_hint  3) id_token_hint  4) redirect to login
-    let login_hint = params.get("login_hint").cloned();
-    let user = if let Some(ref u) = cookie_user {
-        u.clone()
-    } else if let Some(email) = login_hint {
-        match UserRepo
-            .find_by_email(&mut conn, client.realm_id, &email)
-            .await
-        {
-            Ok(Some(u)) => u,
-            Ok(None) => {
-                return Err((
-                    redirect_uri.clone(),
-                    "access_denied".to_string(),
-                    "User not found".to_string(),
-                ));
-            }
-            Err(e) => {
-                tracing::error!("DB error finding user in authorize: {e}");
-                return Err((
-                    redirect_uri.clone(),
-                    "server_error".to_string(),
-                    "An internal error occurred".to_string(),
-                ));
-            }
-        }
-    } else if let Some(ref hint_subject) = id_token_hint_subject {
-        // Try to look up the user by the subject from id_token_hint
-        match uuid::Uuid::parse_str(hint_subject) {
-            Ok(user_id) => match UserRepo.find_by_id(&mut conn, user_id).await {
-                Ok(Some(u)) if u.enabled => u,
-                Ok(Some(_)) => {
-                    return Err((
-                        redirect_uri.clone(),
-                        "access_denied".to_string(),
-                        "User account is disabled".to_string(),
-                    ));
-                }
-                Ok(None) => {
-                    return Err((
-                        redirect_uri.clone(),
-                        "access_denied".to_string(),
-                        "User not found for id_token_hint subject".to_string(),
-                    ));
-                }
-                Err(e) => {
-                    tracing::error!("DB error finding user from id_token_hint: {e}");
-                    return Err((
-                        redirect_uri.clone(),
-                        "server_error".to_string(),
-                        "An internal error occurred".to_string(),
-                    ));
-                }
-            },
-            Err(_) => {
-                // Subject is not a UUID — try email lookup as fallback
-                match UserRepo
-                    .find_by_email(&mut conn, client.realm_id, hint_subject)
-                    .await
-                {
-                    Ok(Some(u)) => u,
-                    Ok(None) | Err(_) => {
-                        return Err((
-                            redirect_uri.clone(),
-                            "access_denied".to_string(),
-                            "User not found for id_token_hint subject".to_string(),
-                        ));
-                    }
-                }
-            }
-        }
+    // Account hints do not authenticate a user. A valid server session is required.
+    let user = if let Some(ref user) = cookie_user {
+        user.clone()
     } else {
-        // No session cookie or login_hint: redirect to login page with return URL
         let login_url = build_login_url(
             &format!(
                 "/oidc/authorize?{}",
@@ -1079,13 +1137,100 @@ async fn authorize_inner(
         );
         return Ok(AuthorizeResult::Redirect(login_url));
     };
-
     if !user.enabled {
         return Err((
             redirect_uri.clone(),
             "access_denied".to_string(),
             "User account is disabled".to_string(),
         ));
+    }
+    if let Ok(Some(user_realm)) = RealmRepo.find_by_id(&mut conn, user.realm_id).await {
+        match crate::endpoints::required_actions::pending_actions(&mut conn, &user, &user_realm)
+            .await
+        {
+            Ok(actions) if !actions.is_empty() => {
+                if prompt_values.contains(&"none") {
+                    return Err((
+                        redirect_uri.clone(),
+                        "interaction_required".into(),
+                        "The user must complete required account actions".into(),
+                    ));
+                }
+                let login_url = build_login_url(
+                    &format!(
+                        "/oidc/authorize?{}",
+                        serde_urlencoded::to_string(&params).unwrap_or_default()
+                    ),
+                    state_param.as_ref(),
+                );
+                return Ok(AuthorizeResult::Redirect(login_url));
+            }
+            Err(error) => {
+                tracing::error!("Failed to evaluate required actions: {error}");
+                return Err((
+                    redirect_uri.clone(),
+                    "server_error".into(),
+                    "An internal error occurred".into(),
+                ));
+            }
+            _ => {}
+        }
+    }
+    if oidc_repository::repositories::organization_repo::OrganizationRepo
+        .is_managed_user_blocked(&mut conn, user.id)
+        .await
+        .map_err(|error| {
+            tracing::error!("Failed to validate managed organization membership: {error}");
+            (
+                redirect_uri.clone(),
+                "server_error".to_string(),
+                "An internal error occurred".to_string(),
+            )
+        })?
+    {
+        return Err((
+            redirect_uri.clone(),
+            "access_denied".to_string(),
+            "The account organization is disabled".to_string(),
+        ));
+    }
+
+    if let Err(error) = crate::organization_claims::resolve_organization_claim(
+        &mut conn,
+        user.id,
+        &requested_scopes,
+    )
+    .await
+    {
+        if matches!(error, oidc_core::OidcError::AccountSelectionRequired(_))
+            && !prompt_values.contains(&"none")
+        {
+            let organizations = oidc_repository::repositories::organization_repo::OrganizationRepo
+                .find_enabled_by_user_id(&mut conn, user.id)
+                .await
+                .map_err(|error| {
+                    tracing::error!("Failed to list organizations for selection: {error}");
+                    (
+                        redirect_uri.clone(),
+                        "server_error".to_string(),
+                        "An internal error occurred".to_string(),
+                    )
+                })?;
+            return Ok(AuthorizeResult::Page {
+                html: render_organization_selection_html(&params, &organizations),
+            });
+        }
+        let (code, description) = match error {
+            oidc_core::OidcError::InvalidScope(message) => ("invalid_scope", message),
+            oidc_core::OidcError::AccountSelectionRequired(message) => {
+                ("account_selection_required", message)
+            }
+            error => {
+                tracing::error!("Failed to validate organization scope: {error}");
+                ("server_error", "An internal error occurred".to_string())
+            }
+        };
+        return Err((redirect_uri.clone(), code.to_string(), description));
     }
 
     // --- id_token_hint validation (OIDC Core §3.1.2.1) ---
@@ -1120,11 +1265,160 @@ async fn authorize_inner(
         }
     }
 
+    // --- User consent ---
+    let saved_consent = UserConsentRepo
+        .find(&mut conn, user.id, client.id)
+        .await
+        .map_err(|error| {
+            tracing::error!("Failed to load user consent: {error}");
+            (
+                redirect_uri.clone(),
+                "server_error".to_string(),
+                "An internal error occurred".to_string(),
+            )
+        })?;
+    let already_granted = saved_consent.as_ref().is_some_and(|consent| {
+        requested_scopes
+            .iter()
+            .all(|scope| consent.scopes.contains(scope))
+    });
+    let consent_token = params.get("consent_token");
+    let consent_action = params.get("consent_action").map(String::as_str);
+    let submitted = consent_token.is_some() || consent_action.is_some();
+    let valid_submission = consent_token.is_some_and(|token| {
+        verify_consent_token(&state, token, user.id, client.id, &requested_scopes)
+    });
+    if submitted && !valid_submission {
+        return Err((
+            redirect_uri.clone(),
+            "invalid_request".to_string(),
+            "The consent request is invalid or expired".to_string(),
+        ));
+    }
+    match consent_action {
+        Some("deny") if valid_submission => {
+            return Err((
+                redirect_uri.clone(),
+                "access_denied".to_string(),
+                "The user denied the request".to_string(),
+            ));
+        }
+        Some("allow") if valid_submission => {
+            UserConsentRepo
+                .grant(
+                    &mut conn,
+                    user.id,
+                    user.realm_id,
+                    client.id,
+                    &requested_scopes,
+                )
+                .await
+                .map_err(|error| {
+                    tracing::error!("Failed to save user consent: {error}");
+                    (
+                        redirect_uri.clone(),
+                        "server_error".to_string(),
+                        "An internal error occurred".to_string(),
+                    )
+                })?;
+        }
+        _ if prompt_values.contains(&"none") && (offline_access_requested || !already_granted) => {
+            return Err((
+                redirect_uri.clone(),
+                "consent_required".to_string(),
+                "The user has not approved the requested access".to_string(),
+            ));
+        }
+        _ if offline_access_requested || prompt_values.contains(&"consent") || !already_granted => {
+            let token = create_consent_token(&state, user.id, client.id, &requested_scopes)
+                .map_err(|error| {
+                    tracing::error!("Failed to create consent token: {error}");
+                    (
+                        redirect_uri.clone(),
+                        "server_error".to_string(),
+                        "An internal error occurred".to_string(),
+                    )
+                })?;
+            let action = realm_name
+                .map(|realm| format!("/realms/{realm}/protocol/openid-connect/auth"))
+                .unwrap_or_else(|| "/oidc/authorize".into());
+            return Ok(AuthorizeResult::Page {
+                html: render_consent_html(
+                    &action,
+                    &params,
+                    &client.name,
+                    &requested_scopes,
+                    &token,
+                ),
+            });
+        }
+        _ => {}
+    }
+
     // --- acr_values validation and resolution (OIDC Core §3.1.2.1 / §3.1.2.2) ---
-    // Determine the authentication method used. For the authorize endpoint,
-    // the user authenticated via session cookie or login_hint (password-based).
-    let auth_method = "pwd";
-    let resolved_acr_amr = match oidc_core::utils::resolve_acr_amr(auth_method, &acr_values) {
+    // Retain the assurance established by the authenticated browser session.
+    let assurance_session = if let Some(ref id) = cookie_session_id {
+        match uuid::Uuid::parse_str(id) {
+            Ok(id) => SessionRepo.find_by_id(&mut conn, id).await.ok().flatten(),
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+    let auth_flow = RealmRepo
+        .find_by_id(&mut conn, user.realm_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|realm| oidc_core::models::AuthenticationFlowConfig::from_realm_config(&realm.config))
+        .unwrap_or_default();
+    let step_up = auth_flow.enabled
+        && auth_flow.step_up.enabled
+        && (auth_flow.step_up.client_ids.is_empty()
+            || auth_flow
+                .step_up
+                .client_ids
+                .iter()
+                .any(|v| v == &client.client_id))
+        && (auth_flow.step_up.scopes.is_empty()
+            || auth_flow
+                .step_up
+                .scopes
+                .iter()
+                .any(|v| requested_scopes.contains(v)));
+    let step_up_satisfied = assurance_session.as_ref().is_some_and(|session| {
+        session.acr == oidc_core::utils::ACR_SILVER
+            && auth_flow
+                .step_up
+                .max_auth_age_seconds
+                .is_none_or(|max| (chrono::Utc::now() - session.created_at).num_seconds() <= max)
+    });
+    if step_up && !step_up_satisfied {
+        if prompt_values.contains(&"none") {
+            return Err((
+                redirect_uri.clone(),
+                "interaction_required".into(),
+                "Multi-factor authentication is required for this request".into(),
+            ));
+        }
+        let login_url = build_login_url(
+            &format!(
+                "/oidc/authorize?{}",
+                serde_urlencoded::to_string(&params).unwrap_or_default()
+            ),
+            state_param.as_ref(),
+        );
+        return Ok(AuthorizeResult::Redirect(login_url));
+    }
+    let auth_method = if assurance_session
+        .as_ref()
+        .is_some_and(|session| session.acr == oidc_core::utils::ACR_SILVER)
+    {
+        "mfa"
+    } else {
+        "pwd"
+    };
+    let mut resolved_acr_amr = match oidc_core::utils::resolve_acr_amr(auth_method, &acr_values) {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!("ACR resolution failed: {e}");
@@ -1137,6 +1431,10 @@ async fn authorize_inner(
             ));
         }
     };
+
+    if let Some(session) = assurance_session {
+        resolved_acr_amr.amr = session.amr;
+    }
 
     // --- claims_locales resolution (OIDC Core §5.2) ---
     // Select the best matching locale for the user's claims.
@@ -1179,6 +1477,8 @@ async fn authorize_inner(
             response_mode: response_mode_param.clone(),
             authorization_details: authorization_details.clone(),
             resource: resource_params.clone(),
+            auth_acr: Some(resolved_acr_amr.acr.clone()),
+            auth_amr: resolved_acr_amr.amr.clone(),
         };
 
         match oidc_repository::repositories::auth_code_repo::AuthCodeRepo
@@ -1230,16 +1530,81 @@ async fn authorize_inner(
             user.id.to_string()
         };
         let audience = client.client_id.clone();
+        let organization = match crate::organization_claims::resolve_organization_claim(
+            &mut conn,
+            user.id,
+            &requested_scopes,
+        )
+        .await
+        {
+            Ok(value) => value,
+            Err(oidc_core::OidcError::InvalidScope(message)) => {
+                return Err((redirect_uri.clone(), "invalid_scope".to_string(), message));
+            }
+            Err(oidc_core::OidcError::AccountSelectionRequired(message)) => {
+                return Err((
+                    redirect_uri.clone(),
+                    "account_selection_required".to_string(),
+                    message,
+                ));
+            }
+            Err(error) => {
+                tracing::error!("Failed to resolve organization claim: {error}");
+                return Err((
+                    redirect_uri.clone(),
+                    "server_error".to_string(),
+                    "An internal error occurred".to_string(),
+                ));
+            }
+        };
+        let role_claims = match crate::role_claims::resolve_role_claims(&mut conn, user.id).await {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::error!("Failed to resolve effective role claims: {error}");
+                return Err((
+                    redirect_uri.clone(),
+                    "server_error".to_string(),
+                    "An internal error occurred".to_string(),
+                ));
+            }
+        };
+        let include_access_roles = requested_scopes.iter().any(|scope| scope == "roles");
+        let mapped_claims = crate::protocol_mappers::resolve_mapped_claims(
+            &mut conn,
+            client.id,
+            Some(&user),
+            &requested_scopes,
+        )
+        .await
+        .map_err(|error| {
+            tracing::error!("Failed to resolve protocol mappers: {error}");
+            (
+                redirect_uri.clone(),
+                "server_error".to_string(),
+                "An internal error occurred".to_string(),
+            )
+        })?;
 
         if response_type.has_token() {
             let access_token = match token_svc
-                .issue_access_token(
+                .issue_access_token_with_extra(
                     &subject,
                     &audience,
                     &requested_scopes,
                     None,
                     authorization_details.as_ref(),
                     Some(resource_params.as_slice()),
+                    Some(oidc_core::traits::token_service::AccessTokenExtraClaims {
+                        custom_claims: mapped_claims.access_token.clone(),
+                        additional_audiences: mapped_claims.access_audiences.clone(),
+                        organization: organization.clone(),
+                        realm_access: include_access_roles
+                            .then(|| role_claims.realm_access.clone())
+                            .flatten(),
+                        resource_access: include_access_roles
+                            .then(|| role_claims.resource_access.clone())
+                            .flatten(),
+                    }),
                 )
                 .await
             {
@@ -1269,6 +1634,8 @@ async fn authorize_inner(
                 revoked: false,
                 expires_at: chrono::Utc::now() + chrono::Duration::minutes(15),
                 refresh_expires_at: None,
+                offline_session: false,
+                offline_max_expires_at: None,
                 created_at: chrono::Utc::now(),
                 last_used_at: None,
                 token_family_id: None,
@@ -1278,6 +1645,8 @@ async fn authorize_inner(
                 family_revoked: false,
                 authorization_details: authorization_details.clone(),
                 resource: resource_params.clone(),
+                acr: resolved_acr_amr.acr.clone(),
+                amr: resolved_acr_amr.amr.clone(),
             };
 
             if let Err(e) = oidc_repository::repositories::session_repo::SessionRepo
@@ -1312,6 +1681,8 @@ async fn authorize_inner(
             };
 
             let id_token_extra = oidc_core::traits::token_service::IdTokenExtraClaims {
+                custom_claims: mapped_claims.id_token,
+                additional_audiences: mapped_claims.id_audiences,
                 nonce: nonce.clone(),
                 at_hash,
                 c_hash: None,
@@ -1348,8 +1719,11 @@ async fn authorize_inner(
                 } else {
                     None
                 },
-                roles: None,
+                roles: role_claims.roles,
+                realm_access: role_claims.realm_access,
+                resource_access: role_claims.resource_access,
                 groups: None,
+                organization,
             };
 
             let id_token = match token_svc
@@ -1490,6 +1864,45 @@ async fn authorize_inner(
             }
         }
     }
+}
+
+fn render_organization_selection_html(
+    params: &HashMap<String, String>,
+    organizations: &[oidc_core::models::Organization],
+) -> String {
+    let hidden = params
+        .iter()
+        .filter(|(name, _)| name.as_str() != "scope")
+        .map(|(name, value)| {
+            format!(
+                "<input type=\"hidden\" name=\"{}\" value=\"{}\">",
+                html_escape(name),
+                html_escape(value)
+            )
+        })
+        .collect::<String>();
+    let base_scopes: Vec<String> = params
+        .get("scope")
+        .map(String::as_str)
+        .unwrap_or("")
+        .split_whitespace()
+        .filter(|scope| *scope != "organization")
+        .map(str::to_string)
+        .collect();
+    let choices = organizations.iter().map(|organization| {
+        let mut scopes = base_scopes.clone();
+        let organization_scope = format!("organization:{}", organization.alias);
+        scopes.push(organization_scope);
+        format!(
+            "<button type=\"submit\" name=\"scope\" value=\"{}\"><strong>{}</strong><span>{}</span></button>",
+            html_escape(&scopes.join(" ")), html_escape(&organization.name), html_escape(&organization.alias)
+        )
+    }).collect::<String>();
+    format!(
+        r#"<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Select organization</title><style>
+body{{font-family:system-ui,sans-serif;background:#f8fafc;min-height:100vh;margin:0;display:grid;place-items:center}}main{{background:#fff;width:min(30rem,calc(100% - 2rem));padding:2rem;border-radius:.75rem;box-shadow:0 4px 18px #0001}}h1{{margin-top:0}}p{{color:#475569}}button{{display:flex;flex-direction:column;gap:.25rem;width:100%;text-align:left;padding:1rem;margin:.75rem 0;border:1px solid #cbd5e1;border-radius:.5rem;background:#fff;cursor:pointer}}button:hover{{border-color:#2563eb;background:#eff6ff}}span{{color:#64748b}}
+</style></head><body><main><h1>Select an organization</h1><p>Choose the organization to use for this sign-in.</p><form method="get">{hidden}{choices}</form></main></body></html>"#
+    )
 }
 
 fn generate_auth_code() -> Result<String, OidcError> {

@@ -32,7 +32,8 @@ oidc-admin-wasi = { version = "0.1.0", path = "crates/oidc-admin-wasi" }
 # Async / WASI
 wstd = "0.6"
 wstd-axum = "0.6"
-wasi = { version = "0.13", features = ["std"] }
+wasip3 = "0.8"
+futures-concurrency = "7"
 
 # Web
 axum = { version = "0.8", default-features = false, features = ["json", "matched-path", "original-uri", "query", "tower-log", "tracing"] }
@@ -47,16 +48,20 @@ serde_json = "1"
 serde_urlencoded = "0.7"
 
 # Database (pg_client)
-wasi-pg-client = "0.2.0"
+wasi-pg-client = "0.2.1"
 
 # Crypto
 getrandom = "0.4"
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
 webpki-roots = "0.26"
+lber = "0.5.1"
+bytes = "1"
 sha2 = "0.10"
 rsa = { version = "0.9", features = ["sha2", "pem"] }
 ed25519-dalek = { version = "2", features = ["pkcs8"] }
 aes-gcm = { version = "0.10", features = ["std"] }
+saml = { version = "0.0.1-alpha.2", default-features = false, features = ["rsa-sha", "ecdsa-sha", "xmlenc", "slo", "metadata-emit", "xsd-validate"] }
+rcgen = { version = "0.14", default-features = false, features = ["crypto", "ring", "pem"] }
 
 # Utils
 uuid = { version = "1", features = ["v4", "v7", "serde"] }
@@ -76,6 +81,8 @@ argon2 = "0.5"
 password-hash = "0.5"
 base64 = "0.22"
 hmac = "0.12"
+sha1 = "0.10"
+passkey-auth = "0.1.3"
 subtle = "2"
 pkcs8 = { version = "0.10", features = ["pem"] }
 

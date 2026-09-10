@@ -4,6 +4,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use oidc_core::OidcError;
+use oidc_core::models::ClientRegistrationContext;
 use oidc_core::models::{Client, ClientType};
 use oidc_repository::mapper::pg_err;
 use oidc_repository::repositories::client_repo::ClientRepo;
@@ -240,6 +241,8 @@ pub async fn register_handler(
         request_object_encryption_key_encrypted: None, // Will be set if dir is used
         request_object_encryption_key_pem: req.request_object_encryption_key_pem,
     };
+
+    crate::client_policies::enforce(&mut conn, &client, ClientRegistrationContext::Dynamic).await?;
 
     with_transaction!(conn, pg_err, {
         ClientRepo.create(&mut conn, &client).await

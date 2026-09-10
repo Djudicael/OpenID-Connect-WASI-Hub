@@ -44,6 +44,7 @@ class ClientsPage extends BaseComponent {
 
   static get GRANT_TYPES() {
     return [
+      { value: 'urn:ietf:params:oauth:grant-type:uma-ticket', label: 'UMA Permission Ticket', desc: 'Issue RPT tokens from permission tickets' },
       { value: 'authorization_code', label: 'Authorization Code', desc: 'Standard web app flow (recommended)' },
       { value: 'refresh_token', label: 'Refresh Token', desc: 'Long-lived sessions' },
       { value: 'client_credentials', label: 'Client Credentials', desc: 'Server-to-server (no user)' },

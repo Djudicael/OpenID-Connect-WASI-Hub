@@ -91,6 +91,21 @@ impl FederatedIdentityRepo {
         Ok(())
     }
 
+    /// Remove one identity link only when it belongs to the authenticated user.
+    pub async fn delete_for_user(
+        &self,
+        conn: &mut Connection,
+        id: Uuid,
+        user_id: Uuid,
+    ) -> Result<u64, OidcError> {
+        conn.execute_params(
+            "DELETE FROM federated_identities WHERE id = $1 AND user_id = $2",
+            &[&id, &user_id],
+        )
+        .await
+        .map_err(mapper::pg_err)
+    }
+
     fn map_row(row: &wasi_pg_client::Row) -> Result<FederatedIdentity, OidcError> {
         Ok(FederatedIdentity {
             id: mapper::uuid(row, 0)?,

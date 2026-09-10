@@ -17,6 +17,7 @@ use oidc_repository::repositories::realm_signing_keys_repo::RealmSigningKeysRepo
 use crate::middleware::admin_auth::AdminAuth;
 use crate::router::admin::{
     admin_or_forbidden, bad_request, conflict, connect, internal_error, not_found,
+    realm_or_forbidden, scoped_realm,
 };
 use crate::state::AppState;
 
@@ -49,17 +50,30 @@ pub async fn list(
         Ok(c) => c,
         Err(r) => return r,
     };
-    let realms = match RealmRepo.list(&mut conn, query.limit, query.offset).await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::error!("list realms error: {e}");
-            return internal_error();
+    let (realms, total) = if let Some(realm_id) = auth.realm_id.filter(|_| !auth.is_global_admin())
+    {
+        match RealmRepo.find_by_id(&mut conn, realm_id).await {
+            Ok(Some(realm)) => (vec![realm], 1),
+            Ok(None) => (vec![], 0),
+            Err(e) => {
+                tracing::error!("list delegated realm error: {e}");
+                return internal_error();
+            }
         }
+    } else {
+        let realms = match RealmRepo.list(&mut conn, query.limit, query.offset).await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("list realms error: {e}");
+                return internal_error();
+            }
+        };
+        let total = RealmRepo.count(&mut conn).await.unwrap_or_else(|e| {
+            tracing::warn!("failed to count realms: {e}");
+            0
+        });
+        (realms, total)
     };
-    let total = RealmRepo.count(&mut conn).await.unwrap_or_else(|e| {
-        tracing::warn!("failed to count realms: {e}");
-        0
-    });
     let rows: Vec<Value> = realms
         .into_iter()
         .map(|r| {
@@ -136,6 +150,19 @@ pub async fn create(State(state): State<AppState>, auth: AdminAuth, body: String
     let config = req
         .config
         .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+    if let Err(message) =
+        oidc_core::models::AuthenticationFlowConfig::from_realm_config(&config).validate()
+    {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error":message}))).into_response();
+    }
+    if let Err(message) =
+        oidc_core::models::OfflineSessionPolicy::from_realm_config(&config).validate()
+    {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error":message}))).into_response();
+    }
+    if let Err(message) = oidc_core::models::RealmPresentation::validate_realm_config(&config) {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error":message}))).into_response();
+    }
     let realm = oidc_core::models::Realm {
         id: realm_id,
         name: req.name,
@@ -252,12 +279,78 @@ pub async fn update(
         realm.enabled = v;
     }
     if let Some(v) = req.config {
+        if let Err(message) =
+            oidc_core::models::AuthenticationFlowConfig::from_realm_config(&v).validate()
+        {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error":message}))).into_response();
+        }
+        if let Err(message) =
+            oidc_core::models::OfflineSessionPolicy::from_realm_config(&v).validate()
+        {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error":message}))).into_response();
+        }
+        if let Err(message) = oidc_core::models::RealmPresentation::validate_realm_config(&v) {
+            return (StatusCode::BAD_REQUEST, Json(json!({"error":message}))).into_response();
+        }
         realm.config = v;
     }
     match RealmRepo.update(&mut conn, &realm).await {
         Ok(()) => Json(json!({"updated": true})).into_response(),
         Err(e) => {
             tracing::error!("update realm error: {e}");
+            internal_error()
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct EmailTemplatePreviewRequest {
+    template: String,
+    locale: String,
+}
+
+pub async fn preview_email_template(
+    State(state): State<AppState>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+    auth: AdminAuth,
+    Json(req): Json<EmailTemplatePreviewRequest>,
+) -> Response {
+    if let Some(r) = admin_or_forbidden(&auth) {
+        return r;
+    }
+    if let Some(r) = realm_or_forbidden(&auth, id) {
+        return r;
+    }
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let realm = match RealmRepo.find_by_id(&mut conn, id).await {
+        Ok(Some(realm)) => realm,
+        Ok(None) => return not_found(),
+        Err(error) => {
+            tracing::error!("email template preview realm fetch failed: {error}");
+            return internal_error();
+        }
+    };
+    let presentation = oidc_core::models::RealmPresentation::from_realm_config(&realm.config);
+    match presentation.render_email(
+        &req.template,
+        &req.locale,
+        &[
+            ("realm_name", realm.display_name.as_str()),
+            ("user_name", "Alex Morgan"),
+            ("organization_name", "Example Organization"),
+            ("action_url", "https://identity.example.test/action/sample"),
+            ("expires_in", "24 hours"),
+        ],
+    ) {
+        Ok(message) => Json(message).into_response(),
+        Err(oidc_core::OidcError::InvalidInput(message)) => {
+            (StatusCode::BAD_REQUEST, Json(json!({"error":message}))).into_response()
+        }
+        Err(error) => {
+            tracing::error!("email template preview failed: {error}");
             internal_error()
         }
     }
@@ -448,27 +541,29 @@ pub async fn list_identity_providers(
     if let Some(r) = admin_or_forbidden(&auth) {
         return r;
     }
-    let mut conn = match connect(&state).await {
-        Ok(c) => c,
-        Err(r) => return r,
-    };
-    let items = match query.realm_id {
-        Some(realm_id) => match IdentityProviderRepo
-            .find_by_realm(&mut conn, realm_id)
-            .await
-        {
-            Ok(i) => i,
-            Err(e) => {
-                tracing::error!("list identity providers error: {e}");
-                return internal_error();
-            }
-        },
-        None => {
+    let realm_id = match scoped_realm(&auth, query.realm_id) {
+        Ok(Some(value)) => value,
+        Ok(None) => {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(json!({"error": "realm_id required"})),
             )
                 .into_response();
+        }
+        Err(response) => return response,
+    };
+    let mut conn = match connect(&state).await {
+        Ok(c) => c,
+        Err(r) => return r,
+    };
+    let items = match IdentityProviderRepo
+        .find_by_realm(&mut conn, realm_id)
+        .await
+    {
+        Ok(i) => i,
+        Err(e) => {
+            tracing::error!("list identity providers error: {e}");
+            return internal_error();
         }
     };
     let rows: Vec<Value> = items.into_iter().map(|i| json!({
@@ -476,7 +571,7 @@ pub async fn list_identity_providers(
         "realm_id": i.realm_id.to_string(),
         "alias": i.alias,
         "display_name": i.display_name,
-        "provider_type": match i.provider_type { IdentityProviderType::Oidc => "oidc", IdentityProviderType::Google => "google", IdentityProviderType::GitHub => "github" },
+        "provider_type": match i.provider_type { IdentityProviderType::Oidc => "oidc", IdentityProviderType::Google => "google", IdentityProviderType::GitHub => "github", IdentityProviderType::Saml => "saml" },
         "enabled": i.enabled,
         "issuer": i.issuer,
         "authorization_url": i.authorization_url,
@@ -487,6 +582,8 @@ pub async fn list_identity_providers(
         "scopes": i.scopes,
         "auto_create_users": i.auto_create_users,
         "link_users_by_email": i.link_users_by_email,
+        "saml_metadata_xml": i.saml_metadata_xml,
+        "saml_attribute_mapping": i.saml_attribute_mapping,
     })).collect();
     Json(json!({"items": rows, "total": rows.len()})).into_response()
 }
@@ -508,6 +605,8 @@ pub struct CreateIdentityProviderRequest {
     scopes: Option<Vec<String>>,
     auto_create_users: Option<bool>,
     link_users_by_email: Option<bool>,
+    saml_metadata_xml: Option<String>,
+    saml_attribute_mapping: Option<Value>,
 }
 
 pub async fn create_identity_provider(
@@ -522,6 +621,9 @@ pub async fn create_identity_provider(
         Ok(r) => r,
         Err(_) => return bad_request(),
     };
+    if let Some(response) = realm_or_forbidden(&auth, req.realm_id) {
+        return response;
+    }
     let mut conn = match connect(&state).await {
         Ok(c) => c,
         Err(r) => return r,
@@ -540,6 +642,7 @@ pub async fn create_identity_provider(
     let provider_type = match req.provider_type.as_deref() {
         Some("google") => IdentityProviderType::Google,
         Some("github") => IdentityProviderType::GitHub,
+        Some("saml") => IdentityProviderType::Saml,
         _ => IdentityProviderType::Oidc,
     };
     let (issuer, authorization_url, token_url, userinfo_url, jwks_url) = match provider_type {
@@ -571,6 +674,13 @@ pub async fn create_identity_provider(
             req.userinfo_url.unwrap_or_default(),
             req.jwks_url.unwrap_or_default(),
         ),
+        IdentityProviderType::Saml => (
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+        ),
     };
     let id = generate_uuid_v7();
     let encrypted_client_secret = match state
@@ -599,10 +709,30 @@ pub async fn create_identity_provider(
         scopes: req
             .scopes
             .unwrap_or_else(|| vec!["openid".into(), "profile".into(), "email".into()]),
+        saml_metadata_xml: req.saml_metadata_xml,
+        saml_attribute_mapping: req.saml_attribute_mapping.unwrap_or_else(
+            || json!({"email":"email","given_name":"firstName","family_name":"lastName"}),
+        ),
         auto_create_users: req.auto_create_users.unwrap_or(true),
         link_users_by_email: req.link_users_by_email.unwrap_or(false),
         deleted_at: None,
     };
+    if provider_type == IdentityProviderType::Saml {
+        let Some(metadata) = idp.saml_metadata_xml.as_deref() else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error":"SAML metadata is required"})),
+            )
+                .into_response();
+        };
+        if let Err(error) = saml::IdpDescriptor::from_metadata_xml(metadata.as_bytes()) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({"error":format!("Invalid SAML metadata: {error}")})),
+            )
+                .into_response();
+        }
+    }
     if let Err(e) = idp.validate() {
         return (
             StatusCode::BAD_REQUEST,
@@ -637,7 +767,7 @@ pub async fn create_identity_provider(
                 "realm_id": idp.realm_id.to_string(),
                 "alias": idp.alias,
                 "display_name": idp.display_name,
-                "provider_type": match idp.provider_type { IdentityProviderType::Oidc => "oidc", IdentityProviderType::Google => "google", IdentityProviderType::GitHub => "github" },
+                "provider_type": match idp.provider_type { IdentityProviderType::Oidc => "oidc", IdentityProviderType::Google => "google", IdentityProviderType::GitHub => "github", IdentityProviderType::Saml => "saml" },
                 "enabled": idp.enabled,
                 "issuer": idp.issuer,
                 "authorization_url": idp.authorization_url,
@@ -675,7 +805,7 @@ pub async fn get_identity_provider(
             "realm_id": i.realm_id.to_string(),
             "alias": i.alias,
             "display_name": i.display_name,
-            "provider_type": match i.provider_type { IdentityProviderType::Oidc => "oidc", IdentityProviderType::Google => "google", IdentityProviderType::GitHub => "github" },
+            "provider_type": match i.provider_type { IdentityProviderType::Oidc => "oidc", IdentityProviderType::Google => "google", IdentityProviderType::GitHub => "github", IdentityProviderType::Saml => "saml" },
             "enabled": i.enabled,
             "issuer": i.issuer,
             "authorization_url": i.authorization_url,
@@ -686,6 +816,8 @@ pub async fn get_identity_provider(
             "scopes": i.scopes,
             "auto_create_users": i.auto_create_users,
             "link_users_by_email": i.link_users_by_email,
+            "saml_metadata_xml": i.saml_metadata_xml,
+            "saml_attribute_mapping": i.saml_attribute_mapping,
         })).into_response(),
         Ok(None) => not_found(),
         Err(e) => {
@@ -711,6 +843,8 @@ pub struct UpdateIdentityProviderRequest {
     scopes: Option<Vec<String>>,
     auto_create_users: Option<bool>,
     link_users_by_email: Option<bool>,
+    saml_metadata_xml: Option<String>,
+    saml_attribute_mapping: Option<Value>,
 }
 
 pub async fn update_identity_provider(
@@ -748,6 +882,7 @@ pub async fn update_identity_provider(
         idp.provider_type = match v.as_str() {
             "google" => IdentityProviderType::Google,
             "github" => IdentityProviderType::GitHub,
+            "saml" => IdentityProviderType::Saml,
             _ => IdentityProviderType::Oidc,
         };
     }
@@ -789,6 +924,20 @@ pub async fn update_identity_provider(
     }
     if let Some(v) = req.link_users_by_email {
         idp.link_users_by_email = v;
+    }
+    if let Some(v) = req.saml_metadata_xml {
+        idp.saml_metadata_xml = Some(v);
+    }
+    if let Some(v) = req.saml_attribute_mapping {
+        idp.saml_attribute_mapping = v;
+    }
+    if idp.provider_type == IdentityProviderType::Saml {
+        let Some(metadata) = idp.saml_metadata_xml.as_deref() else {
+            return bad_request();
+        };
+        if saml::IdpDescriptor::from_metadata_xml(metadata.as_bytes()).is_err() {
+            return bad_request();
+        }
     }
     if let Err(e) = idp.validate() {
         return (

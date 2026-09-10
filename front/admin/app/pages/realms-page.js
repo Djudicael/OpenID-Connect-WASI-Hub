@@ -1,6 +1,6 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
-import { listRealms, createRealm, deleteRealm } from '../services/realm-service.js';
+import { listRealms, createRealm, deleteRealm, exportRealm, importRealm } from '../services/realm-service.js';
 import { navigate } from '../core/router.js';
 import { showToast } from '../components/ui/toast.js';
 import { handleApiError } from '../utils/error-handler.js';
@@ -23,6 +23,13 @@ class RealmsPage extends BaseComponent {
       createEnabled: true,
       createLoading: false,
       selectedIds: new Set(),
+      transferMode: null,
+      transferRealm: null,
+      transferPassword: '',
+      transferPasswordConfirm: '',
+      transferFile: null,
+      replaceExisting: false,
+      transferLoading: false,
     };
   }
 
@@ -92,15 +99,73 @@ class RealmsPage extends BaseComponent {
       createLoading: false,
     });
     requestAnimationFrame(() => {
-      const modal = this.shadowRoot.querySelector('c-modal');
+      const modal = this.shadowRoot.querySelector('#create-realm-modal');
       if (modal) modal.open();
     });
   }
 
   _closeCreateModal() {
-    const modal = this.shadowRoot.querySelector('c-modal');
+    const modal = this.shadowRoot.querySelector('#create-realm-modal');
     if (modal) modal.close();
     this.setState({ showCreateModal: false });
+  }
+
+  _openTransfer(mode, realm = null) {
+    this.setState({
+      transferMode: mode,
+      transferRealm: realm,
+      transferPassword: '',
+      transferPasswordConfirm: '',
+      transferFile: null,
+      replaceExisting: false,
+      transferLoading: false,
+    });
+    requestAnimationFrame(() => this.shadowRoot.querySelector('#realm-transfer-modal')?.open());
+  }
+
+  _closeTransfer() {
+    this.shadowRoot.querySelector('#realm-transfer-modal')?.close();
+    this.setState({ transferMode: null, transferLoading: false });
+  }
+
+  async _exportRealm() {
+    const { transferRealm, transferPassword, transferPasswordConfirm } = this._state;
+    if (!transferRealm || transferPassword.length < 12 || transferPassword !== transferPasswordConfirm) return;
+    this.setState({ transferLoading: true });
+    try {
+      const archive = await exportRealm(transferRealm.id, transferPassword);
+      const blob = new Blob([JSON.stringify(archive, null, 2)], { type: 'application/json' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `${transferRealm.name}-realm.json`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+      this._closeTransfer();
+      showToast('Realm archive downloaded', 'success');
+    } catch (err) {
+      handleApiError(err, 'Failed to export realm');
+      this.setState({ transferLoading: false });
+    }
+  }
+
+  async _importRealm() {
+    const { transferFile, transferPassword, replaceExisting } = this._state;
+    if (!transferFile || transferPassword.length < 12) return;
+    this.setState({ transferLoading: true });
+    try {
+      const archive = JSON.parse(await transferFile.text());
+      const result = await importRealm(archive, transferPassword, replaceExisting);
+      this._closeTransfer();
+      showToast(result.replaced ? 'Realm replaced from archive' : 'Realm imported', 'success');
+      this._loadRealms();
+    } catch (err) {
+      if (err instanceof SyntaxError) {
+        showToast('The selected file is not a valid realm archive', 'error');
+      } else {
+        handleApiError(err, 'Failed to import realm');
+      }
+      this.setState({ transferLoading: false });
+    }
   }
 
   async _createRealm() {
@@ -141,6 +206,7 @@ class RealmsPage extends BaseComponent {
         render: (_, row) => html`
           <div style="display:flex;gap:0.5rem">
             <c-button size="sm" variant="secondary" @click=${() => navigate(`/realms/${row.id}`)}>Edit</c-button>
+            <c-button size="sm" variant="secondary" @click=${() => this._openTransfer('export', row)}>Export</c-button>
             <c-button size="sm" variant="danger" @click=${() => this._deleteRealm(row.id)}>Delete</c-button>
           </div>
         `,
@@ -150,6 +216,9 @@ class RealmsPage extends BaseComponent {
     return html`
       <c-page-layout title="Realms">
         <div slot="actions">
+          <c-button variant="secondary" @click=${() => this._openTransfer('import')}>
+            Import Realm
+          </c-button>
           <c-button variant="primary" @click=${() => this._openCreateModal()}>
             + Add Realm
           </c-button>
@@ -174,7 +243,7 @@ class RealmsPage extends BaseComponent {
         ></c-pagination>
       </c-page-layout>
 
-      <c-modal title="Create Realm" @close=${() => this._closeCreateModal()}>
+      <c-modal id="create-realm-modal" title="Create Realm" @close=${() => this._closeCreateModal()}>
         ${showCreateModal ? html`
           <div class="form">
             <div class="field">
@@ -218,6 +287,48 @@ class RealmsPage extends BaseComponent {
           <c-button variant="secondary" @click=${() => this._closeCreateModal()}>Cancel</c-button>
           <c-button variant="primary" ?disabled=${createLoading || !createName.trim() || !createDisplayName.trim()} @click=${() => this._createRealm()}>
             ${createLoading ? 'Creating...' : 'Create'}
+          </c-button>
+        </div>
+      </c-modal>
+
+      <c-modal id="realm-transfer-modal" title=${this._state.transferMode === 'export' ? 'Export Realm' : 'Import Realm'} @close=${() => this._closeTransfer()}>
+        ${this._state.transferMode ? html`
+          <div class="form">
+            ${this._state.transferMode === 'import' ? html`
+              <div class="field">
+                <label class="field-label" for="realm-archive">Realm archive *</label>
+                <input class="field-input" id="realm-archive" type="file" accept="application/json,.json" @change=${(e) => this.setState({ transferFile: e.target.files?.[0] || null })} />
+              </div>
+            ` : html`
+              <div class="hint">The archive includes users, credentials, private keys, clients, roles, organizations, and realm settings.</div>
+            `}
+            <div class="field">
+              <label class="field-label" for="realm-archive-password">Archive password *</label>
+              <input class="field-input" id="realm-archive-password" type="password" autocomplete="new-password" minlength="12" .value=${this._state.transferPassword} @input=${(e) => this.setState({ transferPassword: e.target.value })} />
+              <div class="hint">Use at least 12 characters. This password cannot be recovered.</div>
+            </div>
+            ${this._state.transferMode === 'export' ? html`
+              <div class="field">
+                <label class="field-label" for="realm-archive-password-confirm">Confirm password *</label>
+                <input class="field-input" id="realm-archive-password-confirm" type="password" autocomplete="new-password" minlength="12" .value=${this._state.transferPasswordConfirm} @input=${(e) => this.setState({ transferPasswordConfirm: e.target.value })} />
+              </div>
+            ` : html`
+              <div class="field">
+                <label class="field-checkbox">
+                  <input type="checkbox" .checked=${this._state.replaceExisting} @change=${(e) => this.setState({ replaceExisting: e.target.checked })} />
+                  Replace a realm with the same name or ID
+                </label>
+                <div class="hint">Replacement removes changes made after the archive was created and signs out active users.</div>
+              </div>
+            `}
+          </div>
+        ` : ''}
+        <div slot="footer">
+          <c-button variant="secondary" @click=${() => this._closeTransfer()}>Cancel</c-button>
+          <c-button variant="primary"
+            ?disabled=${this._state.transferLoading || this._state.transferPassword.length < 12 || (this._state.transferMode === 'export' ? this._state.transferPassword !== this._state.transferPasswordConfirm : !this._state.transferFile)}
+            @click=${() => this._state.transferMode === 'export' ? this._exportRealm() : this._importRealm()}>
+            ${this._state.transferLoading ? 'Working...' : this._state.transferMode === 'export' ? 'Download archive' : 'Import realm'}
           </c-button>
         </div>
       </c-modal>

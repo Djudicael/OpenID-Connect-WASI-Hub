@@ -1,0 +1,163 @@
+import { html } from 'lit-html';
+import { BaseComponent } from '../core/component.js';
+import { authService } from '../auth/auth-service.js';
+import { showToast } from '../components/ui/toast.js';
+import { handleApiError } from '../utils/error-handler.js';
+import {
+  changePassword, getAccount, listAccountSessions, listApplications,
+  listLinkedIdentities, revokeAccountSession, revokeApplication,
+  unlinkIdentity, updateAccount,
+  listCibaRequests, decideCibaRequest,
+} from '../services/account-service.js';
+
+const PROFILE_FIELDS = [
+  ['username', 'Username'], ['given_name', 'First name'], ['middle_name', 'Middle name'],
+  ['family_name', 'Last name'], ['nickname', 'Nickname'],
+  ['preferred_username', 'Preferred username'], ['phone_number', 'Phone number'],
+  ['locale', 'Language'], ['zoneinfo', 'Time zone'], ['website', 'Website'],
+  ['picture', 'Picture URL'], ['birthdate', 'Birthdate'], ['street_address', 'Street address'],
+  ['locality', 'City'], ['region', 'Region'], ['postal_code', 'Postal code'], ['country', 'Country'],
+];
+
+class AccountPage extends BaseComponent {
+  constructor() {
+    super();
+    this._state = { loading: true, profile: null, sessions: [], identities: [], applications: [], cibaRequests: [], section: 'profile' };
+  }
+
+  connectedCallback() { super.connectedCallback(); this._load(); }
+
+  async _load() {
+    this.setState({ loading: true });
+    try {
+      const [profile, sessions, identities, applications, ciba] = await Promise.all([
+        getAccount(this.signal), listAccountSessions(this.signal),
+        listLinkedIdentities(this.signal), listApplications(this.signal), listCibaRequests(this.signal),
+      ]);
+      authService.setAdministrationAccess(profile.administration_access);
+      this._applyPresentation(profile.presentation);
+      this.setState({ profile, sessions: sessions.items || [], identities: identities.items || [], applications: applications.items || [], cibaRequests: ciba.items || [], loading: false });
+    } catch (error) {
+      if (error.name !== 'AbortError') handleApiError(error, 'Could not load your account');
+      this.setState({ loading: false });
+    }
+  }
+
+  _applyPresentation(presentation) {
+    const theme = presentation?.theme;
+    if (!theme) return;
+    const root = document.documentElement;
+    if (theme.primary_color) root.style.setProperty('--color-primary', theme.primary_color);
+    if (theme.background_color) root.style.setProperty('--color-bg', theme.background_color);
+    if (theme.card_color) root.style.setProperty('--color-surface', theme.card_color);
+    if (theme.text_color) root.style.setProperty('--color-text', theme.text_color);
+    if (theme.font_family) root.style.setProperty('--font-sans', theme.font_family);
+  }
+
+  _field(name, value) {
+    this.setState({ profile: { ...this._state.profile, [name]: value } });
+  }
+
+  async _saveProfile(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const body = Object.fromEntries(new FormData(form));
+    try {
+      const profile = await updateAccount(body);
+      this.setState({ profile });
+      showToast('Profile saved', 'success');
+    } catch (error) { handleApiError(error, 'Could not save your profile'); }
+  }
+
+  async _changePassword(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const body = Object.fromEntries(new FormData(form));
+    if (body.new_password !== body.confirm_password) {
+      showToast('The new passwords do not match', 'error'); return;
+    }
+    delete body.confirm_password;
+    try {
+      await changePassword(body);
+      form.reset();
+      showToast('Password changed and other sessions signed out', 'success');
+      await this._load();
+    } catch (error) { handleApiError(error, 'Could not change your password'); }
+  }
+
+  async _revokeSession(session) {
+    if (!confirm(session.offline ? 'Revoke offline access for this application?' : 'Sign out this session?')) return;
+    try {
+      const result = await revokeAccountSession(session.id);
+      if (result.current) { authService.logout(); return; }
+      showToast(session.offline ? 'Offline access revoked' : 'Session signed out', 'success'); await this._load();
+    } catch (error) { handleApiError(error, 'Could not sign out the session'); }
+  }
+
+  async _unlink(identity) {
+    if (!confirm(`Unlink ${identity.provider}?`)) return;
+    try { await unlinkIdentity(identity.id); showToast('Sign-in method unlinked', 'success'); await this._load(); }
+    catch (error) { handleApiError(error, 'Could not unlink the sign-in method'); }
+  }
+
+  async _revokeApplication(application) {
+    if (!confirm(`Remove access for ${application.name}? Its active sessions will be signed out.`)) return;
+    try { await revokeApplication(application.id); showToast('Application access removed', 'success'); await this._load(); }
+    catch (error) { handleApiError(error, 'Could not remove application access'); }
+  }
+
+  async _decideCiba(request, decision) {
+    try { await decideCibaRequest(request.id, decision); showToast(decision === 'approve' ? 'Sign-in approved' : 'Sign-in denied', 'success'); await this._load(); }
+    catch (error) { handleApiError(error, 'Could not complete the sign-in request'); }
+  }
+
+  _nav() {
+    const sections = [['profile', 'Profile'], ['requests', `Sign-in requests${this._state.cibaRequests.length ? ` (${this._state.cibaRequests.length})` : ''}`], ['password', 'Password'], ['sessions', 'Sessions'], ['offline', 'Offline access'], ['applications', 'Applications'], ['identities', 'Linked identities']];
+    return html`<nav class="account-tabs" aria-label="Account sections">${sections.map(([id, label]) => html`<button class=${this._state.section === id ? 'active' : ''} @click=${() => this.setState({ section: id })}>${label}</button>`)}<a href="/security">Sign-in security</a></nav>`;
+  }
+
+  _profile() {
+    const profile = this._state.profile;
+    return html`<section class="card account-card"><h2>Personal information</h2><p>Keep the information shared with approved applications up to date.</p>
+      <form class="account-form" @submit=${event => this._saveProfile(event)}>
+        <div class="field"><label class="field-label" for="account-email">Email</label><input class="field-input" id="account-email" name="email" type="email" .value=${profile.email || ''}></div>
+        <div class="field"><label class="field-label" for="account-current-password">Current password <span class="hint">required when changing email</span></label><input class="field-input" id="account-current-password" name="current_password" type="password" autocomplete="current-password"></div>
+        ${PROFILE_FIELDS.map(([name, label]) => html`<div class="field"><label class="field-label" for=${`account-${name}`}>${label}</label><input class="field-input" id=${`account-${name}`} name=${name} .value=${profile[name] || ''}></div>`)}
+        <div class="account-actions"><button class="btn btn--primary" type="submit">Save profile</button></div>
+      </form></section>`;
+  }
+
+  _requests() {
+    const requests=this._state.cibaRequests;
+    return html`<section class="card account-card" data-doc-section="ciba-requests"><h2>Sign-in requests</h2><p>Approve only requests you started. Compare the verification message with the message shown by the application.</p><div class="account-list">${requests.length ? requests.map(request=>html`<article><div><strong>${request.client_name}</strong><p>Scopes: ${request.scopes.join(', ')}</p>${request.binding_message ? html`<p><strong>Verification message:</strong> <code>${request.binding_message}</code></p>` : ''}${request.request_context ? html`<p>${request.request_context}</p>` : ''}<p>Expires ${new Date(request.expires_at).toLocaleString()}</p></div><div class="account-actions"><button class="btn btn--primary btn--sm" @click=${()=>this._decideCiba(request,'approve')}>Approve</button><button class="btn btn--danger btn--sm" @click=${()=>this._decideCiba(request,'deny')}>Deny</button></div></article>`) : html`<p>No pending sign-in requests.</p>`}</div></section>`;
+  }
+
+  _password() {
+    return html`<section class="card account-card"><h2>Change password</h2>${this._state.profile.has_password ? html`<p>Changing your password signs out every other session.</p><form class="account-form narrow" @submit=${event => this._changePassword(event)}><div class="field"><label class="field-label">Current password</label><input class="field-input" name="current_password" type="password" autocomplete="current-password" required></div><div class="field"><label class="field-label">New password</label><input class="field-input" name="new_password" type="password" autocomplete="new-password" minlength="8" required></div><div class="field"><label class="field-label">Confirm new password</label><input class="field-input" name="confirm_password" type="password" autocomplete="new-password" minlength="8" required></div><div class="account-actions"><button class="btn btn--primary" type="submit">Change password</button></div></form>` : html`<p>This account signs in through an external identity provider and has no local password.</p>`}</section>`;
+  }
+
+  _sessions() {
+    const sessions = this._state.sessions.filter(session => !session.offline);
+    return html`<section class="card account-card"><h2>Active sessions</h2><p>Sign out devices or browsers you no longer use.</p><div class="account-list">${sessions.length ? sessions.map(session => html`<article><div><strong>${session.client_name}</strong>${session.current ? html` <span class="badge success">Current session</span>` : ''}<p>Started ${new Date(session.created_at).toLocaleString()} · ${session.authentication_methods.join(', ')}</p></div><button class="btn btn--danger btn--sm" @click=${() => this._revokeSession(session)}>Sign out</button></article>`) : html`<p>No active sessions.</p>`}</div></section>`;
+  }
+
+  _offline() {
+    const grants = this._state.sessions.filter(session => session.offline);
+    return html`<section class="card account-card" data-doc-section="offline-access"><h2>Offline access</h2><p>These applications can access your account while you are signed out.</p><div class="account-list">${grants.length ? grants.map(session => html`<article><div><strong>${session.client_name}</strong><p>Last used ${session.last_used_at ? new Date(session.last_used_at).toLocaleString() : 'Not yet'} · Expires if unused ${new Date(session.expires_at).toLocaleDateString()} · Ends ${new Date(session.maximum_expires_at).toLocaleDateString()}</p></div><button class="btn btn--danger btn--sm" @click=${() => this._revokeSession(session)}>Revoke access</button></article>`) : html`<p>No applications have offline access.</p>`}</div></section>`;
+  }
+
+  _applications() {
+    return html`<section class="card account-card"><h2>Approved applications</h2><p>Review applications that can access your account information.</p><div class="account-list">${this._state.applications.length ? this._state.applications.map(app => html`<article><div><strong>${app.name}</strong><p>${app.scopes.join(', ')} · ${app.active_sessions} active session(s)</p></div><button class="btn btn--danger btn--sm" @click=${() => this._revokeApplication(app)}>Remove access</button></article>`) : html`<p>No applications have approved access.</p>`}</div></section>`;
+  }
+
+  _identities() {
+    return html`<section class="card account-card"><h2>Linked identities</h2><p>External accounts that can be used to sign in.</p><div class="account-list">${this._state.identities.length ? this._state.identities.map(identity => html`<article><div><strong>${identity.provider}</strong><p>${identity.email || identity.username || 'Linked account'}</p></div><button class="btn btn--danger btn--sm" @click=${() => this._unlink(identity)}>Unlink</button></article>`) : html`<p>No external identities are linked.</p>`}</div></section>`;
+  }
+
+  template() {
+    const { loading, profile, section } = this._state;
+    return html`<c-page-layout title="My account">${loading || !profile ? html`<p>Loading your account...</p>` : html`${this._nav()}${section === 'profile' ? this._profile() : section === 'requests' ? this._requests() : section === 'password' ? this._password() : section === 'sessions' ? this._sessions() : section === 'offline' ? this._offline() : section === 'applications' ? this._applications() : this._identities()}`}</c-page-layout>`;
+  }
+}
+
+customElements.define('account-page', AccountPage);

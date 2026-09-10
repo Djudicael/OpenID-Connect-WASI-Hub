@@ -38,5 +38,6 @@ portpicker = { workspace = true }
 
 # Workspace
 oidc-core = { workspace = true }
+oidc-oidc = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }

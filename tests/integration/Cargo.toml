@@ -10,6 +10,7 @@ publish = false
 openid-connect-wasi = { workspace = true }
 oidc-core = { workspace = true }
 oidc-repository = { workspace = true }
+oidc-oidc = { workspace = true }
 oidc-apikey = { workspace = true }
 axum = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

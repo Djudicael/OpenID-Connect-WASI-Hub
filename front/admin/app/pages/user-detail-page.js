@@ -6,6 +6,7 @@ import { listUserGroups, assignGroupToUser, unassignGroupFromUser, listGroups } 
 import { navigate } from '../core/router.js';
 import { showToast } from '../components/ui/toast.js';
 import { handleApiError } from '../utils/error-handler.js';
+import { get, http } from '../core/http.js';
 
 const ConfirmDialog = customElements.get('c-modal');
 
@@ -44,6 +45,9 @@ class UserDetailPage extends BaseComponent {
       selectedGroupId: '',
       addRoleLoading: false,
       addGroupLoading: false,
+      mfa: null,
+      requiredActions: [],
+      requiredActionsSaving: false,
     };
     this._onBeforeUnload = this._onBeforeUnload.bind(this);
   }
@@ -83,11 +87,49 @@ class UserDetailPage extends BaseComponent {
       this.setState({ user, savedUser: { ...user }, loading: false, dirty: false });
       this._loadUserRoles(id);
       this._loadUserGroups(id);
+      this._loadMfa(id);
+      this._loadRequiredActions(id);
     } catch (err) {
       if (err.name === 'AbortError') return;
       handleApiError(err, 'Failed to load user');
       this.setState({ loading: false });
     }
+  }
+
+  async _loadMfa(id) {
+    try { this.setState({ mfa: await get(`/api/users/${id}/mfa`, this.signal) }); }
+    catch (err) { if (err.name !== 'AbortError') this.setState({ mfa: null }); }
+  }
+
+  async _loadRequiredActions(id) {
+    try {
+      const data = await get(`/api/users/${id}/required-actions`, this.signal);
+      this.setState({ requiredActions: data.required_actions || [] });
+    } catch (err) { if (err.name !== 'AbortError') handleApiError(err, 'Failed to load required actions'); }
+  }
+
+  _toggleRequiredAction(action, enabled) {
+    const next = new Set(this._state.requiredActions);
+    enabled ? next.add(action) : next.delete(action);
+    this.setState({ requiredActions: [...next] });
+  }
+
+  async _saveRequiredActions() {
+    const user = this._state.user; if (!user) return;
+    this.setState({ requiredActionsSaving: true });
+    try {
+      await http(`/api/users/${user.id}/required-actions`, { method: 'PUT', body: JSON.stringify({ required_actions: this._state.requiredActions }) });
+      showToast('Required actions updated', 'success');
+    } catch (err) { handleApiError(err, 'Failed to update required actions'); }
+    finally { this.setState({ requiredActionsSaving: false }); }
+  }
+
+  async _resetMfa() {
+    const user=this._state.user; if(!user)return;
+    const confirmed=await ConfirmDialog.confirm('Remove all authenticator apps, passkeys, and recovery codes for this user? Their active sessions will also be revoked.','Reset MFA');
+    if(!confirmed)return;
+    try { await http(`/api/users/${user.id}/mfa`,{method:'DELETE'}); showToast('MFA credentials reset','success'); this._loadMfa(user.id); }
+    catch(err){handleApiError(err,'Failed to reset MFA');}
   }
 
   async _save() {
@@ -476,6 +518,27 @@ class UserDetailPage extends BaseComponent {
 
                   <!-- Roles Section -->
                   <div class="section">
+                    <div class="section-title">Multi-factor authentication</div>
+                    ${this._state.mfa ? html`
+                      <p>Authenticator app: <strong>${this._state.mfa.totp_enabled ? 'Enabled' : 'Not configured'}</strong></p>
+                      <p>Passkeys: <strong>${this._state.mfa.passkeys.length}</strong> · Recovery codes remaining: <strong>${this._state.mfa.recovery_codes_remaining}</strong></p>
+                      <c-button variant="danger" size="sm" @click=${()=>this._resetMfa()} ?disabled=${!this._state.mfa.totp_enabled&&!this._state.mfa.passkeys.length}>Reset MFA</c-button>
+                    ` : html`<div class="empty-state">Loading MFA status...</div>`}
+                  </div>
+
+                  <div class="section" data-doc-section="required-actions">
+                    <div class="section-title">Required actions</div>
+                    <p class="hint">The user must complete selected actions at their next sign-in.</p>
+                    <div class="checkbox-grid">
+                      ${[
+                        ['update_password','Update password'],['verify_email','Verify email'],['update_profile','Complete profile'],['configure_mfa','Configure MFA'],['accept_terms','Accept current terms']
+                      ].map(([value,label])=>html`<label class="checkbox-row"><input type="checkbox" ?checked=${this._state.requiredActions.includes(value)} @change=${e=>this._toggleRequiredAction(value,e.target.checked)} /> ${label}</label>`)}
+                    </div>
+                    <c-button size="sm" variant="secondary" ?disabled=${this._state.requiredActionsSaving} @click=${()=>this._saveRequiredActions()}>${this._state.requiredActionsSaving?'Saving...':'Save required actions'}</c-button>
+                  </div>
+
+                  <!-- Roles Section -->
+                  <div class="section">
                     <div class="section-title">
                       Roles
                       <c-button size="sm" variant="secondary" @click=${() => this._openAddRoleModal()}>+ Add Role</c-button>
@@ -488,7 +551,7 @@ class UserDetailPage extends BaseComponent {
                             ${this._state.userRoles.map(role => html`
                               <li>
                                 <span>
-                                  <span class="item-name">${role.name}</span>
+                                  <span class="item-name">${role.name} <span class="hint">(${role.client_id ? 'Client role' : 'Realm role'})</span></span>
                                   ${role.description ? html`<span class="item-desc">${role.description}</span>` : ''}
                                 </span>
                                 <c-button size="sm" variant="danger" @click=${() => this._removeRole(role.id)}>Remove</c-button>
@@ -546,7 +609,7 @@ class UserDetailPage extends BaseComponent {
               <label class="field-label">Select Role</label>
               <select class="field-select" .value=${selectedRoleId} @change=${(e) => this.setState({ selectedRoleId: e.target.value })}>
                 <option value="">-- Select a role --</option>
-                ${this._state.availableRoles.map(r => html`<option value=${r.id}>${r.name}${r.description ? ` - ${r.description}` : ''}</option>`)}
+                ${this._state.availableRoles.map(r => html`<option value=${r.id}>${r.name} (${r.client_id ? 'Client role' : 'Realm role'})${r.description ? ` - ${r.description}` : ''}</option>`)}
               </select>
               <div class="hint">Search and page through roles in this user's realm.</div>
             </div>

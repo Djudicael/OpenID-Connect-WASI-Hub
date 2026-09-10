@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 /// Column list for role SELECT queries (order must match RoleRepo::map_row indices).
 const ROLE_COLUMNS: &str = r#"
-    r.id, r.realm_id, r.name, r.description, r.permissions, r.created_at, r.updated_at
+    r.id, r.realm_id, r.name, r.description, r.permissions, r.created_at, r.updated_at, r.client_id
 "#;
 
 /// Column list for user SELECT queries (order must match UserRepo::map_row indices).
@@ -24,6 +24,30 @@ const USER_COLUMNS: &str = r#"
 pub struct UserRoleRepo;
 
 impl UserRoleRepo {
+    /// Return permissions from roles assigned directly or through groups.
+    pub async fn find_effective_permissions(
+        &self,
+        conn: &mut Connection,
+        user_id: Uuid,
+    ) -> Result<Vec<String>, OidcError> {
+        conn.query_params(
+            "WITH RECURSIVE direct_roles(id) AS (\
+               SELECT role_id FROM user_roles WHERE user_id = $1 \
+               UNION SELECT gr.role_id FROM group_roles gr JOIN user_groups ug ON ug.group_id = gr.group_id WHERE ug.user_id = $1\
+             ), effective(id) AS (\
+               SELECT id FROM direct_roles \
+               UNION SELECT rc.child_role_id FROM role_composites rc JOIN effective e ON rc.parent_role_id = e.id\
+             ) SELECT DISTINCT jsonb_array_elements_text(r.permissions) AS permission FROM roles r JOIN effective e ON e.id = r.id WHERE r.deleted_at IS NULL ORDER BY permission",
+            &[&user_id],
+        )
+        .await
+        .map_err(mapper::pg_err)?
+        .into_rows()
+        .iter()
+        .map(|row| mapper::string(row, 0))
+        .collect()
+    }
+
     /// Assign a role to a user.
     pub async fn assign(
         &self,
@@ -31,7 +55,8 @@ impl UserRoleRepo {
         user_id: Uuid,
         role_id: Uuid,
     ) -> Result<(), OidcError> {
-        let sql = "INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)";
+        let sql =
+            "INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2) ON CONFLICT DO NOTHING";
         conn.execute_params(sql, &[&user_id, &role_id])
             .await
             .map_err(mapper::pg_err)?;
@@ -105,6 +130,7 @@ impl UserRoleRepo {
             permissions: mapper::json_string_vec(row, 4)?,
             created_at: mapper::datetime(row, 5)?,
             updated_at: mapper::datetime(row, 6)?,
+            client_id: mapper::opt_uuid(row, 7)?,
         })
     }
 

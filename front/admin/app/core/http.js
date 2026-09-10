@@ -34,10 +34,12 @@ export async function http(url, options = {}) {
   };
 
   if (!CSRF_SAFE_METHODS.has(method)) {
-    if (!csrfToken) {
+    if (!csrfToken && (url === '/api' || url.startsWith('/api/'))) {
       throw new Error('Missing server-issued CSRF token cookie');
     }
-    headers[CSRF_HEADER_NAME] = csrfToken;
+    if (csrfToken) {
+      headers[CSRF_HEADER_NAME] = csrfToken;
+    }
   }
 
   const opts = {

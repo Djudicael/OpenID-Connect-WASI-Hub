@@ -1,10 +1,12 @@
 import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
-import { getClient, updateClient } from '../services/client-service.js';
+import { getClient, getClientCiba, updateClient, updateClientCiba } from '../services/client-service.js';
 import { navigate } from '../core/router.js';
 import { showToast } from '../components/ui/toast.js';
 
 const GRANT_TYPES = [
+  { value: 'urn:openid:params:grant-type:ciba', label: 'CIBA', desc: 'User approval on a separate signed-in device' },
+  { value: 'urn:ietf:params:oauth:grant-type:uma-ticket', label: 'UMA Permission Ticket', desc: 'Exchange permission tickets for RPT access tokens' },
   { value: 'authorization_code', label: 'Authorization Code', desc: 'Standard web app flow' },
   { value: 'refresh_token', label: 'Refresh Token', desc: 'Long-lived sessions' },
   { value: 'client_credentials', label: 'Client Credentials', desc: 'Server-to-server' },
@@ -15,7 +17,7 @@ const GRANT_TYPES = [
 class ClientDetailPage extends BaseComponent {
   constructor() {
     super();
-    this._state = { client: null, savedClient: null, loading: true, saving: false, dirty: false };
+    this._state = { client: null, savedClient: null, ciba: null, savedCiba: null, loading: true, saving: false, dirty: false };
     this._onBeforeUnload = this._onBeforeUnload.bind(this);
   }
 
@@ -39,7 +41,7 @@ class ClientDetailPage extends BaseComponent {
   }
 
   get _isDirty() {
-    const { client, savedClient } = this._state;
+    const { client, savedClient, ciba, savedCiba } = this._state;
     if (!client || !savedClient) return false;
     return (
       client.name !== savedClient.name ||
@@ -62,7 +64,8 @@ class ClientDetailPage extends BaseComponent {
       client.id_token_encrypted_response_alg !== savedClient.id_token_encrypted_response_alg ||
       client.id_token_encrypted_response_enc !== savedClient.id_token_encrypted_response_enc ||
       client.request_object_encryption_alg !== savedClient.request_object_encryption_alg ||
-      client.request_object_encryption_enc !== savedClient.request_object_encryption_enc
+      client.request_object_encryption_enc !== savedClient.request_object_encryption_enc ||
+      JSON.stringify(ciba) !== JSON.stringify(savedCiba)
     );
   }
 
@@ -76,8 +79,8 @@ class ClientDetailPage extends BaseComponent {
   async _loadClient(id) {
     this.setState({ loading: true });
     try {
-      const client = await getClient(id);
-      this.setState({ client, savedClient: { ...client }, loading: false, dirty: false });
+      const [client, ciba] = await Promise.all([getClient(id), getClientCiba(id)]);
+      this.setState({ client, savedClient: structuredClone(client), ciba, savedCiba: structuredClone(ciba), loading: false, dirty: false });
     } catch (err) { if (err.name === "AbortError") return;
       showToast('Failed to load client', 'error');
       this.setState({ loading: false });
@@ -112,8 +115,9 @@ class ClientDetailPage extends BaseComponent {
         request_object_encryption_alg: client.request_object_encryption_alg,
         request_object_encryption_enc: client.request_object_encryption_enc,
       });
+      await updateClientCiba(client.id, this._state.ciba);
       showToast('Client updated', 'success');
-      this.setState({ saving: false, savedClient: { ...client }, dirty: false });
+      this.setState({ saving: false, savedClient: structuredClone(client), savedCiba: structuredClone(this._state.ciba), dirty: false });
     } catch (err) { if (err.name === "AbortError") return;
       showToast('Failed to update client', 'error');
       this.setState({ saving: false });
@@ -147,6 +151,10 @@ class ClientDetailPage extends BaseComponent {
       client.request_object_encryption_enc !== savedClient.request_object_encryption_enc
     );
     this.setState({ client, dirty });
+  }
+
+  _updateCiba(field, value) {
+    this.setState({ ciba: { ...this._state.ciba, [field]: value }, dirty: true });
   }
 
   _updateRedirectUris(value) {
@@ -350,6 +358,18 @@ class ClientDetailPage extends BaseComponent {
                       ></textarea>
                       <div class="hint">One URI per line</div>
                     </div>
+                  </div>
+
+                  <div class="section" data-doc-section="ciba-settings">
+                    <div class="section-title">Backchannel authentication (CIBA)</div>
+                    <p class="hint">Let this application ask a user to approve sign-in from the My Account page.</p>
+                    <label class="checkbox-row"><input type="checkbox" ?checked=${this._state.ciba?.enabled} @change=${e => this._updateCiba('enabled', e.target.checked)} /> Enabled</label>
+                    ${this._state.ciba?.enabled ? html`
+                      <div class="field"><label class="field-label">Delivery mode</label><select class="field-select" .value=${this._state.ciba.delivery_mode || 'poll'} @change=${e => this._updateCiba('delivery_mode', e.target.value)}><option value="poll">Poll</option><option value="ping">Ping</option></select></div>
+                      ${this._state.ciba.delivery_mode === 'ping' ? html`<div class="field"><label class="field-label">Notification endpoint</label><input class="field-input" type="url" placeholder="https://app.example.com/ciba/notify" .value=${this._state.ciba.client_notification_endpoint || ''} @input=${e => this._updateCiba('client_notification_endpoint', e.target.value)}><div class="hint">The application receives a notification, then calls the token endpoint.</div></div>` : ''}
+                      <div class="field"><label class="field-label">Request lifetime (seconds)</label><input class="field-input" type="number" min="60" max="900" .value=${String(this._state.ciba.request_lifetime_seconds || 300)} @input=${e => this._updateCiba('request_lifetime_seconds', Number(e.target.value))}></div>
+                      <div class="field"><label class="field-label">Polling interval (seconds)</label><input class="field-input" type="number" min="2" max="60" .value=${String(this._state.ciba.polling_interval_seconds || 5)} @input=${e => this._updateCiba('polling_interval_seconds', Number(e.target.value))}></div>
+                    ` : ''}
                   </div>
 
                   <label class="checkbox-row">

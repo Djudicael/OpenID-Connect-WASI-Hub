@@ -34,6 +34,10 @@ pub struct IdentityProvider {
     pub client_secret: String,
     /// Scopes to request from the upstream IdP.
     pub scopes: Vec<String>,
+    /// Imported SAML IdP metadata for SAML identity brokering.
+    pub saml_metadata_xml: Option<String>,
+    /// Maps incoming SAML attribute names to local user fields.
+    pub saml_attribute_mapping: serde_json::Value,
     /// Whether to create local users automatically on first login.
     pub auto_create_users: bool,
     /// Whether to link existing users by email.
@@ -52,6 +56,8 @@ pub enum IdentityProviderType {
     Google,
     /// GitHub (OAuth2 + user info).
     GitHub,
+    /// SAML 2.0 identity provider.
+    Saml,
 }
 
 impl std::fmt::Display for IdentityProviderType {
@@ -60,6 +66,7 @@ impl std::fmt::Display for IdentityProviderType {
             IdentityProviderType::Oidc => write!(f, "oidc"),
             IdentityProviderType::Google => write!(f, "google"),
             IdentityProviderType::GitHub => write!(f, "github"),
+            IdentityProviderType::Saml => write!(f, "saml"),
         }
     }
 }
@@ -71,6 +78,7 @@ impl std::str::FromStr for IdentityProviderType {
             "oidc" => Ok(IdentityProviderType::Oidc),
             "google" => Ok(IdentityProviderType::Google),
             "github" => Ok(IdentityProviderType::GitHub),
+            "saml" => Ok(IdentityProviderType::Saml),
             _ => Err(OidcError::InvalidInput(format!(
                 "Unknown identity provider type: {}",
                 s
@@ -85,12 +93,22 @@ impl IdentityProvider {
         if self.alias.trim().is_empty() {
             return Err(OidcError::InvalidInput("alias must not be empty".into()));
         }
-        if self.issuer.trim().is_empty() {
+        if self.issuer.trim().is_empty() && self.provider_type != IdentityProviderType::Saml {
             return Err(OidcError::InvalidInput("issuer must not be empty".into()));
         }
-        if self.client_id.trim().is_empty() {
+        if self.client_id.trim().is_empty() && self.provider_type != IdentityProviderType::Saml {
             return Err(OidcError::InvalidInput(
                 "client_id must not be empty".into(),
+            ));
+        }
+        if self.provider_type == IdentityProviderType::Saml
+            && self
+                .saml_metadata_xml
+                .as_deref()
+                .is_none_or(|value| value.trim().is_empty())
+        {
+            return Err(OidcError::InvalidInput(
+                "saml_metadata_xml must not be empty".into(),
             ));
         }
         Ok(())
@@ -117,6 +135,8 @@ mod tests {
             client_id: "my-client-id".into(),
             client_secret: "my-client-secret".into(),
             scopes: vec!["openid".into(), "profile".into(), "email".into()],
+            saml_metadata_xml: None,
+            saml_attribute_mapping: serde_json::json!({}),
             auto_create_users: true,
             link_users_by_email: true,
             deleted_at: None,
@@ -158,6 +178,7 @@ mod tests {
         assert_eq!(IdentityProviderType::Oidc.to_string(), "oidc");
         assert_eq!(IdentityProviderType::Google.to_string(), "google");
         assert_eq!(IdentityProviderType::GitHub.to_string(), "github");
+        assert_eq!(IdentityProviderType::Saml.to_string(), "saml");
     }
 
     #[test]

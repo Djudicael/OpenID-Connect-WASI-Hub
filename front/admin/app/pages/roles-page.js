@@ -2,6 +2,7 @@ import { html } from 'lit-html';
 import { BaseComponent } from '../core/component.js';
 import { listRoles, createRole, deleteRole } from '../services/role-service.js';
 import { listAllRealms } from '../services/realm-service.js';
+import { listClients } from '../services/client-service.js';
 import { resolveSelectedRealmId, setSelectedRealmId } from '../core/realm-context.js';
 import { navigate } from '../core/router.js';
 import { showToast } from '../components/ui/toast.js';
@@ -27,8 +28,11 @@ class RolesPage extends BaseComponent {
       createName: '',
       createDescription: '',
       createPermissions: '',
+      createType: 'realm',
+      createClientId: '',
       createLoading: false,
       realms: [],
+      clients: [],
       selectedIds: new Set(),
     };
   }
@@ -49,12 +53,24 @@ class RolesPage extends BaseComponent {
       const realmId = resolveSelectedRealmId(realms, this._state.realmId || this._state.createRealmId);
       setSelectedRealmId(realmId);
       await this.setState({ realms, realmId, createRealmId: realmId });
+      await this._loadClients(realmId);
       this._loadRoles();
     } catch (err) {
       if (err.name === 'AbortError') return;
       handleApiError(err, 'Failed to load realms');
       this.setState({ realms: [], realmId: '', createRealmId: '' });
       this._loadRoles();
+    }
+  }
+
+  async _loadClients(realmId) {
+    if (!realmId) return this.setState({ clients: [] });
+    try {
+      const data = await listClients({ realm_id: realmId, limit: '1000', offset: '0' }, this.signal);
+      this.setState({ clients: data.items || [] });
+    } catch (err) {
+      if (err.name !== 'AbortError') handleApiError(err, 'Failed to load clients');
+      this.setState({ clients: [] });
     }
   }
 
@@ -98,6 +114,7 @@ class RolesPage extends BaseComponent {
     const realmId = e.target.value;
     setSelectedRealmId(realmId);
     await this.setState({ realmId, createRealmId: realmId, page: 1 });
+    await this._loadClients(realmId);
     this._loadRoles();
   }
 
@@ -154,6 +171,8 @@ class RolesPage extends BaseComponent {
       createName: '',
       createDescription: '',
       createPermissions: '',
+      createType: 'realm',
+      createClientId: '',
       createLoading: false,
     });
     requestAnimationFrame(() => {
@@ -169,8 +188,9 @@ class RolesPage extends BaseComponent {
   }
 
   async _createRole() {
-    const { createRealmId, createName, createDescription, createPermissions } = this._state;
+    const { createRealmId, createName, createDescription, createPermissions, createType, createClientId } = this._state;
     if (!isRequired(createRealmId) || !isRequired(createName)) return;
+    if (createType === 'client' && !isRequired(createClientId)) return;
 
     this.setState({ createLoading: true });
     try {
@@ -180,7 +200,8 @@ class RolesPage extends BaseComponent {
         description: createDescription.trim() || undefined,
         permissions: createPermissions.trim()
           ? createPermissions.split(',').map(p => p.trim()).filter(Boolean)
-          : undefined,
+          : [],
+        client_id: createType === 'client' ? createClientId : undefined,
       });
       this._closeCreateModal();
       showToast('Role created successfully', 'success');
@@ -193,7 +214,8 @@ class RolesPage extends BaseComponent {
   }
 
   template() {
-    const { roles, loading, search, page, pageSize, total, showCreateModal, realmId, createRealmId, createName, createDescription, createPermissions, createLoading, realms, selectedIds } = this._state;
+    const { roles, loading, search, page, pageSize, total, showCreateModal, realmId, createRealmId, createName, createDescription, createPermissions, createType, createClientId, createLoading, realms, clients, selectedIds } = this._state;
+    const clientNames = new Map(clients.map(client => [client.id, client.client_id || client.name]));
     const columns = [
       {
         key: 'select',
@@ -202,6 +224,11 @@ class RolesPage extends BaseComponent {
       },
       { key: 'name', label: 'Name' },
       { key: 'description', label: 'Description' },
+      {
+        key: 'client_id',
+        label: 'Scope',
+        render: (value) => value ? `Client: ${clientNames.get(value) || value}` : 'Realm',
+      },
       {
         key: 'permissions',
         label: 'Permissions',
@@ -271,11 +298,26 @@ class RolesPage extends BaseComponent {
                 class="field-select"
                 id="create-role-realm"
                 .value=${createRealmId}
-                @change=${(e) => this.setState({ createRealmId: e.target.value })}
+                @change=${async (e) => { await this.setState({ createRealmId: e.target.value, createClientId: '' }); this._loadClients(e.target.value); }}
               >
                 ${realms.map(r => html`<option value=${r.id} ?selected=${createRealmId === r.id}>${r.display_name || r.name}</option>`)}
               </select>
             </div>
+            <div class="field">
+              <label class="field-label" for="create-role-type">Role type *</label>
+              <select class="field-select" id="create-role-type" .value=${createType} @change=${(e) => this.setState({ createType: e.target.value, createClientId: '' })}>
+                <option value="realm">Realm role</option>
+                <option value="client">Client role</option>
+              </select>
+              <div class="hint">Realm roles apply across the realm. Client roles apply to one application.</div>
+            </div>
+            ${createType === 'client' ? html`<div class="field">
+              <label class="field-label" for="create-role-client">Client *</label>
+              <select class="field-select" id="create-role-client" .value=${createClientId} @change=${(e) => this.setState({ createClientId: e.target.value })}>
+                <option value="">Select a client</option>
+                ${clients.map(client => html`<option value=${client.id}>${client.client_id || client.name}</option>`)}
+              </select>
+            </div>` : ''}
             <div class="field">
               <label class="field-label" for="create-role-name">Name *</label>
               <input
@@ -308,13 +350,13 @@ class RolesPage extends BaseComponent {
                 .value=${createPermissions}
                 @input=${(e) => this.setState({ createPermissions: e.target.value })}
               />
-              <div class="hint">Comma-separated list of permissions</div>
+              <div class="hint">Comma-separated, for example users:read, clients:read, or users:*</div>
             </div>
           </div>
         ` : ''}
         <div slot="footer">
           <c-button variant="secondary" @click=${() => this._closeCreateModal()}>Cancel</c-button>
-          <c-button variant="primary" ?disabled=${createLoading || !createRealmId.trim() || !createName.trim()} @click=${() => this._createRole()}>
+          <c-button variant="primary" ?disabled=${createLoading || !createRealmId.trim() || !createName.trim() || (createType === 'client' && !createClientId)} @click=${() => this._createRole()}>
             ${createLoading ? 'Creating...' : 'Create'}
           </c-button>
         </div>

@@ -111,6 +111,7 @@ class SessionsPage extends BaseComponent {
       { key: 'user_id', label: 'User ID', render: (v) => v ? v.slice(0, 8) + '...' : '-' },
       { key: 'client_id', label: 'Client ID', render: (v) => v ? v.slice(0, 8) + '...' : '-' },
       { key: 'grant_type', label: 'Grant' },
+      { key: 'offline', label: 'Type', render: (v) => v ? html`<span class="badge">Offline</span>` : 'Online' },
       { key: 'scope', label: 'Scopes', render: (v) => Array.isArray(v) ? v.join(', ') : v },
       { key: 'revoked', label: 'Status', render: (v) => v ? html`<span style="color:var(--color-danger)">Revoked</span>` : html`<span style="color:var(--color-success)">Active</span>` },
       {

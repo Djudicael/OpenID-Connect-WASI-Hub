@@ -116,6 +116,8 @@ fn make_session(user_id: Uuid, realm_id: Uuid, client_id: Uuid, hash: &str) -> S
         realm_id,
         client_id,
         grant_type: "authorization_code".to_string(),
+        acr: "urn:oidc-hub:acr:bronze".to_string(),
+        amr: vec!["pwd".to_string()],
         access_token_hash: hash.to_string(),
         refresh_token_hash: None,
         id_token_jti: None,
@@ -123,6 +125,8 @@ fn make_session(user_id: Uuid, realm_id: Uuid, client_id: Uuid, hash: &str) -> S
         revoked: false,
         expires_at: now + chrono::Duration::minutes(15),
         refresh_expires_at: Some(now + chrono::Duration::days(7)),
+        offline_session: false,
+        offline_max_expires_at: None,
         created_at: now,
         last_used_at: None,
         token_family_id: None,
@@ -194,6 +198,8 @@ fn make_auth_code(client_id: Uuid, user_id: Uuid, realm_id: Uuid, code: &str) ->
         display: None,
         response_type: ResponseType::CODE,
         acr_values: vec![],
+        auth_acr: Some("urn:oidc-hub:acr:bronze".to_string()),
+        auth_amr: vec!["pwd".to_string()],
         claims_locales: vec![],
         expires_at: Utc::now() + chrono::Duration::minutes(10),
         response_mode: None,
@@ -1354,13 +1360,13 @@ async fn test_audit_event_list_recent() {
     }
 
     let list = AuditEventRepo
-        .list_recent(&mut conn, 3, 0, None, None, None, None)
+        .list_recent(&mut conn, 3, 0, None, None, None, None, None)
         .await
         .expect("list_recent failed");
     assert_eq!(list.len(), 3);
 
     let list = AuditEventRepo
-        .list_recent(&mut conn, 3, 3, None, None, None, None)
+        .list_recent(&mut conn, 3, 3, None, None, None, None, None)
         .await
         .expect("list_recent failed");
     assert_eq!(list.len(), 2);

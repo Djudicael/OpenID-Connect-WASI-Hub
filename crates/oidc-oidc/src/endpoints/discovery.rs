@@ -39,6 +39,9 @@ pub async fn discovery_handler(state: OidcState) -> Json<Value> {
         "revocation_endpoint" => json!(format!("{issuer}/oidc/revoke")),
         "pushed_authorization_request_endpoint" => json!(format!("{issuer}/oidc/par")),
         "device_authorization_endpoint" => json!(format!("{issuer}/oidc/device/authorize")),
+        "backchannel_authentication_endpoint" => json!(format!("{issuer}/oidc/backchannel-authentication")),
+        "backchannel_token_delivery_modes_supported" => json!(["poll", "ping"]),
+        "backchannel_user_code_parameter_supported" => json!(false),
         "password_reset_endpoint" => json!(format!("{issuer}/oidc/password-reset/request")),
         "email_verification_endpoint" => json!(format!("{issuer}/oidc/email-verification/request")),
         "registration_endpoint" => json!(format!("{issuer}/oidc/register")),
@@ -47,13 +50,15 @@ pub async fn discovery_handler(state: OidcState) -> Json<Value> {
         "frontchannel_logout_session_supported" => json!(true),
         "backchannel_logout_supported" => json!(true),
         "backchannel_logout_session_supported" => json!(true),
-        "scopes_supported" => json!(["openid", "profile", "email", "phone", "address", "offline_access"]),
+        "scopes_supported" => json!(["openid", "profile", "email", "phone", "address", "roles", "groups", "offline_access", "organization"]),
         "response_types_supported" => json!(response_types),
         "grant_types_supported" => json!([
             "authorization_code", "client_credentials", "refresh_token",
             "urn:ietf:params:oauth:grant-type:device_code",
             "urn:ietf:params:oauth:grant-type:jwt-bearer",
-            "urn:ietf:params:oauth:grant-type:token-exchange"
+            "urn:ietf:params:oauth:grant-type:token-exchange",
+            "urn:ietf:params:oauth:grant-type:uma-ticket"
+            ,"urn:openid:params:grant-type:ciba"
         ]),
         "token_endpoint_auth_methods_supported" => json!([
             "client_secret_basic", "client_secret_post", "client_secret_jwt", "private_key_jwt"
@@ -67,7 +72,7 @@ pub async fn discovery_handler(state: OidcState) -> Json<Value> {
         "account_recovery_endpoint" => json!(format!("{issuer}/oidc/account-recovery/confirm")),
         "claims_supported" => json!([
             "sub", "iss", "aud", "exp", "iat", "auth_time", "nonce", "at_hash", "c_hash",
-            "sid", "acr", "amr", "azp", "roles", "groups",
+            "sid", "acr", "amr", "azp", "roles", "realm_access", "resource_access", "groups", "organization",
             "name", "given_name", "family_name", "middle_name", "nickname", "preferred_username",
             "profile", "picture", "website", "gender", "birthdate", "zoneinfo", "locale",
             "email", "email_verified",
@@ -76,7 +81,7 @@ pub async fn discovery_handler(state: OidcState) -> Json<Value> {
             "updated_at"
         ]),
         "acr_values_supported" => json!(["urn:mace:incommon:iap:bronze", "urn:mace:incommon:iap:silver"]),
-        "amr_values_supported" => json!(["pwd", "mfa", "otp", "sms", "device_code", "token_exchange", "social"]),
+        "amr_values_supported" => json!(["pwd", "mfa", "otp", "hwk", "user", "recovery", "device_code", "token_exchange", "social"]),
         "claims_locales_supported" => json!(["en", "fr", "de", "es"]),
         "display_values_supported" => json!(["page", "popup", "touch", "wap"]),
         "claims_parameter_supported" => json!(true),
@@ -122,6 +127,9 @@ pub async fn realm_discovery_handler(state: OidcState, realm: String) -> Json<Va
         "revocation_endpoint" => json!(format!("{realm_base}/protocol/openid-connect/revoke")),
         "pushed_authorization_request_endpoint" => json!(format!("{realm_base}/protocol/openid-connect/par")),
         "device_authorization_endpoint" => json!(format!("{realm_base}/protocol/openid-connect/device/authorize")),
+        "backchannel_authentication_endpoint" => json!(format!("{realm_base}/protocol/openid-connect/ext/ciba/auth")),
+        "backchannel_token_delivery_modes_supported" => json!(["poll", "ping"]),
+        "backchannel_user_code_parameter_supported" => json!(false),
         "password_reset_endpoint" => json!(format!("{realm_base}/protocol/openid-connect/password-reset/request")),
         "email_verification_endpoint" => json!(format!("{realm_base}/protocol/openid-connect/email-verification/request")),
         "registration_endpoint" => json!(format!("{realm_base}/protocol/openid-connect/register")),
@@ -130,13 +138,15 @@ pub async fn realm_discovery_handler(state: OidcState, realm: String) -> Json<Va
         "frontchannel_logout_session_supported" => json!(true),
         "backchannel_logout_supported" => json!(true),
         "backchannel_logout_session_supported" => json!(true),
-        "scopes_supported" => json!(["openid", "profile", "email", "phone", "address", "offline_access"]),
+        "scopes_supported" => json!(["openid", "profile", "email", "phone", "address", "roles", "groups", "offline_access", "organization"]),
         "response_types_supported" => json!(response_types),
         "grant_types_supported" => json!([
             "authorization_code", "client_credentials", "refresh_token",
             "urn:ietf:params:oauth:grant-type:device_code",
             "urn:ietf:params:oauth:grant-type:jwt-bearer",
-            "urn:ietf:params:oauth:grant-type:token-exchange"
+            "urn:ietf:params:oauth:grant-type:token-exchange",
+            "urn:ietf:params:oauth:grant-type:uma-ticket"
+            ,"urn:openid:params:grant-type:ciba"
         ]),
         "token_endpoint_auth_methods_supported" => json!([
             "client_secret_basic", "client_secret_post", "client_secret_jwt", "private_key_jwt"
@@ -150,7 +160,7 @@ pub async fn realm_discovery_handler(state: OidcState, realm: String) -> Json<Va
         "account_recovery_endpoint" => json!(format!("{realm_base}/protocol/openid-connect/account-recovery/confirm")),
         "claims_supported" => json!([
             "sub", "iss", "aud", "exp", "iat", "auth_time", "nonce", "at_hash", "c_hash",
-            "sid", "acr", "amr", "azp", "roles", "groups",
+            "sid", "acr", "amr", "azp", "roles", "realm_access", "resource_access", "groups", "organization",
             "name", "given_name", "family_name", "middle_name", "nickname", "preferred_username",
             "profile", "picture", "website", "gender", "birthdate", "zoneinfo", "locale",
             "email", "email_verified",
@@ -159,7 +169,7 @@ pub async fn realm_discovery_handler(state: OidcState, realm: String) -> Json<Va
             "updated_at"
         ]),
         "acr_values_supported" => json!(["urn:mace:incommon:iap:bronze", "urn:mace:incommon:iap:silver"]),
-        "amr_values_supported" => json!(["pwd", "mfa", "otp", "sms", "device_code", "token_exchange", "social"]),
+        "amr_values_supported" => json!(["pwd", "mfa", "otp", "hwk", "user", "recovery", "device_code", "token_exchange", "social"]),
         "claims_locales_supported" => json!(["en", "fr", "de", "es"]),
         "display_values_supported" => json!(["page", "popup", "touch", "wap"]),
         "claims_parameter_supported" => json!(true),

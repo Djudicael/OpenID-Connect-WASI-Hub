@@ -817,6 +817,10 @@ impl TokenService for MockTokenService {
             scope: scopes.join(" "),
             cnf,
             authorization_details: _authorization_details.cloned(),
+            organization: None,
+            realm_access: None,
+            resource_access: None,
+            custom_claims: serde_json::Map::new(),
         };
         self.access_tokens
             .write()
@@ -993,6 +997,8 @@ mod tests {
             revoked: false,
             expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
             refresh_expires_at: Some(chrono::Utc::now() + chrono::Duration::days(30)),
+            offline_session: false,
+            offline_max_expires_at: None,
             created_at: chrono::Utc::now(),
             last_used_at: None,
             token_family_id: Some(Uuid::now_v7()),
@@ -1002,6 +1008,8 @@ mod tests {
             family_revoked: false,
             authorization_details: None,
             resource: vec![],
+            acr: crate::utils::ACR_BRONZE.to_string(),
+            amr: vec![crate::utils::AMR_PWD.to_string()],
         }
     }
 
@@ -1045,6 +1053,8 @@ mod tests {
             response_mode: None,
             authorization_details: None,
             resource: vec![],
+            auth_acr: Some(crate::utils::ACR_BRONZE.to_string()),
+            auth_amr: vec![crate::utils::AMR_PWD.to_string()],
         }
     }
 

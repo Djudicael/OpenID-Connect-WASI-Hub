@@ -14,7 +14,7 @@ use oidc_core::models::{
     AuthCode, CodeChallengeMethod, FederatedIdentity, IdentityProvider, ResponseType,
     SocialLoginState, User,
 };
-use oidc_core::traits::token_service::TokenService;
+use oidc_core::traits::token_service::{AccessTokenExtraClaims, TokenService};
 use oidc_core::utils::{generate_opaque_token, generate_uuid_v7, sha2_256_hex};
 use oidc_repository::repositories::auth_code_repo::AuthCodeRepo;
 use oidc_repository::repositories::client_repo::ClientRepo;
@@ -184,12 +184,18 @@ pub async fn social_login_initiate_handler(
         )
             .into_response();
     }
-    if requested_scopes
-        .iter()
-        .any(|scope| !client.allowed_scopes.contains(scope))
+    let requested_scopes = match oidc_repository::repositories::scope_repo::ScopeRepo
+        .resolve_names_for_client(
+            &mut conn,
+            client.id,
+            &requested_scopes,
+            &client.allowed_scopes,
+        )
+        .await
     {
-        return (axum::http::StatusCode::BAD_REQUEST, "Invalid scope").into_response();
-    }
+        Ok(scopes) => scopes,
+        Err(_) => return (axum::http::StatusCode::BAD_REQUEST, "Invalid scope").into_response(),
+    };
 
     let internal_state = match generate_opaque_token() {
         Ok(state) => state,
@@ -410,7 +416,7 @@ pub async fn social_login_callback_handler(
     }
 
     // Find or create the local user
-    let user = match find_or_create_local_user(
+    let (user, account_created) = match find_or_create_local_user(
         &mut conn,
         &provider,
         &upstream_subject,
@@ -432,10 +438,100 @@ pub async fn social_login_callback_handler(
     };
 
     // Issue local OIDC tokens for the browser session and create a local authorization code.
+    // Never let an upstream login bypass locally enrolled second factors.
+    let has_local_mfa = oidc_repository::repositories::mfa_repo::MfaRepo
+        .find_totp(&mut conn, user.id)
+        .await
+        .ok()
+        .flatten()
+        .is_some()
+        || oidc_repository::repositories::mfa_repo::MfaRepo
+            .list_webauthn(&mut conn, user.id)
+            .await
+            .map(|items| !items.is_empty())
+            .unwrap_or(true);
+    if has_local_mfa {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "This account requires multi-factor verification. Use the standard sign-in page.",
+        )
+            .into_response();
+    }
+
     let subject = user.id.to_string();
     let audience = local_client.client_id.clone();
 
     let sid = oidc_core::utils::generate_sid().unwrap_or_default();
+
+    // A verified organization domain linked to this provider enrolls the user
+    // as a managed member when the provider created the realm account.
+    if let Some((_, domain)) = user.email.rsplit_once('@')
+        && let Ok(Some(link)) = oidc_repository::repositories::organization_repo::OrganizationRepo
+            .find_identity_provider_for_domain(&mut conn, realm.id, domain)
+            .await
+        && link.identity_provider_id == provider.id
+    {
+        let _ = oidc_repository::repositories::organization_repo::OrganizationRepo
+            .add_member(
+                &mut conn,
+                &oidc_core::models::OrganizationMembership {
+                    organization_id: link.organization_id,
+                    user_id: user.id,
+                    kind: if account_created {
+                        oidc_core::models::OrganizationMembershipKind::Managed
+                    } else {
+                        oidc_core::models::OrganizationMembershipKind::Unmanaged
+                    },
+                    joined_at: chrono::Utc::now(),
+                },
+            )
+            .await;
+    }
+
+    let organization =
+        match crate::organization_claims::resolve_organization_claim(&mut conn, user.id, &scopes)
+            .await
+        {
+            Ok(value) => value,
+            Err(error) => {
+                tracing::warn!("Failed to resolve social-login organization claim: {error}");
+                return (
+                    axum::http::StatusCode::FORBIDDEN,
+                    "Requested organization membership is unavailable",
+                )
+                    .into_response();
+            }
+        };
+    let role_claims = match crate::role_claims::resolve_role_claims(&mut conn, user.id).await {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::error!("Failed to resolve effective role claims: {error}");
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Token issuance failed",
+            )
+                .into_response();
+        }
+    };
+    let include_access_roles = scopes.iter().any(|scope| scope == "roles");
+    let mapped_claims = match crate::protocol_mappers::resolve_mapped_claims(
+        &mut conn,
+        local_client.id,
+        Some(&user),
+        &scopes,
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::error!("Failed to resolve protocol mappers: {error}");
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "Token issuance failed",
+            )
+                .into_response();
+        }
+    };
 
     let token_svc = match state.token_service_for_realm(realm.id).await {
         Ok(svc) => svc,
@@ -450,7 +546,25 @@ pub async fn social_login_callback_handler(
     };
 
     let access_token = match token_svc
-        .issue_access_token(&subject, &audience, &scopes, None, None, None)
+        .issue_access_token_with_extra(
+            &subject,
+            &audience,
+            &scopes,
+            None,
+            None,
+            None,
+            Some(AccessTokenExtraClaims {
+                custom_claims: mapped_claims.access_token.clone(),
+                additional_audiences: mapped_claims.access_audiences.clone(),
+                organization: organization.clone(),
+                realm_access: include_access_roles
+                    .then(|| role_claims.realm_access.clone())
+                    .flatten(),
+                resource_access: include_access_roles
+                    .then(|| role_claims.resource_access.clone())
+                    .flatten(),
+            }),
+        )
         .await
     {
         Ok(t) => t,
@@ -467,6 +581,8 @@ pub async fn social_login_callback_handler(
     let at_hash = oidc_core::utils::compute_at_hash(&access_token);
 
     let id_token_extra = oidc_core::traits::token_service::IdTokenExtraClaims {
+        custom_claims: mapped_claims.id_token,
+        additional_audiences: mapped_claims.id_audiences,
         nonce: nonce.clone(),
         at_hash: Some(at_hash),
         auth_time: Some(chrono::Utc::now().timestamp()),
@@ -478,6 +594,10 @@ pub async fn social_login_callback_handler(
         name: user.username.clone(),
         given_name: user.given_name.clone(),
         family_name: user.family_name.clone(),
+        roles: role_claims.roles,
+        realm_access: role_claims.realm_access,
+        resource_access: role_claims.resource_access,
+        organization,
         ..Default::default()
     };
 
@@ -523,6 +643,8 @@ pub async fn social_login_callback_handler(
         revoked: false,
         expires_at: now + chrono::Duration::minutes(15),
         refresh_expires_at: Some(now + chrono::Duration::days(7)),
+        offline_session: false,
+        offline_max_expires_at: None,
         created_at: now,
         last_used_at: None,
         token_family_id: Some(generate_uuid_v7()),
@@ -532,6 +654,8 @@ pub async fn social_login_callback_handler(
         family_revoked: false,
         authorization_details: None,
         resource: vec![],
+        acr: oidc_core::utils::ACR_BRONZE.to_string(),
+        amr: vec![oidc_core::utils::AMR_SOCIAL.to_string()],
     };
 
     if let Err(e) = SessionRepo.create(&mut conn, &session).await {
@@ -588,6 +712,8 @@ pub async fn social_login_callback_handler(
         response_mode: None,
         authorization_details: None,
         resource: vec![],
+        auth_acr: Some(oidc_core::utils::ACR_BRONZE.to_string()),
+        auth_amr: vec![oidc_core::utils::AMR_SOCIAL.to_string()],
     };
 
     if let Err(e) = AuthCodeRepo.create(&mut conn, &auth_code).await {
@@ -801,14 +927,14 @@ async fn get_upstream_userinfo(
 }
 
 /// Find or create a local user based on the federated identity.
-async fn find_or_create_local_user(
+pub(crate) async fn find_or_create_local_user(
     conn: &mut oidc_repository::Connection,
     provider: &IdentityProvider,
     upstream_subject: &str,
     upstream_email: Option<&str>,
     upstream_name: Option<&str>,
     realm_id: uuid::Uuid,
-) -> Result<User, oidc_core::OidcError> {
+) -> Result<(User, bool), oidc_core::OidcError> {
     // 1. Check if a federated identity already exists for this upstream subject
     if let Some(fi) = FederatedIdentityRepo
         .find_by_upstream_subject(conn, provider.id, upstream_subject)
@@ -821,6 +947,7 @@ async fn find_or_create_local_user(
         return UserRepo
             .find_by_id(conn, fi.user_id)
             .await?
+            .map(|user| (user, false))
             .ok_or_else(|| oidc_core::OidcError::NotFound("linked user not found".into()));
     }
 
@@ -842,7 +969,7 @@ async fn find_or_create_local_user(
             last_used_at: Some(chrono::Utc::now()),
         };
         FederatedIdentityRepo.create(conn, &fi).await?;
-        return Ok(user);
+        return Ok((user, false));
     }
 
     // 3. If auto_create_users is enabled, create a new user
@@ -901,7 +1028,7 @@ async fn find_or_create_local_user(
         };
         FederatedIdentityRepo.create(conn, &fi).await?;
 
-        return Ok(user);
+        return Ok((user, true));
     }
 
     Err(oidc_core::OidcError::NotFound(

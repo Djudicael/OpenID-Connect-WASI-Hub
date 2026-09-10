@@ -1,7 +1,7 @@
 use ed25519_dalek::SigningKey;
 use oidc_core::errors::OidcError;
 use oidc_core::traits::Clock;
-use oidc_core::traits::token_service::{IdTokenExtraClaims, TokenService};
+use oidc_core::traits::token_service::{AccessTokenExtraClaims, IdTokenExtraClaims, TokenService};
 use oidc_core::utils::generate_opaque_token;
 use rsa::traits::PublicKeyParts;
 use rsa::{RsaPrivateKey, RsaPublicKey};
@@ -84,6 +84,10 @@ pub struct AccessTokenClaims {
     pub iss: String,
     pub exp: i64,
     pub iat: i64,
+    /// Unique token identifier. This prevents two otherwise identical grants
+    /// issued in the same second from producing the same bearer token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jti: Option<String>,
     pub scope: String,
     /// Authorized party — the client_id that was authorized (RFC 8707 §2).
     /// Required when `aud` contains resource indicators in addition to client_id.
@@ -96,13 +100,22 @@ pub struct AccessTokenClaims {
     /// RFC 9396 RAR authorization details granted to this token.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub authorization_details: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organization: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub realm_access: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resource_access: Option<serde_json::Value>,
+    #[serde(flatten)]
+    pub custom_claims: serde_json::Map<String, serde_json::Value>,
 }
 
 /// JWT claims for an ID token.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct IdTokenClaims {
     pub sub: String,
-    pub aud: String,
+    #[serde(with = "aud_serde")]
+    pub aud: serde_json::Value,
     pub iss: String,
     pub exp: i64,
     pub iat: i64,
@@ -170,6 +183,15 @@ pub struct IdTokenClaims {
     /// User groups. Included in ID tokens when available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub groups: Option<Vec<String>>,
+    /// Organizations selected by the granted organization scope.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organization: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub realm_access: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resource_access: Option<serde_json::Value>,
+    #[serde(flatten)]
+    pub custom_claims: serde_json::Map<String, serde_json::Value>,
 }
 
 /// A JWK (JSON Web Key) entry for JWKS endpoint — supports RSA and OKP (Ed25519).
@@ -1005,14 +1027,37 @@ impl TokenService for JwtTokenService {
         authorization_details: Option<&serde_json::Value>,
         resource: Option<&[String]>,
     ) -> Result<String, OidcError> {
+        self.issue_access_token_with_extra(
+            subject,
+            audience,
+            scopes,
+            dpop_jkt,
+            authorization_details,
+            resource,
+            None,
+        )
+        .await
+    }
+
+    async fn issue_access_token_with_extra(
+        &self,
+        subject: &str,
+        audience: &str,
+        scopes: &[String],
+        dpop_jkt: Option<&str>,
+        authorization_details: Option<&serde_json::Value>,
+        resource: Option<&[String]>,
+        extra: Option<AccessTokenExtraClaims>,
+    ) -> Result<String, OidcError> {
         let now = self.now();
         let cnf = dpop_jkt.map(|jkt| serde_json::json!({"jkt": jkt}));
+        let extra = extra.unwrap_or_default();
 
         // Build `aud` per RFC 8707:
         //   - No resource indicators → aud = client_id (string, backward compatible)
         //   - Resource indicators present → aud = [client_id, resource1, resource2, ...]
         //     and azp = client_id
-        let (aud, azp) = match resource {
+        let (mut aud, mut azp) = match resource {
             Some(resources) if !resources.is_empty() => {
                 let mut aud_arr = vec![serde_json::Value::String(audience.to_string())];
                 aud_arr.extend(
@@ -1030,6 +1075,19 @@ impl TokenService for JwtTokenService {
                 None,
             ),
         };
+        if !extra.additional_audiences.is_empty() {
+            let values = aud
+                .as_array_mut()
+                .expect("access-token audience is always an array");
+            for audience in &extra.additional_audiences {
+                if !values.iter().any(|value| value.as_str() == Some(audience)) {
+                    values.push(serde_json::Value::String(audience.clone()));
+                }
+            }
+            if values.len() > 1 {
+                azp = Some(audience.to_string());
+            }
+        }
 
         let claims = AccessTokenClaims {
             sub: subject.to_string(),
@@ -1037,10 +1095,15 @@ impl TokenService for JwtTokenService {
             iss: self.issuer.clone(),
             exp: now + self.access_token_ttl_secs,
             iat: now,
+            jti: Some(generate_opaque_token()?),
             scope: scopes.join(" "),
             azp,
             cnf,
             authorization_details: authorization_details.cloned(),
+            organization: extra.organization,
+            realm_access: extra.realm_access,
+            resource_access: extra.resource_access,
+            custom_claims: extra.custom_claims,
         };
         self.encode_jwt(&claims)
     }
@@ -1078,6 +1141,10 @@ impl TokenService for JwtTokenService {
             scope: claims.scope,
             cnf: claims.cnf,
             authorization_details: claims.authorization_details,
+            organization: claims.organization,
+            realm_access: claims.realm_access,
+            resource_access: claims.resource_access,
+            custom_claims: claims.custom_claims,
         })
     }
 
@@ -1103,7 +1170,20 @@ impl TokenService for JwtTokenService {
         let extra = extra.unwrap_or_default();
         let claims = IdTokenClaims {
             sub: subject.to_string(),
-            aud: audience.to_string(),
+            aud: if extra.additional_audiences.is_empty() {
+                serde_json::Value::String(audience.to_string())
+            } else {
+                let mut values = vec![serde_json::Value::String(audience.to_string())];
+                for additional in &extra.additional_audiences {
+                    if !values
+                        .iter()
+                        .any(|value| value.as_str() == Some(additional))
+                    {
+                        values.push(serde_json::Value::String(additional.clone()));
+                    }
+                }
+                serde_json::Value::Array(values)
+            },
             iss: self.issuer.clone(),
             exp: now + self.id_token_ttl_secs,
             iat: now,
@@ -1132,10 +1212,16 @@ impl TokenService for JwtTokenService {
             updated_at: extra.updated_at,
             acr: extra.acr,
             amr: extra.amr,
-            azp: extra.azp,
+            azp: extra
+                .azp
+                .or_else(|| (!extra.additional_audiences.is_empty()).then(|| audience.to_string())),
             address: extra.address,
             roles: extra.roles,
+            realm_access: extra.realm_access,
+            resource_access: extra.resource_access,
+            custom_claims: extra.custom_claims,
             groups: extra.groups,
+            organization: extra.organization,
         };
         self.encode_jwt(&claims)
     }
@@ -1421,10 +1507,15 @@ mod tests {
             iss: "https://test.example.com".to_string(),
             exp: now + 900,
             iat: now,
+            jti: None,
             scope: "openid".to_string(),
             azp: None,
             cnf: None,
             authorization_details: None,
+            organization: None,
+            realm_access: None,
+            resource_access: None,
+            custom_claims: serde_json::Map::new(),
         };
 
         let token = service.sign_eddsa(&claims).unwrap();
@@ -1450,10 +1541,15 @@ mod tests {
             iss: "https://test.example.com".to_string(),
             exp: now + 900,
             iat: now,
+            jti: None,
             scope: "openid".to_string(),
             azp: None,
             cnf: None,
             authorization_details: None,
+            organization: None,
+            realm_access: None,
+            resource_access: None,
+            custom_claims: serde_json::Map::new(),
         };
 
         let token = service.sign_eddsa(&claims).unwrap();
@@ -1481,6 +1577,85 @@ mod tests {
 
         let subject = service.verify_access_token(&token).await.unwrap();
         assert_eq!(subject, "user-rs256");
+    }
+
+    #[tokio::test]
+    async fn access_token_includes_organization_claim() {
+        let service = test_token_service();
+        let organization = serde_json::json!({
+            "acme": {"id": "01900000-0000-7000-8000-000000000001", "name": "Acme"}
+        });
+        let token = service
+            .issue_access_token_with_extra(
+                "user-1",
+                "client-1",
+                &["openid".into(), "organization:acme".into()],
+                None,
+                None,
+                None,
+                Some(AccessTokenExtraClaims {
+                    organization: Some(organization.clone()),
+                    ..Default::default()
+                }),
+            )
+            .await
+            .unwrap();
+        let claims: AccessTokenClaims = service.decode_jwt(&token).unwrap();
+        assert_eq!(claims.organization, Some(organization));
+    }
+
+    #[tokio::test]
+    async fn access_token_includes_realm_and_client_role_claims() {
+        let service = test_token_service();
+        let realm_access = serde_json::json!({"roles": ["employee"]});
+        let resource_access = serde_json::json!({"portal": {"roles": ["operator"]}});
+        let token = service
+            .issue_access_token_with_extra(
+                "user-1",
+                "portal",
+                &["openid".into(), "roles".into()],
+                None,
+                None,
+                None,
+                Some(AccessTokenExtraClaims {
+                    realm_access: Some(realm_access.clone()),
+                    resource_access: Some(resource_access.clone()),
+                    ..Default::default()
+                }),
+            )
+            .await
+            .unwrap();
+        let claims: AccessTokenClaims = service.decode_jwt(&token).unwrap();
+        assert_eq!(claims.realm_access, Some(realm_access));
+        assert_eq!(claims.resource_access, Some(resource_access));
+    }
+
+    #[tokio::test]
+    async fn mapped_claims_are_flattened_and_audiences_are_deduplicated() {
+        let service = test_token_service();
+        let token = service
+            .issue_access_token_with_extra(
+                "user-1",
+                "portal",
+                &["openid".into(), "employee".into()],
+                None,
+                None,
+                None,
+                Some(AccessTokenExtraClaims {
+                    custom_claims: serde_json::Map::from_iter([(
+                        "department".into(),
+                        serde_json::json!("engineering"),
+                    )]),
+                    additional_audiences: vec!["employee-api".into(), "employee-api".into()],
+                    ..Default::default()
+                }),
+            )
+            .await
+            .unwrap();
+        let claims: AccessTokenClaims = service.decode_jwt(&token).unwrap();
+        assert_eq!(claims.custom_claims["department"], "engineering");
+        assert_eq!(claims.aud, serde_json::json!(["portal", "employee-api"]));
+        assert_eq!(claims.azp.as_deref(), Some("portal"));
     }
 
     #[tokio::test]
@@ -1535,7 +1710,7 @@ mod tests {
         let now = service.now();
         let claims = IdTokenClaims {
             sub: "user-ed-id".to_string(),
-            aud: "my-client".to_string(),
+            aud: serde_json::Value::String("my-client".to_string()),
             iss: "https://test.example.com".to_string(),
             exp: now + 3600,
             iat: now,
@@ -1567,7 +1742,11 @@ mod tests {
             azp: None,
             address: None,
             roles: None,
+            realm_access: None,
+            resource_access: None,
             groups: None,
+            organization: None,
+            custom_claims: serde_json::Map::new(),
         };
 
         let token = service.sign_eddsa(&claims).unwrap();
@@ -1587,10 +1766,15 @@ mod tests {
             iss: "https://test.example.com".to_string(),
             exp: now + 900,
             iat: now,
+            jti: None,
             scope: "openid".to_string(),
             azp: None,
             cnf: None,
             authorization_details: None,
+            organization: None,
+            realm_access: None,
+            resource_access: None,
+            custom_claims: serde_json::Map::new(),
         };
 
         let token = service.sign_eddsa(&claims).unwrap();
@@ -1615,10 +1799,15 @@ mod tests {
             iss: "https://test.example.com".to_string(),
             exp: now + 900,
             iat: now,
+            jti: None,
             scope: "openid".to_string(),
             azp: None,
             cnf: None,
             authorization_details: None,
+            organization: None,
+            realm_access: None,
+            resource_access: None,
+            custom_claims: serde_json::Map::new(),
         };
 
         // Sign with RS256

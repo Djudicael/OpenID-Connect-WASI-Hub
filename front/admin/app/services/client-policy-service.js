@@ -1,0 +1,11 @@
+import { get, post, put, del } from '../core/http.js';
+const base = (realmId) => `/api/realms/${realmId}`;
+export const listProfiles = (realmId, signal) => get(`${base(realmId)}/client-policy-profiles`, signal);
+export const createProfile = (realmId, body) => post(`${base(realmId)}/client-policy-profiles`, body);
+export const updateProfile = (realmId, id, body) => put(`${base(realmId)}/client-policy-profiles/${id}`, body);
+export const deleteProfile = (realmId, id) => del(`${base(realmId)}/client-policy-profiles/${id}`);
+export const listPolicies = (realmId, signal) => get(`${base(realmId)}/client-policies`, signal);
+export const createPolicy = (realmId, body) => post(`${base(realmId)}/client-policies`, body);
+export const updatePolicy = (realmId, id, body) => put(`${base(realmId)}/client-policies/${id}`, body);
+export const deletePolicy = (realmId, id) => del(`${base(realmId)}/client-policies/${id}`);
+export const evaluatePolicies = (realmId, body) => post(`${base(realmId)}/client-policies/evaluate`, body);

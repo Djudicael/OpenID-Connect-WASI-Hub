@@ -4,6 +4,7 @@ use axum::http::HeaderMap;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
+use oidc_repository::repositories::authorization_service_repo::AuthorizationServiceRepo;
 use oidc_repository::repositories::session_repo::SessionRepo;
 use oidc_repository::repositories::user_repo::UserRepo;
 use oidc_repository::with_transaction;
@@ -61,20 +62,34 @@ pub async fn introspect_handler(
             Err(_) => return Ok(Json(json!({"active": false}))),
         };
 
-        // Look up the session by access token hash to confirm it is not revoked
-        let access_hash = oidc_core::utils::sha2_256_hex(token);
-        let session = match SessionRepo
-            .find_by_access_token_hash(&mut conn, &access_hash)
-            .await
-        {
-            Ok(Some(s)) if !s.revoked => s,
-            Ok(Some(_)) => return Ok(Json(json!({"active": false}))),
-            Ok(None) => return Ok(Json(json!({"active": false}))),
-            Err(e) => return Err(OidcErrorResponse::from_internal(e)),
-        };
-
-        if session.client_id != client.id {
-            return Ok(Json(json!({"active": false})));
+        // RPTs use their own durable grant record. Other access tokens use sessions.
+        if let Some(rpt_id) = claims.custom_claims.get("rpt_id").and_then(Value::as_str) {
+            let Ok(rpt_id) = uuid::Uuid::parse_str(rpt_id) else {
+                return Ok(Json(json!({"active": false})));
+            };
+            let grant = AuthorizationServiceRepo
+                .find_active_rpt(&mut conn, rpt_id)
+                .await
+                .map_err(OidcErrorResponse::from_internal)?;
+            let Some(grant) = grant else {
+                return Ok(Json(json!({"active": false})));
+            };
+            if grant.client_id != client.id && grant.resource_server_id != client.id {
+                return Ok(Json(json!({"active": false})));
+            }
+        } else {
+            let access_hash = oidc_core::utils::sha2_256_hex(token);
+            let session = match SessionRepo
+                .find_by_access_token_hash(&mut conn, &access_hash)
+                .await
+            {
+                Ok(Some(s)) if !s.revoked => s,
+                Ok(Some(_)) | Ok(None) => return Ok(Json(json!({"active": false}))),
+                Err(e) => return Err(OidcErrorResponse::from_internal(e)),
+            };
+            if session.client_id != client.id {
+                return Ok(Json(json!({"active": false})));
+            }
         }
 
         // Look up the user by sub to get the email for the `username` field
@@ -131,6 +146,27 @@ pub async fn introspect_handler(
             && let Some(obj) = response.as_object_mut()
         {
             obj.insert("authorization_details".to_string(), auth_details);
+        }
+
+        if let Some(organization) = claims.organization
+            && let Some(obj) = response.as_object_mut()
+        {
+            obj.insert("organization".to_string(), organization);
+        }
+        if let Some(realm_access) = claims.realm_access
+            && let Some(obj) = response.as_object_mut()
+        {
+            obj.insert("realm_access".to_string(), realm_access);
+        }
+        if let Some(resource_access) = claims.resource_access
+            && let Some(obj) = response.as_object_mut()
+        {
+            obj.insert("resource_access".to_string(), resource_access);
+        }
+        if let Some(obj) = response.as_object_mut() {
+            for (name, value) in claims.custom_claims {
+                obj.insert(name, value);
+            }
         }
 
         Ok(Json(response))

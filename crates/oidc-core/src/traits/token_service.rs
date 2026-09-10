@@ -6,6 +6,10 @@ use async_trait::async_trait;
 /// Claims to include in an ID token.
 #[derive(Debug, Clone, Default)]
 pub struct IdTokenExtraClaims {
+    /// Additional top-level claims produced by assigned client-scope mappers.
+    pub custom_claims: serde_json::Map<String, serde_json::Value>,
+    /// Additional audiences produced by assigned client-scope mappers.
+    pub additional_audiences: Vec<String>,
     /// `nonce` from the authorization request.
     pub nonce: Option<String>,
     /// `at_hash` — left-half hash of access token.
@@ -66,8 +70,29 @@ pub struct IdTokenExtraClaims {
     pub address: Option<crate::models::AddressClaim>,
     /// User roles (RBAC). Included when the client has `roles` scope or always for ID tokens.
     pub roles: Option<Vec<String>>,
+    /// Effective realm roles in Keycloak-compatible shape.
+    pub realm_access: Option<serde_json::Value>,
+    /// Effective client roles keyed by OAuth client identifier.
+    pub resource_access: Option<serde_json::Value>,
     /// User groups. Included when the client has `groups` scope or always for ID tokens.
     pub groups: Option<Vec<String>>,
+    /// Organizations selected by the granted `organization` scope.
+    pub organization: Option<serde_json::Value>,
+}
+
+/// Optional claims to include in an access token.
+#[derive(Debug, Clone, Default)]
+pub struct AccessTokenExtraClaims {
+    /// Additional top-level claims produced by assigned client-scope mappers.
+    pub custom_claims: serde_json::Map<String, serde_json::Value>,
+    /// Additional audiences produced by assigned client-scope mappers.
+    pub additional_audiences: Vec<String>,
+    /// Organizations selected by the granted `organization` scope.
+    pub organization: Option<serde_json::Value>,
+    /// Effective realm roles in Keycloak-compatible shape.
+    pub realm_access: Option<serde_json::Value>,
+    /// Effective client roles keyed by OAuth client identifier.
+    pub resource_access: Option<serde_json::Value>,
 }
 
 /// Verified access token claims returned by the token service.
@@ -91,6 +116,14 @@ pub struct VerifiedAccessToken {
     pub cnf: Option<serde_json::Value>,
     /// RFC 9396 RAR authorization details granted to this token.
     pub authorization_details: Option<serde_json::Value>,
+    /// Organizations selected when the token was issued.
+    pub organization: Option<serde_json::Value>,
+    /// Effective realm roles.
+    pub realm_access: Option<serde_json::Value>,
+    /// Effective client roles.
+    pub resource_access: Option<serde_json::Value>,
+    /// Additional claims carried by the access token.
+    pub custom_claims: serde_json::Map<String, serde_json::Value>,
 }
 
 /// Abstract token issuance and verification service.
@@ -110,6 +143,28 @@ pub trait TokenService: Send + Sync {
         authorization_details: Option<&serde_json::Value>,
         resource: Option<&[String]>,
     ) -> Result<String, OidcError>;
+
+    /// Issue an access token with optional application claims.
+    async fn issue_access_token_with_extra(
+        &self,
+        subject: &str,
+        audience: &str,
+        scopes: &[String],
+        dpop_jkt: Option<&str>,
+        authorization_details: Option<&serde_json::Value>,
+        resource: Option<&[String]>,
+        _extra: Option<AccessTokenExtraClaims>,
+    ) -> Result<String, OidcError> {
+        self.issue_access_token(
+            subject,
+            audience,
+            scopes,
+            dpop_jkt,
+            authorization_details,
+            resource,
+        )
+        .await
+    }
 
     /// Verify an access token and return the subject.
     async fn verify_access_token(&self, token: &str) -> Result<String, OidcError>;

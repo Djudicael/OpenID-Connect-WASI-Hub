@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 /// Column list for role SELECT queries (order must match RoleRepo::map_row indices).
 const ROLE_COLUMNS: &str = r#"
-    r.id, r.realm_id, r.name, r.description, r.permissions, r.created_at, r.updated_at
+    r.id, r.realm_id, r.name, r.description, r.permissions, r.created_at, r.updated_at, r.client_id
 "#;
 
 /// PostgreSQL implementation of the Group-Role assignment repository.
@@ -72,6 +72,7 @@ impl GroupRoleRepo {
             permissions: mapper::json_string_vec(row, 4)?,
             created_at: mapper::datetime(row, 5)?,
             updated_at: mapper::datetime(row, 6)?,
+            client_id: mapper::opt_uuid(row, 7)?,
         })
     }
 }
