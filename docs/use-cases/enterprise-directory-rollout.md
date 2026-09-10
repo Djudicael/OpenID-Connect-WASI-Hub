@@ -1,44 +1,61 @@
 # Use case: connect an enterprise directory
 
-[Documentation home](../README.md) · [User federation](../user-federation.md) · [Federation gateway](../federation-gateway-api.md)
+[Documentation home](../README.md) · [User federation](../user-federation.md)
 
 Use this journey when LDAP or Active Directory remains the source of employee identities and passwords, or when browsers use Kerberos sign-in.
 
 ## Outcome
 
-Directory users authenticate in the realm without copying their passwords into the hub, selected profile and group data synchronize, and directory outages have a tested response.
+Directory users authenticate in the realm without copying their passwords into the hub. Selected profile and group data synchronize, and operators have tested how sign-in behaves during a directory outage.
 
-## A. Prepare the connection
+## A. Prepare the directory
 
-1. Deploy the federation gateway where it can reach the directory.
-2. Store directory bind credentials or Kerberos keytabs in the gateway.
-3. Protect the gateway with HTTPS and a long shared secret.
-4. Test the gateway's connection, authentication, user-listing, and Kerberos operations before onboarding users.
+1. Create a read-only service account that can search the required users and attributes.
+2. Choose a stable identifier: `entryUUID` for LDAP or `objectGUID` for Active Directory.
+3. Identify the base DN, login filter, synchronization filter, and profile and group attributes.
+4. Enable LDAPS or StartTLS and collect the public CA certificate when the directory uses a private CA.
+5. Select a small pilot group that includes an enabled user, a disabled user, and representative group memberships.
+
+For Kerberos, deploy and validate the [federation gateway](../federation-gateway-api.md) with access to its service key before continuing.
 
 ## B. Configure the provider
 
-1. Open **User Federation**, select the realm, and add LDAP, Active Directory, or Kerberos.
-2. Enter the gateway address and shared secret.
-3. Configure the base DN, filter, stable external ID, username, email, profile, and group mappings.
-4. Enable user import and group synchronization only when local records are required.
+1. Open **User Federation**, select the realm, and add LDAP or Active Directory.
+2. Choose **Direct directory connection**, enter the directory URL, and enter the service-account bind password.
+3. Configure the base DN, bind DN, filters, stable ID, username, email, profile, and group attributes.
+4. Enable user import and group synchronization.
 5. Save and choose **Test**.
 
 ![Configured enterprise directory providers](../assets/user-federation/providers.png)
 
-## C. Pilot and synchronize
+For Kerberos, choose **Federation gateway** and enter its HTTPS URL and shared secret.
 
-Test with a small directory group. Confirm first login, profile mapping, group membership, realm roles inherited through groups, MFA, and required actions. Run **Sync** and verify updates use the stable external ID even after a username change.
+## C. Run the pilot
 
-Enable email linking only after confirming that the directory controls and verifies those addresses. Test duplicate email handling before broad synchronization.
+1. Sign in as a pilot user and confirm that the account is linked without a local password.
+2. Confirm mapped profile values, custom attributes, and group memberships.
+3. Confirm realm roles inherited through synchronized groups.
+4. Confirm that MFA and required actions still run after directory authentication.
+5. Run **Sync**, rename a pilot user's username or DN in the directory, and confirm that the stable ID updates the existing account.
+6. Confirm that a disabled Active Directory user cannot sign in.
 
-## D. Test failure and removal
+Enable `link_existing_users` only after confirming that the directory controls the email namespace. Test a duplicate email before synchronizing the full population.
 
-Disable the provider and confirm the expected sign-in failure without deleting imported records. Test an invalid password, unavailable gateway, disabled directory user, removed group, and clock or keytab failure for Kerberos. Define whether departed users are disabled by synchronization or by a separate lifecycle workflow.
+## D. Prepare operations
+
+1. Test an incorrect user password and an expired service-account password.
+2. Block directory network access briefly and confirm that local or other enabled providers behave as expected.
+3. Test an invalid and wrong-host TLS certificate in a non-production environment.
+4. Record how to replace the bind password and private CA certificate.
+5. Disable the provider and confirm that linked records remain while directory sign-in stops.
+6. For Kerberos, also test clock skew, an expired service key, and a rejected Negotiate ticket.
+
+The current synchronization updates and adds users and memberships. Use lifecycle workflows or your directory event process to disable departed users; do not assume that a user missing from one synchronization run is automatically disabled.
 
 ## Completion check
 
-- Passwords and keytabs exist only in the systems that need them.
-- Login, synchronization, rename, disablement, and group removal pass end to end.
-- Provider priority and duplicate-account behavior are documented.
-- Operators know how to disable the provider and inspect Audit during an outage.
-
+- The connection test succeeds over the selected encrypted transport.
+- Correct and incorrect passwords produce the expected result.
+- Stable IDs preserve links across username, email, and DN changes.
+- Imported attributes and group access have been reviewed.
+- Duplicate email, disabled account, outage, and credential-rotation behavior is documented for operators.

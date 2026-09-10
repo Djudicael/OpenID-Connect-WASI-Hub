@@ -32,6 +32,8 @@ oidc-admin-wasi = { version = "0.1.0", path = "crates/oidc-admin-wasi" }
 # Async / WASI
 wstd = "0.6"
 wstd-axum = "0.6"
+wasip3 = "0.8"
+futures-concurrency = "7"
 
 # Web
 axum = { version = "0.8", default-features = false, features = ["json", "matched-path", "original-uri", "query", "tower-log", "tracing"] }
@@ -52,6 +54,8 @@ wasi-pg-client = "0.2.1"
 getrandom = "0.4"
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
 webpki-roots = "0.26"
+lber = "0.5.1"
+bytes = "1"
 sha2 = "0.10"
 rsa = { version = "0.9", features = ["sha2", "pem"] }
 ed25519-dalek = { version = "2", features = ["pkcs8"] }

@@ -5,6 +5,7 @@
 #![allow(missing_docs)]
 
 pub mod client_policies;
+pub mod direct_ldap;
 pub mod endpoints;
 pub mod errors;
 pub mod federation;

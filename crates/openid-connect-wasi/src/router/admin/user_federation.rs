@@ -30,7 +30,9 @@ pub struct ProviderRequest {
     enabled: bool,
     #[serde(default)]
     priority: i32,
+    #[serde(alias = "connection_url")]
     gateway_url: String,
+    #[serde(alias = "bind_password")]
     gateway_secret: Option<String>,
     #[serde(default = "empty_object")]
     config: Value,
@@ -75,6 +77,8 @@ fn provider_json(provider: &UserFederationProvider, count: Option<i64>) -> Value
         "id": provider.id, "realm_id": provider.realm_id, "name": provider.name,
         "provider_type": provider.provider_type, "enabled": provider.enabled,
         "priority": provider.priority, "gateway_url": provider.gateway_url,
+        "connection_url": provider.gateway_url,
+        "connection_mode": if provider.uses_direct_directory() { "direct" } else { "gateway" },
         "gateway_secret_configured": !provider.gateway_secret.is_empty(), "config": provider.config,
         "import_users": provider.import_users, "sync_groups": provider.sync_groups,
         "last_sync_at": provider.last_sync_at, "last_sync_status": provider.last_sync_status,
@@ -133,12 +137,25 @@ pub async fn create(
     if let Err(response) = validate_public_config(&request.config) {
         return response;
     }
+    let normalized_url = request.gateway_url.to_ascii_lowercase();
+    let direct = normalized_url.starts_with("ldap://")
+        || normalized_url.starts_with("ldaps://")
+        || normalized_url.starts_with("ldap+starttls://");
+    let anonymous_bind = request
+        .config
+        .get("bind_dn")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .is_empty();
     let secret = match request.gateway_secret.filter(|value| !value.is_empty()) {
         Some(value) => match state.encrypt_sensitive_value(value.as_bytes()) {
             Ok(value) => value,
             Err(_) => return internal_error(),
         },
-        None => return invalid("gateway_secret is required"),
+        None if direct && anonymous_bind => String::new(),
+        None if direct => return invalid("bind_password is required when bind_dn is configured"),
+        None => return invalid("gateway_secret is required for gateway connections"),
     };
     let now = Utc::now();
     let provider = UserFederationProvider {
@@ -222,6 +239,7 @@ pub async fn update(
     if let Err(response) = validate_public_config(&request.config) {
         return response;
     }
+    let was_direct = provider.uses_direct_directory();
     provider.name = request.name;
     provider.provider_type = request.provider_type;
     provider.enabled = request.enabled;
@@ -230,11 +248,25 @@ pub async fn update(
     provider.config = request.config;
     provider.import_users = request.import_users;
     provider.sync_groups = request.sync_groups;
+    let is_direct = provider.uses_direct_directory();
+    let anonymous_bind = provider
+        .config
+        .get("bind_dn")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .is_empty();
     if let Some(secret) = request.gateway_secret.filter(|value| !value.is_empty()) {
         provider.gateway_secret = match state.encrypt_sensitive_value(secret.as_bytes()) {
             Ok(value) => value,
             Err(_) => return internal_error(),
         };
+    } else if was_direct != is_direct {
+        if is_direct && anonymous_bind {
+            provider.gateway_secret.clear();
+        } else {
+            return invalid("a new credential is required when changing connection mode");
+        }
     }
     if let Err(error) = provider.validate() {
         return invalid(&error.to_string());

@@ -20,12 +20,12 @@ test('capture the user federation guide', async ({ page }) => {
     await call(`/api/user-federation/${provider.id}`, { method: 'DELETE' });
   }
   const samples = [
-    ['Corporate LDAP', 'ldap', 10, { connection: 'corporate-ldap', base_dn: 'ou=people,dc=example,dc=com', user_filter: '(uid={identifier})' }],
-    ['Company Active Directory', 'active_directory', 20, { connection: 'company-ad', base_dn: 'dc=example,dc=com', user_filter: '(|(userPrincipalName={identifier})(sAMAccountName={identifier}))' }],
-    ['Desktop SSO', 'kerberos', 30, { connection: 'company-ad', service_principal: 'HTTP/login.example.com@EXAMPLE.COM' }],
+    ['Corporate LDAP', 'ldap', 10, 'ldaps://ldap.example.com:636', { bind_dn: 'cn=oidc-service,ou=service,dc=example,dc=com', base_dn: 'ou=people,dc=example,dc=com', user_filter: '(uid={identifier})' }],
+    ['Company Active Directory', 'active_directory', 20, 'ldaps://ad.example.com:636', { bind_dn: 'CN=OIDC Service,OU=Service Accounts,DC=example,DC=com', base_dn: 'dc=example,dc=com', user_filter: '(|(userPrincipalName={identifier})(sAMAccountName={identifier}))' }],
+    ['Desktop SSO', 'kerberos', 30, 'https://federation.example.com', { connection: 'company-ad', service_principal: 'HTTP/login.example.com@EXAMPLE.COM' }],
   ];
-  for (const [name, provider_type, priority, config] of samples) {
-    await call('/api/user-federation', { method: 'POST', data: { realm_id: realmId, name, provider_type, priority, gateway_url: 'https://federation.example.com', gateway_secret: 'documentation-placeholder-secret', config, enabled: true, import_users: true, sync_groups: true } });
+  for (const [name, provider_type, priority, gateway_url, config] of samples) {
+    await call('/api/user-federation', { method: 'POST', data: { realm_id: realmId, name, provider_type, priority, gateway_url, gateway_secret: 'documentation-placeholder-secret', config, enabled: true, import_users: true, sync_groups: true } });
   }
   await page.goto('/user-federation');
   await expect(page.getByRole('heading', { name: 'User Federation' })).toBeVisible();

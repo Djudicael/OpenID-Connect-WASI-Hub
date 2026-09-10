@@ -84,6 +84,12 @@ impl std::fmt::Debug for UserFederationProvider {
 }
 
 impl UserFederationProvider {
+    pub fn uses_direct_directory(&self) -> bool {
+        url::Url::parse(&self.gateway_url)
+            .map(|url| matches!(url.scheme(), "ldap" | "ldaps" | "ldap+starttls"))
+            .unwrap_or(false)
+    }
+
     pub fn validate(&self) -> Result<(), OidcError> {
         if self.name.trim().is_empty() {
             return Err(OidcError::InvalidInput("name must not be empty".into()));
@@ -91,9 +97,22 @@ impl UserFederationProvider {
         let parsed = url::Url::parse(&self.gateway_url)
             .map_err(|_| OidcError::InvalidInput("gateway_url must be a valid URL".into()))?;
         let local = matches!(parsed.host_str(), Some("localhost" | "127.0.0.1" | "::1"));
-        if parsed.scheme() != "https" && !(parsed.scheme() == "http" && local) {
+        let allow_insecure_ldap = self
+            .config
+            .get("allow_insecure_transport")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let valid_transport = matches!(parsed.scheme(), "https" | "ldaps" | "ldap+starttls")
+            || (parsed.scheme() == "http" && local)
+            || (parsed.scheme() == "ldap" && (local || allow_insecure_ldap));
+        if !valid_transport {
             return Err(OidcError::InvalidInput(
-                "gateway_url must use HTTPS except for localhost".into(),
+                "connection URL must use HTTPS or LDAPS; plain HTTP/LDAP is restricted to localhost unless allow_insecure_transport is enabled".into(),
+            ));
+        }
+        if self.uses_direct_directory() && self.provider_type == UserFederationType::Kerberos {
+            return Err(OidcError::InvalidInput(
+                "Kerberos providers require a federation gateway URL".into(),
             ));
         }
         if !self.config.is_object() {
@@ -218,5 +237,33 @@ mod tests {
         let output = format!("{provider:?}");
         assert!(output.contains("[REDACTED]"));
         assert!(!output.contains("never-log-this"));
+    }
+
+    #[test]
+    fn direct_ldap_requires_tls_or_explicit_insecure_transport() {
+        let mut provider = UserFederationProvider {
+            id: Uuid::new_v4(),
+            realm_id: Uuid::new_v4(),
+            name: "Directory".into(),
+            provider_type: UserFederationType::Ldap,
+            enabled: true,
+            priority: 0,
+            gateway_url: "ldap://directory.example.com:389".into(),
+            gateway_secret: String::new(),
+            config: serde_json::json!({"base_dn":"dc=example,dc=com"}),
+            import_users: true,
+            sync_groups: true,
+            last_sync_at: None,
+            last_sync_status: None,
+            last_sync_error: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        assert!(provider.validate().is_err());
+        provider.config["allow_insecure_transport"] = serde_json::json!(true);
+        assert!(provider.validate().is_ok());
+        provider.gateway_url = "ldaps://directory.example.com:636".into();
+        assert!(provider.validate().is_ok());
+        assert!(provider.uses_direct_directory());
     }
 }

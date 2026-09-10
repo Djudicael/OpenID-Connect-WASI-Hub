@@ -53,6 +53,10 @@ pub async fn test_provider(
     state: &OidcState,
     provider: &UserFederationProvider,
 ) -> Result<GatewayTestResponse, OidcError> {
+    if provider.uses_direct_directory() {
+        let message = crate::direct_ldap::test_connection(state, provider).await?;
+        return Ok(GatewayTestResponse { ok: true, message });
+    }
     gateway_post(
         state,
         provider,
@@ -75,6 +79,9 @@ pub async fn authenticate(
     identifier: &str,
     password: &str,
 ) -> Result<Option<DirectoryUser>, OidcError> {
+    if provider.uses_direct_directory() {
+        return crate::direct_ldap::authenticate(state, provider, identifier, password).await;
+    }
     let response: AuthenticationResponse = gateway_post(
         state,
         provider,
@@ -133,6 +140,10 @@ pub async fn list_gateway_users(
     provider: &UserFederationProvider,
     cursor: Option<&str>,
 ) -> Result<GatewayUsersResponse, OidcError> {
+    if provider.uses_direct_directory() {
+        let (users, next_cursor) = crate::direct_ldap::list_users(state, provider, cursor).await?;
+        return Ok(GatewayUsersResponse { users, next_cursor });
+    }
     let response: GatewayUsersResponse = gateway_post(
         state,
         provider,
