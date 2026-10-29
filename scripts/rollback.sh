@@ -144,7 +144,7 @@ if curl -sf "${HEALTH_URL}" &>/dev/null; then
     echo "Health check: OK ✓"
 else
     echo "WARNING: Health check failed. The service may not be running."
-    echo "  - Start the service: wasmtime run --wasi inherit-network --wasi inherit-env ${ACTIVE_WASM}"
+    echo "  - Start the service: wasmtime serve -W component-model-async=y -S p3=y -S cli=y -S inherit-network=y -S inherit-env=y -S tcp=y -S allow-ip-name-lookup=y ${ACTIVE_WASM}"
     echo "  - Undo rollback: cp ${CURRENT_BACKUP} ${ACTIVE_WASM}"
 fi
 

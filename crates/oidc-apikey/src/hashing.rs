@@ -51,6 +51,23 @@ mod tests {
     }
 
     #[test]
+    fn verify_secret_rejects_same_length_mutations_at_every_position() {
+        let secret = "oidc_prod.abcd1234.ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijkl";
+        let hash = hash_secret(secret).expect("hashing should succeed");
+        let secret_offset = secret.rfind('.').unwrap() + 1;
+
+        for index in secret_offset..secret.len() {
+            let mut altered = secret.as_bytes().to_vec();
+            altered[index] = if altered[index] == b'a' { b'b' } else { b'a' };
+            let altered = String::from_utf8(altered).unwrap();
+            assert!(
+                !verify_secret(&altered, &hash).expect("verification should succeed"),
+                "a secret altered at position {index} must be rejected"
+            );
+        }
+    }
+
+    #[test]
     fn verify_secret_rejects_malformed_hash() {
         let err = verify_secret("test-secret", "not-a-password-hash")
             .expect_err("malformed hashes should be rejected");

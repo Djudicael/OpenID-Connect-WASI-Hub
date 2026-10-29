@@ -385,18 +385,28 @@ pub fn admin_or_forbidden(auth: &AdminAuth) -> Option<Response> {
         .then(|| (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))).into_response())
 }
 
+/// A requested realm is outside the caller's administrative scope.
+#[derive(Debug)]
+pub struct RealmScopeError;
+
+impl IntoResponse for RealmScopeError {
+    fn into_response(self) -> Response {
+        (StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))).into_response()
+    }
+}
+
 /// Resolve a requested realm against the caller's authenticated realm.
 /// User and API-key administrators cannot read or mutate another realm.
 pub fn scoped_realm(
     auth: &AdminAuth,
     requested: Option<uuid::Uuid>,
-) -> Result<Option<uuid::Uuid>, Response> {
+) -> Result<Option<uuid::Uuid>, RealmScopeError> {
     if auth.is_global_admin() {
         return Ok(requested);
     }
     match (auth.realm_id, requested) {
         (Some(auth_realm), Some(requested_realm)) if auth_realm != requested_realm => {
-            Err((StatusCode::FORBIDDEN, Json(json!({"error": "forbidden"}))).into_response())
+            Err(RealmScopeError)
         }
         (Some(auth_realm), None) => Ok(Some(auth_realm)),
         (_, requested) => Ok(requested),
@@ -404,7 +414,9 @@ pub fn scoped_realm(
 }
 
 pub fn realm_or_forbidden(auth: &AdminAuth, realm_id: uuid::Uuid) -> Option<Response> {
-    scoped_realm(auth, Some(realm_id)).err()
+    scoped_realm(auth, Some(realm_id))
+        .err()
+        .map(IntoResponse::into_response)
 }
 
 pub async fn connect(state: &AppState) -> Result<Connection, Response> {
@@ -418,5 +430,36 @@ pub async fn connect(state: &AppState) -> Result<Connection, Response> {
             )
                 .into_response())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn scoped_realm_preserves_realm_boundary_and_forbidden_response() {
+        let realm_id = uuid::Uuid::new_v4();
+        let auth = AdminAuth {
+            subject: "test-admin".into(),
+            is_api_key: true,
+            realm_id: Some(realm_id),
+            permissions: vec!["admin".into()],
+            route_authorized: true,
+        };
+        assert_eq!(scoped_realm(&auth, None).unwrap(), Some(realm_id));
+        assert_eq!(scoped_realm(&auth, Some(realm_id)).unwrap(), Some(realm_id));
+
+        let response = scoped_realm(&auth, Some(uuid::Uuid::new_v4()))
+            .unwrap_err()
+            .into_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            json!({"error": "forbidden"})
+        );
     }
 }

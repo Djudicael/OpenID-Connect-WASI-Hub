@@ -53,7 +53,7 @@ pub async fn list(
     }
     let realm_id = match scoped_realm(&auth, query.realm_id) {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     let mut conn = match connect(&state).await {
         Ok(c) => c,

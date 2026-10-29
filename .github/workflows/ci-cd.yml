@@ -19,6 +19,7 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   FRONTEND_DIR: front/admin
+  RUST_TEST_THREADS: "4"
 
 jobs:
   security:
@@ -31,6 +32,8 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.96.0"
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -39,11 +42,26 @@ jobs:
         run: cargo install --locked cargo-deny
 
       - name: Run cargo-deny security and policy checks
-        run: cargo deny check advisories bans licenses sources
+        run: cargo deny --locked check advisories bans licenses sources
 
   validate:
     name: Validate workspace and build artifacts
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: oidc_smoke
+          POSTGRES_PASSWORD: runtime-smoke-only
+          POSTGRES_DB: oidc_smoke
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U oidc_smoke"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - name: Check out repository
@@ -53,7 +71,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-wasip2
-          components: rustfmt
+          components: rustfmt, clippy
+          toolchain: "1.96.0"
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -76,13 +95,38 @@ jobs:
         working-directory: ${{ env.FRONTEND_DIR }}
         run: npm run build
 
-      - name: Run Rust tests
-        run: cargo test --workspace --exclude integration-tests
+      - name: Check Rust with strict Clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: Run Rust unit tests
+        run: cargo test --locked --workspace --exclude integration-tests
+
+      - name: Test patched cryptographic dependencies
+        run: |
+          cargo test --locked --manifest-path patches/passkey-auth/Cargo.toml --lib --tests
+          cargo test --locked --manifest-path patches/saml/Cargo.toml --lib
 
       - name: Build release WASM artifacts
         run: |
-          cargo build -p oidc-admin-wasi --target wasm32-wasip2 --release
-          cargo build -p openid-connect-wasi --target wasm32-wasip2 --release
+          cargo build --locked -p oidc-admin-wasi --target wasm32-wasip2 --release
+          cargo build --locked -p openid-connect-wasi --target wasm32-wasip2 --release
+
+      - name: Check WASI Rust with strict Clippy
+        run: cargo clippy --locked -p openid-connect-wasi -p oidc-admin-wasi -p oidc-wasi-http --target wasm32-wasip2 --lib --examples -- -D warnings
+
+      - name: Install Wasmtime 48.0.1
+        run: |
+          curl -fsSL https://github.com/bytecodealliance/wasmtime/releases/download/v48.0.1/wasmtime-v48.0.1-x86_64-linux.tar.xz -o /tmp/wasmtime.tar.xz
+          echo "4c2e31b68ad99e0a519f225a261fda099eb15f056d4a24fdb3c2a46517bde1df  /tmp/wasmtime.tar.xz" | sha256sum --check
+          tar -xJf /tmp/wasmtime.tar.xz -C /tmp
+          echo "/tmp/wasmtime-v48.0.1-x86_64-linux" >> "$GITHUB_PATH"
+
+      - name: Verify WASI P3 HTTP and PostgreSQL at runtime
+        env:
+          OIDC_DATABASE_URL: postgresql://oidc_smoke:runtime-smoke-only@127.0.0.1:5432/oidc_smoke?sslmode=disable
+        run: |
+          cargo build --locked -p oidc-wasi-http --example http-client-smoke --target wasm32-wasip2 --release
+          cargo run --locked -p oidc-wasm-dev -- runtime-test --skip-build
 
       - name: Upload frontend package
         uses: actions/upload-artifact@v7
@@ -125,6 +169,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-wasip2
+          toolchain: "1.96.0"
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2

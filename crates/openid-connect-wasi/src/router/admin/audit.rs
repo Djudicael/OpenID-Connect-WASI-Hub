@@ -55,7 +55,7 @@ pub async fn stats_handler(
     }
     let realm_id = match scoped_realm(&auth, query.realm_id) {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     let mut conn = match connect(&state).await {
         Ok(c) => c,
@@ -129,7 +129,7 @@ pub async fn list_sessions(
     }
     let realm_id = match scoped_realm(&auth, query.realm_id) {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     let mut conn = match connect(&state).await {
         Ok(c) => c,
@@ -237,7 +237,7 @@ pub async fn list(
     }
     let realm_id = match scoped_realm(&auth, query.realm_id) {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     let mut conn = match connect(&state).await {
         Ok(c) => c,
@@ -268,11 +268,12 @@ pub async fn list(
             &mut conn,
             query.limit,
             query.offset,
-            event_type_filter,
-            actor_id_ref,
-            realm_id,
-            None,
-            None,
+            oidc_repository::repositories::audit_event_repo::AuditEventFilter {
+                event_type: event_type_filter,
+                actor_id: actor_id_ref,
+                realm_id,
+                ..Default::default()
+            },
         )
         .await
     {
@@ -888,7 +889,7 @@ pub async fn list_roles(
     }
     let realm_id = match scoped_realm(&auth, query.realm_id) {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     let mut conn = match connect(&state).await {
         Ok(c) => c,
@@ -1356,7 +1357,7 @@ pub async fn list_groups(
     }
     let realm_id = match scoped_realm(&auth, query.realm_id) {
         Ok(value) => value,
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     let mut conn = match connect(&state).await {
         Ok(c) => c,

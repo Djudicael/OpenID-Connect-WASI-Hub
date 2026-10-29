@@ -1272,6 +1272,9 @@ async fn per_realm_login_page_handler(
 
                 try {{
                     const email = document.getElementById('email').value;
+                    const authorization = returnTo
+                        ? new URL(decodeURIComponent(returnTo), window.location.origin).searchParams
+                        : new URLSearchParams();
                     const discoveryResponse = await fetch('/realms/' + encodeURIComponent(realmName) +
                         '/organization/identity-provider?email=' + encodeURIComponent(email));
                     if (discoveryResponse.ok) {{
@@ -1299,7 +1302,9 @@ async fn per_realm_login_page_handler(
                         body: JSON.stringify({{
                             email: document.getElementById('email').value,
                             password: pwInput.value,
-                            realm: realmName
+                            realm: realmName,
+                            client_id: authorization.get('client_id') || undefined,
+                            requested_scopes: (authorization.get('scope') || '').split(' ').filter(Boolean)
                         }})
                     }});
                     const data = await res.json();

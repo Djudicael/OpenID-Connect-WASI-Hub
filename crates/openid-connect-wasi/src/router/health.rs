@@ -81,7 +81,7 @@ async fn check_database_unbounded(state: &AppState) -> bool {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-async fn run_with_timeout<F>(timeout: Duration, future: F) -> Option<F::Output>
+pub(crate) async fn run_with_timeout<F>(timeout: Duration, future: F) -> Option<F::Output>
 where
     F: Future,
 {
@@ -89,15 +89,15 @@ where
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn run_with_timeout<F>(timeout: Duration, future: F) -> Option<F::Output>
+pub(crate) async fn run_with_timeout<F>(timeout: Duration, future: F) -> Option<F::Output>
 where
     F: Future,
 {
     use std::task::Poll;
 
     let mut future = std::pin::pin!(future);
-    let timer = wstd::time::Timer::after(timeout.into());
-    let mut timeout_wait = std::pin::pin!(timer.wait());
+    let duration = timeout.as_nanos().min(u64::MAX as u128) as u64;
+    let mut timeout_wait = std::pin::pin!(wasip3::clocks::monotonic_clock::wait_for(duration));
 
     std::future::poll_fn(|cx| {
         if let Poll::Ready(output) = future.as_mut().poll(cx) {

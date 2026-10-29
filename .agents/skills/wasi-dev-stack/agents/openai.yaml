@@ -1,0 +1,4 @@
+interface:
+  display_name: "WASI Dev Stack CLI"
+  short_description: "oidc-dev and oidc-wasm-dev local stacks"
+  default_prompt: "Use $wasi-dev-stack to run or change the Hub's local environment CLIs."

@@ -2,7 +2,6 @@
 **/*.rs.bk
 *.wasm
 *.wasm.gz
-Cargo.lock
 .DS_Store
 node_modules/
 dist/

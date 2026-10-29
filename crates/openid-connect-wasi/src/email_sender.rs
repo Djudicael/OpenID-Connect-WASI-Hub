@@ -48,15 +48,14 @@ impl ResendEmailSender {
 
         #[cfg(target_arch = "wasm32")]
         {
-            let request = wstd::http::Request::post(&self.endpoint)
+            let request = oidc_wasi_http::Request::post(&self.endpoint)
                 .header("Authorization", format!("Bearer {}", self.api_key))
                 .header("Content-Type", "application/json")
-                .body(wstd::http::Body::from(body.into_bytes()))
+                .body(oidc_wasi_http::Body::from(body.into_bytes()))
                 .map_err(|error| {
                     OidcError::Internal(format!("email request build failed: {error}"))
                 })?;
-            let response = wstd::http::Client::new()
-                .send(request)
+            let response = oidc_wasi_http::send(request)
                 .await
                 .map_err(|error| OidcError::Internal(format!("email request failed: {error}")))?;
             if !response.status().is_success() {

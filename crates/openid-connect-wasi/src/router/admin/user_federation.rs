@@ -63,11 +63,11 @@ fn config_contains_secret(value: &Value) -> bool {
     }
 }
 
-fn validate_public_config(config: &Value) -> Result<(), Response> {
+fn validate_public_config(config: &Value) -> Result<(), &'static str> {
     if config_contains_secret(config) {
-        return Err(invalid(
+        return Err(
             "store directory passwords, credentials, and keytabs in the federation gateway",
-        ));
+        );
     }
     Ok(())
 }
@@ -134,8 +134,8 @@ pub async fn create(
     if let Some(response) = realm_or_forbidden(&auth, request.realm_id) {
         return response;
     }
-    if let Err(response) = validate_public_config(&request.config) {
-        return response;
+    if let Err(message) = validate_public_config(&request.config) {
+        return invalid(message);
     }
     let normalized_url = request.gateway_url.to_ascii_lowercase();
     let direct = normalized_url.starts_with("ldap://")
@@ -236,8 +236,8 @@ pub async fn update(
     if request.realm_id != provider.realm_id {
         return invalid("realm cannot be changed");
     }
-    if let Err(response) = validate_public_config(&request.config) {
-        return response;
+    if let Err(message) = validate_public_config(&request.config) {
+        return invalid(message);
     }
     let was_direct = provider.uses_direct_directory();
     provider.name = request.name;

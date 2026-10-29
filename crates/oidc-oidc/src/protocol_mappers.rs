@@ -28,7 +28,7 @@ pub async fn resolve_mapped_claims(
     let mappers = ProtocolMapperRepo
         .list_active_for_client(conn, client_id, granted_scopes)
         .await?;
-    let effective_roles = if user.is_some()
+    let effective_roles = if let Some(user) = user
         && mappers.iter().any(|mapper| {
             matches!(
                 mapper.mapper_type,
@@ -36,7 +36,7 @@ pub async fn resolve_mapped_claims(
             )
         }) {
         RoleRepo
-            .find_effective_names_by_user_id(conn, user.unwrap().id)
+            .find_effective_names_by_user_id(conn, user.id)
             .await?
     } else {
         Vec::new()

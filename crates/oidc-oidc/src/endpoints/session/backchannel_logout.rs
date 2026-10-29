@@ -100,12 +100,10 @@ pub fn issue_logout_token(
 /// with `Content-Type: application/x-www-form-urlencoded` and the token
 /// in the `logout_token` form parameter.
 ///
-/// In WASI Preview 2, we use `wstd::http::Client` for outbound HTTP.
-/// If the HTTP client is not available (e.g., in test environments),
-/// the delivery is skipped and logged as a warning.
+/// WASI components send outbound HTTP through the asynchronous P3 client.
+/// Delivery errors are returned to the caller for logging and reporting.
 pub async fn send_backchannel_logout(uri: &str, logout_token: &str) -> BackchannelLogoutResult {
     // Send the logout token via HTTP POST
-    // In WASI P2, we use wstd's HTTP client for outbound requests
     let result = send_logout_token_http(uri, logout_token).await;
 
     match result {
@@ -135,7 +133,7 @@ pub async fn send_backchannel_logout(uri: &str, logout_token: &str) -> Backchann
 /// The request uses `Content-Type: application/x-www-form-urlencoded`
 /// with the `logout_token` parameter per Back-Channel Logout §7.
 ///
-/// On native targets, uses `reqwest`. On WASI, uses `wstd` HTTP client.
+/// On native targets, uses `reqwest`. On WASI, uses the P3 HTTP client.
 async fn send_logout_token_http(uri: &str, logout_token: &str) -> Result<u16, String> {
     // Build the form body
     let body = format!("logout_token={}", urlencoding::encode(logout_token));
@@ -155,14 +153,12 @@ async fn send_logout_token_http(uri: &str, logout_token: &str) -> Result<u16, St
 
     #[cfg(target_arch = "wasm32")]
     {
-        let request = wstd::http::Request::post(uri)
+        let request = oidc_wasi_http::Request::post(uri)
             .header("Content-Type", "application/x-www-form-urlencoded")
-            .body(wstd::http::Body::from(body))
+            .body(oidc_wasi_http::Body::from(body))
             .map_err(|e| format!("Failed to build request: {e}"))?;
 
-        let client = wstd::http::Client::new();
-        let response = client
-            .send(request)
+        let response = oidc_wasi_http::send(request)
             .await
             .map_err(|e| format!("HTTP request failed: {e}"))?;
 

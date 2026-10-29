@@ -1,5 +1,6 @@
 use ed25519_dalek::SigningKey;
 use oidc_core::errors::OidcError;
+use oidc_core::models::signing_key::Algorithm;
 use oidc_core::traits::Clock;
 use oidc_core::traits::token_service::{AccessTokenExtraClaims, IdTokenExtraClaims, TokenService};
 use oidc_core::utils::generate_opaque_token;
@@ -234,6 +235,7 @@ pub struct JwtTokenService {
     ed_signing_key: SigningKey,
     ed_kid: String,
     access_token_ttl_secs: i64,
+    access_token_algorithm: Algorithm,
     id_token_ttl_secs: i64,
     clock: Arc<dyn Clock>,
 }
@@ -247,6 +249,7 @@ impl Clone for JwtTokenService {
             ed_signing_key: self.ed_signing_key.clone(),
             ed_kid: self.ed_kid.clone(),
             access_token_ttl_secs: self.access_token_ttl_secs,
+            access_token_algorithm: self.access_token_algorithm,
             id_token_ttl_secs: self.id_token_ttl_secs,
             clock: Arc::new(oidc_core::traits::clock::SystemClock),
         }
@@ -263,6 +266,7 @@ impl JwtTokenService {
             ed_signing_key: self.ed_signing_key.clone(),
             ed_kid: self.ed_kid.clone(),
             access_token_ttl_secs: self.access_token_ttl_secs,
+            access_token_algorithm: self.access_token_algorithm,
             id_token_ttl_secs: self.id_token_ttl_secs,
             clock: Arc::new(oidc_core::traits::clock::SystemClock),
         }
@@ -315,6 +319,7 @@ impl JwtTokenService {
             ed_signing_key,
             ed_kid,
             access_token_ttl_secs: 900,
+            access_token_algorithm: configured_access_token_algorithm()?,
             id_token_ttl_secs: 3600,
             clock: Arc::new(oidc_core::traits::clock::SystemClock),
         })
@@ -333,6 +338,7 @@ impl JwtTokenService {
             ed_signing_key,
             ed_kid,
             access_token_ttl_secs: 900,
+            access_token_algorithm: configured_access_token_algorithm()?,
             id_token_ttl_secs: 3600,
             clock,
         })
@@ -363,9 +369,17 @@ impl JwtTokenService {
             ed_signing_key,
             ed_kid: ed25519_kid.to_string(),
             access_token_ttl_secs: 900,
+            access_token_algorithm: configured_access_token_algorithm()?,
             id_token_ttl_secs: 3600,
             clock: Arc::new(oidc_core::traits::clock::SystemClock),
         })
+    }
+
+    /// Override access-token signing for an explicitly configured application.
+    /// ID, logout, and other token families retain their existing algorithms.
+    pub fn with_access_token_algorithm(mut self, algorithm: Algorithm) -> Self {
+        self.access_token_algorithm = algorithm;
+        self
     }
 
     /// Build a JWKS from public key components (no private key needed).
@@ -979,6 +993,25 @@ pub fn verify_client_secret_jwt(
     Ok(claims)
 }
 
+fn parse_access_token_algorithm(value: Option<&str>) -> Result<Algorithm, OidcError> {
+    match value {
+        None | Some("RS256") => Ok(Algorithm::Rs256),
+        Some("EdDSA") => Ok(Algorithm::EdDSA),
+        _ => Err(OidcError::Internal(
+            "OIDC_ACCESS_TOKEN_SIGNING_ALG must be RS256 or EdDSA".into(),
+        )),
+    }
+}
+fn configured_access_token_algorithm() -> Result<Algorithm, OidcError> {
+    match std::env::var("OIDC_ACCESS_TOKEN_SIGNING_ALG") {
+        Ok(value) => parse_access_token_algorithm(Some(&value)),
+        Err(std::env::VarError::NotPresent) => parse_access_token_algorithm(None),
+        Err(_) => Err(OidcError::Internal(
+            "invalid OIDC_ACCESS_TOKEN_SIGNING_ALG".into(),
+        )),
+    }
+}
+
 fn load_rsa_key(pem_override: Option<&str>) -> Result<(RsaPrivateKey, String), OidcError> {
     let pem = match pem_override {
         Some(p) => p.to_string(),
@@ -1105,7 +1138,10 @@ impl TokenService for JwtTokenService {
             resource_access: extra.resource_access,
             custom_claims: extra.custom_claims,
         };
-        self.encode_jwt(&claims)
+        match self.access_token_algorithm {
+            Algorithm::Rs256 => self.encode_jwt(&claims),
+            Algorithm::EdDSA => self.encode_jwt_eddsa(&claims),
+        }
     }
 
     async fn verify_access_token(&self, token: &str) -> Result<String, OidcError> {
@@ -1271,6 +1307,54 @@ mod tests {
             }
         });
         JwtTokenService::new("https://test.example.com").unwrap()
+    }
+
+    #[test]
+    fn access_token_algorithm_configuration_is_explicit_and_bounded() {
+        assert_eq!(
+            parse_access_token_algorithm(None).unwrap(),
+            Algorithm::Rs256
+        );
+        assert_eq!(
+            parse_access_token_algorithm(Some("EdDSA")).unwrap(),
+            Algorithm::EdDSA
+        );
+        for value in ["", "none", "HS256", "ES256"] {
+            assert!(parse_access_token_algorithm(Some(value)).is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn eddsa_access_tokens_keep_policy_and_clone_with_realm_issuer() {
+        let service = test_token_service().with_access_token_algorithm(Algorithm::EdDSA);
+        for service in [
+            service.clone(),
+            service.clone_with_issuer("https://test.example.com/realms/agents"),
+        ] {
+            let token = service
+                .issue_access_token(
+                    "worker",
+                    "agentic-coordinator",
+                    &["agentic:dispatch".into()],
+                    None,
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+            let (header, claims, _, _) =
+                JwtTokenService::parse_client_assertion_unverified(&token).unwrap();
+            assert_eq!(header.alg, "EdDSA");
+            assert_eq!(claims.iss, service.issuer);
+            assert_eq!(service.verify_access_token(&token).await.unwrap(), "worker");
+            let legacy = service
+                .encode_jwt(&serde_json::json!({"sub":"legacy"}))
+                .unwrap();
+            let header: serde_json::Value =
+                serde_json::from_slice(&b64_decode(legacy.split('.').next().unwrap()).unwrap())
+                    .unwrap();
+            assert_eq!(header["alg"], "RS256");
+        }
     }
 
     #[tokio::test]

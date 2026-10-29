@@ -100,6 +100,19 @@ async fn authenticate_kerberos_directory(
     Ok(None)
 }
 
+/// Credentials and authentication options for a password login.
+pub struct PasswordFlowRequest<'a> {
+    pub email: &'a str,
+    pub password: &'a str,
+    pub client_id: Option<&'a str>,
+    pub realm_name: Option<&'a str>,
+    pub dpop_jkt: Option<&'a str>,
+    pub mfa_proof: Option<&'a LoginMfaProof>,
+    pub requested_scopes: &'a [String],
+    pub requested_acr_values: &'a [String],
+    pub kerberos_token: Option<&'a str>,
+}
+
 impl PasswordFlow {
     /// Execute the password flow.
     ///
@@ -110,16 +123,19 @@ impl PasswordFlow {
     /// key via a `cnf.jkt` claim and `token_type` is `"DPoP"` (RFC 9449).
     pub async fn execute(
         state: &OidcState,
-        email: &str,
-        password: &str,
-        client_id: Option<&str>,
-        realm_name: Option<&str>,
-        dpop_jkt: Option<&str>,
-        mfa_proof: Option<&LoginMfaProof>,
-        requested_scopes: &[String],
-        requested_acr_values: &[String],
-        kerberos_token: Option<&str>,
+        request: PasswordFlowRequest<'_>,
     ) -> Result<PasswordFlowOutcome, OidcError> {
+        let PasswordFlowRequest {
+            email,
+            password,
+            client_id,
+            realm_name,
+            dpop_jkt,
+            mfa_proof,
+            requested_scopes,
+            requested_acr_values,
+            kerberos_token,
+        } = request;
         // --- Input validation ---
         if kerberos_token.is_none() && (email.trim().is_empty() || email.len() > 320) {
             return Err(OidcError::AuthenticationFailed(

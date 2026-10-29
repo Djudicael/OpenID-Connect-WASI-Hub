@@ -10,6 +10,7 @@
 //!   cargo run -p oidc-wasm-dev -- status   # Show status
 //!   cargo run -p oidc-wasm-dev -- test     # Run smoke tests against a running WASM server
 //!   cargo run -p oidc-wasm-dev -- smoke    # One-shot start → smoke tests → shutdown
+//!   cargo run -p oidc-wasm-dev -- runtime-test  # Verify P3 HTTP, PostgreSQL and deadlines
 //!   cargo run -p oidc-wasm-dev -- e2e      # Run Playwright E2E against the running WASM proxy
 //!
 //! Dev Credentials (seeded on first start):
@@ -31,6 +32,8 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
+
+mod runtime_tests;
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 
@@ -174,11 +177,12 @@ async fn main() -> Result<()> {
         "status" => cmd_status(&state).await,
         "test" => cmd_test(&state).await,
         "smoke" => cmd_smoke(&state).await,
+        "runtime-test" => runtime_tests::run(&state, &extra_args).await,
         "seed" => cmd_seed().await,
         "e2e" => cmd_e2e(extra_args).await,
         _ => {
             eprintln!(
-                "Usage: cargo run -p oidc-wasm-dev -- [start|stop|status|test|smoke|seed|e2e]"
+                "Usage: cargo run -p oidc-wasm-dev -- [start|stop|status|test|smoke|runtime-test [--skip-build]|seed|e2e]"
             );
             std::process::exit(1);
         }
@@ -1157,6 +1161,7 @@ async fn build_wasm_package(package: &str) -> Result<()> {
     let build = Command::new("cargo")
         .args([
             "build",
+            "--locked",
             "-p",
             package,
             "--target",
@@ -1188,6 +1193,21 @@ fn wasm_component_path(package: &str) -> String {
 
 // ─── Wasmtime Serve ─────────────────────────────────────────────────────────
 
+fn wasmtime_serve_command(bind_address: &str, port: u16) -> Command {
+    let mut command = Command::new("wasmtime");
+    command
+        .arg("serve")
+        .args(["-W", "component-model-async=y"])
+        .arg("--addr")
+        .arg(format!("{bind_address}:{port}"))
+        .args(["--max-instance-reuse-count", "1000"])
+        .args(["--idle-instance-timeout", "300s"])
+        .args(["-S", "cli=y", "-S", "p3=y"])
+        .args(["-S", "inherit-env=y", "-S", "inherit-network=y"])
+        .args(["-S", "tcp=y", "-S", "allow-ip-name-lookup=y"]);
+    command
+}
+
 async fn start_backend_wasmtime(state: &Arc<Mutex<WasmDevState>>) -> Result<()> {
     let port = {
         let s = state.lock().await;
@@ -1212,29 +1232,8 @@ async fn start_backend_wasmtime(state: &Arc<Mutex<WasmDevState>>) -> Result<()> 
 
     info!("Starting backend WASM via wasmtime serve on port {port}...");
 
-    let mut cmd = Command::new("wasmtime");
-    cmd.arg("serve")
-        .arg("-W")
-        .arg("component-model-async=y")
-        .arg("--addr")
-        .arg(format!("{BIND_ADDRESS}:{port}"))
-        .arg("--max-instance-reuse-count")
-        .arg("1000")
-        .arg("--idle-instance-timeout")
-        .arg("300s")
-        .arg("-S")
-        .arg("cli=y")
-        .arg("-S")
-        .arg("p3=y")
-        .arg("-S")
-        .arg("inherit-env=y")
-        .arg("-S")
-        .arg("inherit-network=y")
-        .arg("-S")
-        .arg("tcp=y")
-        .arg("-S")
-        .arg("allow-ip-name-lookup=y")
-        .arg("--env")
+    let mut cmd = wasmtime_serve_command(BIND_ADDRESS, port);
+    cmd.arg("--env")
         .arg(format!("OIDC_DATABASE_URL={}", &db_url))
         .arg("--env")
         .arg(format!("OIDC_SERVER_PORT={}", port))
@@ -1295,25 +1294,8 @@ async fn start_frontend_wasmtime(state: &Arc<Mutex<WasmDevState>>) -> Result<()>
 
     info!("Starting frontend WASM via wasmtime serve on port {port}...");
 
-    let mut cmd = Command::new("wasmtime");
-    cmd.arg("serve")
-        .arg("--addr")
-        .arg(format!("{BIND_ADDRESS}:{port}"))
-        .arg("--max-instance-reuse-count")
-        .arg("1000")
-        .arg("--idle-instance-timeout")
-        .arg("300s")
-        .arg("-S")
-        .arg("cli=y")
-        .arg("-S")
-        .arg("inherit-env=y")
-        .arg("-S")
-        .arg("inherit-network=y")
-        .arg("-S")
-        .arg("tcp=y")
-        .arg("-S")
-        .arg("allow-ip-name-lookup=y")
-        .arg("--env")
+    let mut cmd = wasmtime_serve_command(BIND_ADDRESS, port);
+    cmd.arg("--env")
         .arg("RUST_LOG=trace")
         .arg(&wasm_path)
         .stdout(Stdio::piped())

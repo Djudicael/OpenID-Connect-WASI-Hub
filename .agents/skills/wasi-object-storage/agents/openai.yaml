@@ -1,0 +1,4 @@
+interface:
+  display_name: "WASI Object Storage"
+  short_description: "Adding S3/RustFS storage over oidc-wasi-http"
+  default_prompt: "Use $wasi-object-storage before introducing object storage to the Hub."

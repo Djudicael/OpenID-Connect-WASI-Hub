@@ -52,22 +52,12 @@ impl Default for RealmLocalization {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(default)]
 pub struct EmailTemplate {
     pub subject: String,
     pub text: String,
     pub html: String,
-}
-
-impl Default for EmailTemplate {
-    fn default() -> Self {
-        Self {
-            subject: String::new(),
-            text: String::new(),
-            html: String::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -100,10 +90,10 @@ impl RealmPresentation {
         let mut presentation: Self =
             serde_json::from_value(Self::config_value(config)).unwrap_or_default();
         // Preserve the original theme field name used by older realms.
-        if presentation.theme.background_color == RealmTheme::default().background_color {
-            if let Some(value) = config.pointer("/theme/bg_color").and_then(|v| v.as_str()) {
-                presentation.theme.background_color = value.into();
-            }
+        if presentation.theme.background_color == RealmTheme::default().background_color
+            && let Some(value) = config.pointer("/theme/bg_color").and_then(|v| v.as_str())
+        {
+            presentation.theme.background_color = value.into();
         }
         presentation
     }
@@ -246,10 +236,10 @@ impl RealmPresentation {
             });
         let choose = |field: &str, fallback: &str| -> String {
             custom
-                .and_then(|t| match field {
-                    "subject" => Some(&t.subject),
-                    "text" => Some(&t.text),
-                    _ => Some(&t.html),
+                .map(|t| match field {
+                    "subject" => &t.subject,
+                    "text" => &t.text,
+                    _ => &t.html,
                 })
                 .filter(|v| !v.is_empty())
                 .cloned()

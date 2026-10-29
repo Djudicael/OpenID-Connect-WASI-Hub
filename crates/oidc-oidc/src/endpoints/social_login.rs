@@ -488,20 +488,24 @@ pub async fn social_login_callback_handler(
             .await;
     }
 
-    let organization =
-        match crate::organization_claims::resolve_organization_claim(&mut conn, user.id, &scopes)
-            .await
-        {
-            Ok(value) => value,
-            Err(error) => {
-                tracing::warn!("Failed to resolve social-login organization claim: {error}");
-                return (
-                    axum::http::StatusCode::FORBIDDEN,
-                    "Requested organization membership is unavailable",
-                )
-                    .into_response();
-            }
-        };
+    let organization = match crate::organization_claims::resolve_organization_claim(
+        &mut conn,
+        user.id,
+        local_client.id,
+        &scopes,
+    )
+    .await
+    {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::warn!("Failed to resolve social-login organization claim: {error}");
+            return (
+                axum::http::StatusCode::FORBIDDEN,
+                "Requested organization membership is unavailable",
+            )
+                .into_response();
+        }
+    };
     let role_claims = match crate::role_claims::resolve_role_claims(&mut conn, user.id).await {
         Ok(value) => value,
         Err(error) => {
@@ -855,20 +859,20 @@ async fn exchange_code_for_tokens(
 
     #[cfg(target_arch = "wasm32")]
     {
-        let request = wstd::http::Request::post(&provider.token_url)
+        let request = oidc_wasi_http::Request::post(&provider.token_url)
             .header("Content-Type", "application/x-www-form-urlencoded")
-            .body(wstd::http::Body::from(body.into_bytes()))
+            .body(oidc_wasi_http::Body::from(body.into_bytes()))
             .map_err(|e| oidc_core::OidcError::Internal(format!("Request build failed: {e}")))?;
 
-        let mut response = wstd::http::Client::new().send(request).await.map_err(|e| {
+        let response = oidc_wasi_http::send(request).await.map_err(|e| {
             oidc_core::OidcError::Internal(format!("Upstream token request failed: {e}"))
         })?;
 
-        let body_bytes = response.body_mut().contents().await.map_err(|e| {
+        let body_bytes = oidc_wasi_http::read_body(response).await.map_err(|e| {
             oidc_core::OidcError::Internal(format!("Upstream token body read failed: {e}"))
         })?;
 
-        let json: serde_json::Value = serde_json::from_slice(body_bytes).map_err(|e| {
+        let json: serde_json::Value = serde_json::from_slice(&body_bytes).map_err(|e| {
             oidc_core::OidcError::Internal(format!("Upstream token response parse failed: {e}"))
         })?;
 
@@ -905,20 +909,20 @@ async fn get_upstream_userinfo(
     #[cfg(target_arch = "wasm32")]
     {
         let _state = state; // suppress unused warning
-        let request = wstd::http::Request::get(&provider.userinfo_url)
+        let request = oidc_wasi_http::Request::get(&provider.userinfo_url)
             .header("Authorization", format!("Bearer {}", access_token))
-            .body(wstd::http::Body::from(Vec::new()))
+            .body(oidc_wasi_http::Body::from(Vec::new()))
             .map_err(|e| oidc_core::OidcError::Internal(format!("Request build failed: {e}")))?;
 
-        let mut response = wstd::http::Client::new().send(request).await.map_err(|e| {
+        let response = oidc_wasi_http::send(request).await.map_err(|e| {
             oidc_core::OidcError::Internal(format!("Upstream userinfo request failed: {e}"))
         })?;
 
-        let body_bytes = response.body_mut().contents().await.map_err(|e| {
+        let body_bytes = oidc_wasi_http::read_body(response).await.map_err(|e| {
             oidc_core::OidcError::Internal(format!("Upstream userinfo body read failed: {e}"))
         })?;
 
-        let json: serde_json::Value = serde_json::from_slice(body_bytes).map_err(|e| {
+        let json: serde_json::Value = serde_json::from_slice(&body_bytes).map_err(|e| {
             oidc_core::OidcError::Internal(format!("Upstream userinfo parse failed: {e}"))
         })?;
 

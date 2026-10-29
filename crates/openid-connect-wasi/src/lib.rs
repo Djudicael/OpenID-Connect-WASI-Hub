@@ -29,16 +29,23 @@ pub fn app_router_with_config(config: state::AppConfig) -> Router {
     server::starter::build_router_with_config(config)
 }
 
-/// WASI P2 HTTP server entry point — only compiled when targeting wasm32.
 #[cfg(target_arch = "wasm32")]
-#[wstd_axum::http_server]
-fn main() -> Router {
-    // Initialize tracing so logs are emitted to stderr (visible via wasmtime)
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .try_init();
-    app_router()
+wasip3::http::service::export!(HttpServer);
+
+#[cfg(target_arch = "wasm32")]
+struct HttpServer;
+
+#[cfg(target_arch = "wasm32")]
+impl wasip3::exports::http::handler::Guest for HttpServer {
+    async fn handle(
+        request: wasip3::http::types::Request,
+    ) -> Result<wasip3::http::types::Response, wasip3::http::types::ErrorCode> {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+            )
+            .try_init();
+        oidc_wasi_http::handle(app_router(), request).await
+    }
 }

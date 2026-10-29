@@ -368,29 +368,26 @@ async fn gateway_post<T: for<'de> Deserialize<'de>>(
 
     #[cfg(target_arch = "wasm32")]
     {
-        let request = wstd::http::Request::post(url)
+        let request = oidc_wasi_http::Request::post(url)
             .header("content-type", "application/json")
             .header("authorization", format!("Bearer {secret}"))
-            .body(wstd::http::Body::from(payload))
+            .body(oidc_wasi_http::Body::from(payload))
             .map_err(|error| {
                 OidcError::Internal(format!("federation gateway request build failed: {error}"))
             })?;
-        let mut response = wstd::http::Client::new()
-            .send(request)
-            .await
-            .map_err(|error| {
-                OidcError::Internal(format!("federation gateway request failed: {error}"))
-            })?;
+        let response = oidc_wasi_http::send(request).await.map_err(|error| {
+            OidcError::Internal(format!("federation gateway request failed: {error}"))
+        })?;
         if !response.status().is_success() {
             return Err(OidcError::Internal(format!(
                 "federation gateway returned HTTP {}",
                 response.status()
             )));
         }
-        let bytes = response.body_mut().contents().await.map_err(|error| {
+        let bytes = oidc_wasi_http::read_body(response).await.map_err(|error| {
             OidcError::Internal(format!("federation gateway response read failed: {error}"))
         })?;
-        serde_json::from_slice(bytes).map_err(|error| {
+        serde_json::from_slice(&bytes).map_err(|error| {
             OidcError::Internal(format!("invalid federation gateway response: {error}"))
         })
     }

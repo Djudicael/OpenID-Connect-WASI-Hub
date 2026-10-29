@@ -1,0 +1,4 @@
+interface:
+  display_name: "WASI Testing"
+  short_description: "Hub unit, integration, P3 runtime, and e2e tests"
+  default_prompt: "Use $wasi-testing to test and verify this Hub change."

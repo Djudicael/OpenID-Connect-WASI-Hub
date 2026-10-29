@@ -30,6 +30,7 @@ fn disclosed_attributes(attributes: &Value, names: &[String]) -> Map<String, Val
 pub async fn resolve_organization_claim(
     conn: &mut Connection,
     user_id: Uuid,
+    client_id: Uuid,
     scopes: &[String],
 ) -> Result<Option<Value>, OidcError> {
     let has_any = scopes.iter().any(|scope| scope == ORGANIZATION_SCOPE);
@@ -70,6 +71,14 @@ pub async fn resolve_organization_claim(
 
     for organization in organizations {
         if has_any || all_requested || aliases.contains(organization.alias.as_str()) {
+            if claim.len() >= 16 {
+                return Err(OidcError::InvalidScope(
+                    "organization claim limit exceeded; select an organization".into(),
+                ));
+            }
+            let authorization = OrganizationRepo
+                .find_user_authorization(conn, organization.id, user_id, client_id)
+                .await?;
             let (groups, roles) = OrganizationRepo
                 .find_user_group_names_and_roles(conn, organization.id, user_id)
                 .await?;
@@ -85,6 +94,7 @@ pub async fn resolve_organization_claim(
                     "attributes": attributes,
                     "groups": groups,
                     "roles": roles,
+                    "authorization": authorization,
                 }),
             );
         }

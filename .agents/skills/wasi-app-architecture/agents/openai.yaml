@@ -1,0 +1,4 @@
+interface:
+  display_name: "WASI App Architecture"
+  short_description: "Hub crates, boundaries, and library choices"
+  default_prompt: "Use $wasi-app-architecture to decide where this Hub feature belongs and how to structure it."

@@ -50,7 +50,7 @@ impl Organization {
         if self
             .claim_attribute_names
             .iter()
-            .any(|name| name.is_empty() || name.len() > 100 || !self.attributes.get(name).is_some())
+            .any(|name| name.is_empty() || name.len() > 100 || self.attributes.get(name).is_none())
         {
             return Err(OidcError::InvalidInput(
                 "claim attribute names must reference organization attributes".into(),

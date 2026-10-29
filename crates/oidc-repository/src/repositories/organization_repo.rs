@@ -425,6 +425,40 @@ impl OrganizationRepo {
         Ok((groups, roles))
     }
 
+    /// Stable, requesting-client-qualified authorization; legacy role names are not grants.
+    pub async fn find_user_authorization(
+        &self,
+        conn: &mut Connection,
+        organization_id: Uuid,
+        user_id: Uuid,
+        client_id: Uuid,
+    ) -> Result<serde_json::Value, OidcError> {
+        let teams = conn.query_params(
+            "SELECT DISTINCT g.id::text,g.name FROM organization_groups og JOIN organizations o ON o.id=og.organization_id AND o.enabled AND o.deleted_at IS NULL JOIN organization_memberships om ON om.organization_id=o.id AND om.user_id=$2 JOIN users u ON u.id=om.user_id AND u.realm_id=o.realm_id AND u.enabled AND u.deleted_at IS NULL JOIN groups g ON g.id=og.group_id AND g.realm_id=o.realm_id AND g.deleted_at IS NULL JOIN user_groups ug ON ug.group_id=g.id AND ug.user_id=u.id JOIN clients c ON c.id=$3 AND c.realm_id=o.realm_id AND c.enabled AND c.deleted_at IS NULL WHERE o.id=$1 ORDER BY g.id::text LIMIT 65", &[&organization_id,&user_id,&client_id]
+        ).await.map_err(mapper::pg_err)?.into_rows();
+        let roles = conn.query_params(
+            "SELECT DISTINCT r.id::text,r.name FROM organization_groups og JOIN organizations o ON o.id=og.organization_id AND o.enabled AND o.deleted_at IS NULL JOIN organization_memberships om ON om.organization_id=o.id AND om.user_id=$2 JOIN users u ON u.id=om.user_id AND u.realm_id=o.realm_id AND u.enabled AND u.deleted_at IS NULL JOIN groups g ON g.id=og.group_id AND g.realm_id=o.realm_id AND g.deleted_at IS NULL JOIN user_groups ug ON ug.group_id=g.id AND ug.user_id=u.id JOIN group_roles gr ON gr.group_id=g.id JOIN roles r ON r.id=gr.role_id AND r.client_id=$3 AND r.realm_id=o.realm_id AND r.deleted_at IS NULL JOIN clients c ON c.id=$3 AND c.realm_id=o.realm_id AND c.enabled AND c.deleted_at IS NULL WHERE o.id=$1 ORDER BY r.id::text LIMIT 65", &[&organization_id,&user_id,&client_id]
+        ).await.map_err(mapper::pg_err)?.into_rows();
+        if teams.len() > 64 || roles.len() > 64 {
+            return Err(OidcError::InvalidScope(
+                "organization authorization exceeds team/role limit".into(),
+            ));
+        }
+        let teams = teams
+            .iter()
+            .map(|row| {
+                Ok(serde_json::json!({"id":mapper::string(row,0)?,"name":mapper::string(row,1)?}))
+            })
+            .collect::<Result<Vec<_>, OidcError>>()?;
+        let roles = roles
+            .iter()
+            .map(|row| {
+                Ok(serde_json::json!({"id":mapper::string(row,0)?,"name":mapper::string(row,1)?}))
+            })
+            .collect::<Result<Vec<_>, OidcError>>()?;
+        Ok(serde_json::json!({"version":1,"client_id":client_id,"teams":teams,"roles":roles}))
+    }
+
     pub async fn list_memberships_for_user(
         &self,
         conn: &mut Connection,
@@ -449,7 +483,7 @@ impl OrganizationRepo {
         user_id: Uuid,
     ) -> Result<Vec<Organization>, OidcError> {
         let sql = "SELECT o.id, o.realm_id, o.name, o.alias, o.enabled, o.attributes, \
-                    o.redirect_url, o.created_at, o.updated_at FROM organizations o \
+                    o.claim_attribute_names, o.redirect_url, o.created_at, o.updated_at FROM organizations o \
              JOIN organization_memberships om ON om.organization_id = o.id \
              WHERE om.user_id = $1 AND o.enabled = TRUE AND o.deleted_at IS NULL \
              ORDER BY o.alias";

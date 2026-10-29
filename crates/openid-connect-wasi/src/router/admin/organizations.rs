@@ -330,10 +330,10 @@ pub async fn update(
     if let Some(name) = request.name {
         organization.name = name.trim().to_string();
     }
-    if let Some(alias) = request.alias {
-        if alias.trim().to_ascii_lowercase() != organization.alias {
-            return invalid("organization alias is immutable");
-        }
+    if let Some(alias) = request.alias
+        && alias.trim().to_ascii_lowercase() != organization.alias
+    {
+        return invalid("organization alias is immutable");
     }
     if let Some(enabled) = request.enabled {
         organization.enabled = enabled;

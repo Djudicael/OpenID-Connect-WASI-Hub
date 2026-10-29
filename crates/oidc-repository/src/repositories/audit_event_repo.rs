@@ -7,6 +7,16 @@ use uuid::Uuid;
 /// PostgreSQL implementation of the AuditEvent repository.
 pub struct AuditEventRepo;
 
+/// Optional filters for listing recent audit events across realms.
+#[derive(Default)]
+pub struct AuditEventFilter<'a> {
+    pub event_type: Option<&'a str>,
+    pub actor_id: Option<&'a Uuid>,
+    pub realm_id: Option<Uuid>,
+    pub from: Option<chrono::DateTime<chrono::Utc>>,
+    pub to: Option<chrono::DateTime<chrono::Utc>>,
+}
+
 impl AuditEventRepo {
     /// Find an audit event by its primary key.
     pub async fn find_by_id(
@@ -125,12 +135,15 @@ impl AuditEventRepo {
         conn: &mut Connection,
         limit: i64,
         offset: i64,
-        event_type: Option<&str>,
-        actor_id: Option<&Uuid>,
-        realm_id: Option<Uuid>,
-        from: Option<chrono::DateTime<chrono::Utc>>,
-        to: Option<chrono::DateTime<chrono::Utc>>,
+        filter: AuditEventFilter<'_>,
     ) -> Result<Vec<AuditEvent>, OidcError> {
+        let AuditEventFilter {
+            event_type,
+            actor_id,
+            realm_id,
+            from,
+            to,
+        } = filter;
         let mut where_clauses: Vec<String> = Vec::new();
         let mut param_idx = 1usize;
 

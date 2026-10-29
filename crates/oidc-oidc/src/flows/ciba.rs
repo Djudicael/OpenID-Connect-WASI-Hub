@@ -89,9 +89,10 @@ impl CibaFlow {
                 user.id.to_string()
             };
             let scopes = request.scope.clone();
-            let organization =
-                crate::organization_claims::resolve_organization_claim(&mut conn, user.id, &scopes)
-                    .await?;
+            let organization = crate::organization_claims::resolve_organization_claim(
+                &mut conn, user.id, client.id, &scopes,
+            )
+            .await?;
             let roles = crate::role_claims::resolve_role_claims(&mut conn, user.id).await?;
             let mapped = crate::protocol_mappers::resolve_mapped_claims(
                 &mut conn,

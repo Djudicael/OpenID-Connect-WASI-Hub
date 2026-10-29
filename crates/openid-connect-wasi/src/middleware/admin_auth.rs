@@ -166,9 +166,9 @@ fn route_is_authorized(method: &Method, path: &str, auth: &AdminAuth) -> bool {
         } else {
             "clients:write"
         }
-    } else if path.starts_with("/api/realms/") && path.ends_with("/export") {
-        "realms:read"
-    } else if path.starts_with("/api/realms/") && path.ends_with("/email-template-preview") {
+    } else if path.starts_with("/api/realms/")
+        && (path.ends_with("/export") || path.ends_with("/email-template-preview"))
+    {
         "realms:read"
     } else if path == "/api/realms" || path.starts_with("/api/realms/") {
         if read { "realms:read" } else { "realms:write" }

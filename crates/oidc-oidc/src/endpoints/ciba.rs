@@ -178,10 +178,7 @@ pub async fn authentication_request(
 
     let notification_token = params.get("client_notification_token").cloned();
     if config.delivery_mode == "ping" {
-        if notification_token
-            .as_ref()
-            .is_none_or(|v| v.as_bytes().len() < 16)
-        {
+        if notification_token.as_ref().is_none_or(|v| v.len() < 16) {
             return Err(OidcErrorResponse::invalid_request(
                 "ping mode requires a high-entropy client_notification_token",
             ));
@@ -416,13 +413,12 @@ async fn send_ping(uri: &str, token: &str, auth_req_id: &str) -> Result<(), Stri
     }
     #[cfg(target_arch = "wasm32")]
     {
-        let request = wstd::http::Request::post(uri)
+        let request = oidc_wasi_http::Request::post(uri)
             .header("Authorization", format!("Bearer {token}"))
             .header("Content-Type", "application/json")
-            .body(wstd::http::Body::from(body))
+            .body(oidc_wasi_http::Body::from(body))
             .map_err(|e| e.to_string())?;
-        let response = wstd::http::Client::new()
-            .send(request)
+        let response = oidc_wasi_http::send(request)
             .await
             .map_err(|e| e.to_string())?;
         if !response.status().is_success() {

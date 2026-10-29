@@ -1,0 +1,4 @@
+interface:
+  display_name: "WASI PostgreSQL"
+  short_description: "wasi-pg-client repositories and migrations"
+  default_prompt: "Use $wasi-postgres to write Hub repositories, queries, and migrations."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "WASI Frontend Packaging"
+  short_description: "Serve front/admin from oidc-admin-wasi"
+  default_prompt: "Use $wasi-frontend-packaging to change how oidc-admin-wasi embeds and serves the admin UI."

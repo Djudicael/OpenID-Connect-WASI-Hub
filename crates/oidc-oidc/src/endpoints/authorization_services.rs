@@ -438,15 +438,14 @@ pub async fn uma_ticket_grant(
             "the requested permission was denied".into(),
         ));
     }
-    if let Some(id) = ticket_id {
-        if !AuthorizationServiceRepo
+    if let Some(id) = ticket_id
+        && !AuthorizationServiceRepo
             .consume_ticket(&mut conn, id, true)
             .await?
-        {
-            return Err(OidcError::InvalidInput(
-                "permission ticket was already used".into(),
-            ));
-        }
+    {
+        return Err(OidcError::InvalidInput(
+            "permission ticket was already used".into(),
+        ));
     }
 
     if let Some(previous) = previous_grant.as_ref() {

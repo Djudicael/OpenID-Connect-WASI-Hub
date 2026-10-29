@@ -861,11 +861,11 @@ async fn test_rate_limiting_on_login() {
 }
 
 // ===================================================================
-// Group 8: Timing Attack on API Key Comparison
+// Group 8: Uniform Rejection of Altered API Key Secrets
 // ===================================================================
 
 #[tokio::test]
-async fn test_api_key_timing_attack() {
+async fn test_api_key_secret_mismatches_are_rejected_uniformly() {
     let app = TestApp::new().await;
 
     // Seed an API key with admin scope
@@ -873,7 +873,7 @@ async fn test_api_key_timing_attack() {
     let (api_key_model, correct_key) = oidc_apikey::ApiKeyService::generate_key(
         &mut conn,
         app.master_realm_id(),
-        "timing-test-key".to_string(),
+        "secret-mismatch-test-key".to_string(),
         vec!["admin".into()],
         None,
         None,
@@ -881,10 +881,10 @@ async fn test_api_key_timing_attack() {
     .await
     .expect("failed to seed API key");
 
-    // Compare two invalid keys that retain the valid lookup prefix but differ at
-    // opposite ends of the secret. Comparing a valid request with an invalid one
-    // is not meaningful here: the valid request also increments the usage counter
-    // and executes the protected endpoint.
+    // Preserve the lookup prefix so every mutation reaches hash verification.
+    // HTTP latency also includes database and scheduler delays; it cannot prove
+    // constant-time hash comparison on a shared CI runner. Check the observable
+    // rejection behavior instead, while retaining Argon2id verification.
     let secret_offset = correct_key
         .rfind('.')
         .expect("generated key must contain a secret separator")
@@ -894,59 +894,50 @@ async fn test_api_key_timing_attack() {
         bytes[index] = if bytes[index] == b'a' { b'b' } else { b'a' };
         String::from_utf8(bytes).expect("generated API keys are ASCII")
     };
-    let incorrect_early = mutate_at(secret_offset);
-    let incorrect_late = mutate_at(correct_key.len() - 1);
-
-    // Alternate the requests to reduce drift from connection-pool and host load.
-    let mut early_times = Vec::with_capacity(10);
-    let mut late_times = Vec::with_capacity(10);
-    for _ in 0..10 {
-        let start = std::time::Instant::now();
-        let early_response = app
+    let endpoint = format!("{}/api/keys?realm_id={}", app.url(), app.master_realm_id());
+    let mut rejection_body = None;
+    for index in [
+        secret_offset,
+        secret_offset + (correct_key.len() - secret_offset) / 2,
+        correct_key.len() - 1,
+    ] {
+        let response = app
             .client()
-            .get(format!(
-                "{}/api/keys?realm_id={}",
-                app.url(),
-                app.master_realm_id()
-            ))
-            .header("X-API-Key", incorrect_early.as_str())
+            .get(&endpoint)
+            .header("X-API-Key", mutate_at(index))
             .send()
             .await
             .expect("request failed");
-        early_times.push(start.elapsed());
-        assert_eq!(early_response.status(), StatusCode::UNAUTHORIZED);
-
-        let start = std::time::Instant::now();
-        let late_response = app
-            .client()
-            .get(format!(
-                "{}/api/keys?realm_id={}",
-                app.url(),
-                app.master_realm_id()
-            ))
-            .header("X-API-Key", incorrect_late.as_str())
-            .send()
-            .await
-            .expect("request failed");
-        late_times.push(start.elapsed());
-        assert_eq!(late_response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(response.headers()["www-authenticate"], "Bearer");
+        let body: Value = response.json().await.expect("expected JSON rejection");
+        if let Some(expected) = &rejection_body {
+            assert_eq!(
+                &body, expected,
+                "rejection must not reveal mismatch position"
+            );
+        } else {
+            rejection_body = Some(body);
+        }
     }
 
-    // Calculate average times
-    let avg_early: std::time::Duration =
-        early_times.iter().sum::<std::time::Duration>() / early_times.len() as u32;
-    let avg_late: std::time::Duration =
-        late_times.iter().sum::<std::time::Duration>() / late_times.len() as u32;
+    let unchanged = oidc_repository::repositories::api_key_repo::ApiKeyRepo
+        .find_by_id(&mut conn, api_key_model.id)
+        .await
+        .expect("key lookup failed")
+        .expect("rejected attempts must not remove the key");
+    assert_eq!(unchanged.request_count, 0);
+    assert!(unchanged.last_used_at.is_none());
 
-    let diff = avg_early.abs_diff(avg_late);
-
-    // NOTE: This is a best-effort test; true constant-time guarantees require specialized hardware.
-    // We check that the timing difference is less than 50ms to catch obvious leaks.
-    assert!(
-        diff < std::time::Duration::from_millis(500),
-        "timing difference between early and late API key mismatch is {diff:?}, \
-         which may indicate a timing side-channel. avg_early={avg_early:?}, avg_late={avg_late:?}"
-    );
+    // A valid key still succeeds after the rejected attempts.
+    let response = app
+        .client()
+        .get(&endpoint)
+        .header("X-API-Key", &correct_key)
+        .send()
+        .await
+        .expect("valid key request failed");
+    assert_eq!(response.status(), StatusCode::OK);
 
     // Clean up
     let _ = oidc_repository::repositories::api_key_repo::ApiKeyRepo

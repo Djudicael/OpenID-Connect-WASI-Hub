@@ -19,6 +19,6 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(target_arch = "wasm32")]
 fn main() {
-    // WASM entry point is in lib.rs via #[wstd_axum::http_server]
+    // WASM entry point is in lib.rs via the asynchronous WASI P3 HTTP handler
     panic!("native main should not be called on wasm32");
 }

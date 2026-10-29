@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::endpoints::mfa::LoginMfaProof;
 use crate::errors::{OidcErrorResponse, from_oidc_error};
-use crate::flows::password::{PasswordFlow, PasswordFlowOutcome};
+use crate::flows::password::{PasswordFlow, PasswordFlowOutcome, PasswordFlowRequest};
 use crate::session_cookie;
 use crate::state::OidcState;
 use oidc_core::OidcError;
@@ -124,15 +124,17 @@ async fn execute_login(
 ) -> Result<Response, OidcErrorResponse> {
     let result = PasswordFlow::execute(
         state,
-        &req.email,
-        &req.password,
-        req.client_id.as_deref(),
-        req.realm.as_deref(),
-        None, // DPoP not supported at the login endpoint
-        req.mfa.as_ref(),
-        &req.requested_scopes,
-        &req.requested_acr_values,
-        kerberos_token,
+        PasswordFlowRequest {
+            email: &req.email,
+            password: &req.password,
+            client_id: req.client_id.as_deref(),
+            realm_name: req.realm.as_deref(),
+            dpop_jkt: None, // DPoP not supported at the login endpoint
+            mfa_proof: req.mfa.as_ref(),
+            requested_scopes: &req.requested_scopes,
+            requested_acr_values: &req.requested_acr_values,
+            kerberos_token,
+        },
     )
     .await
     .map_err(|e| from_oidc_error(&e))?;

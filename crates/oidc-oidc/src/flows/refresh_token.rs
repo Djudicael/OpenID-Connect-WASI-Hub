@@ -182,9 +182,10 @@ impl RefreshTokenFlow {
             };
             let audience = client.client_id.clone();
             let scopes = session.scope.clone();
-            let organization =
-                crate::organization_claims::resolve_organization_claim(&mut conn, user_id, &scopes)
-                    .await?;
+            let organization = crate::organization_claims::resolve_organization_claim(
+                &mut conn, user_id, client.id, &scopes,
+            )
+            .await?;
             let role_claims = crate::role_claims::resolve_role_claims(&mut conn, user_id).await?;
             let mapped_claims = crate::protocol_mappers::resolve_mapped_claims(
                 &mut conn,

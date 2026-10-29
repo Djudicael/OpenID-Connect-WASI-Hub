@@ -1,12 +1,12 @@
 # OpenID Connect WASI Hub
 
-A multi-tenant OpenID Connect / OAuth2 identity provider built in Rust with first-class **WASI Preview 2** support and an explicit focus on production hardening.
+A multi-tenant OpenID Connect / OAuth2 identity provider built in Rust with asynchronous **WASI 0.3** HTTP and PostgreSQL on the stable `wasm32-wasip2` compiler target.
 
 ## Features
 
 - **OIDC Core** — Authorization Code + PKCE, Client Credentials, Refresh Token, ID Tokens (RS256 / EdDSA)
 - **Multi-Tenancy** — Per-realm users, clients, sessions, scopes, and branded login pages
-- **WASI Preview 2** — Runs as a WASM component via `wasmtime serve` with no filesystem access
+- **WASI 0.3 async** — Runs as a WASM component via `wasmtime serve` with no filesystem access
 - **Admin Console** — Native Web Components management UI (no React/Vue/Angular), primarily tested behind a same-origin proxy deployment
 - **User Account Console** — Self-service profile, password, session, approved application, linked identity, and MFA management. See the [account guide](docs/user-account-console.md).
 - **Authentication Flows** — Ordered required actions, realm-wide profile and security checks, versioned terms acceptance, and policy-driven MFA step-up. See the [authentication flow guide](docs/authentication-flows.md).
@@ -54,6 +54,10 @@ correlation headers or telemetry fields. The deployment proxy must strip or
 validate untrusted correlation headers before relying on them for security
 investigation.
 
+Opt-in, request-local handler timing for a trusted gateway is documented in
+[observability export](docs/observability-export.md). It requires no process-wide
+guest counters, telemetry tables or background tasks in WASI.
+
 ## Quick Start
 
 ### `.env` setup for dev / E2E
@@ -76,7 +80,7 @@ cp .env.template .env
 
 - Rust 1.96 with `wasm32-wasip2` target
 - Podman (for PostgreSQL container)
-- wasmtime ≥ 48.0.1 (for WASI 0.3 support used by `wasi-pg-client`)
+- Wasmtime 48.0.1 or a compatible P3 runtime (validated with `wasip3 0.8`)
 - Node.js 20+ (for frontend dev server)
 
 ```bash
@@ -128,15 +132,17 @@ cargo build --release -p openid-connect-wasi --target wasm32-wasip2
 | Path | Description |
 |------|-------------|
 | `crates/oidc-core/` | Pure domain logic. No I/O. No framework deps. |
-| `crates/oidc-repository/` | PostgreSQL via `pg_client` (WASM) or `tokio-postgres` (native). |
+| `crates/oidc-repository/` | PostgreSQL via `wasi-pg-client`: P3 sockets on WASM, Tokio transport on native. |
 | `crates/oidc-oidc/` | OIDC/OAuth2 endpoints (Axum). |
 | `crates/oidc-apikey/` | API key service + Axum extractor. |
-| `crates/openid-connect-wasi/` | Backend server binary. Dual entry: `#[wstd_axum::http_server]` for WASM, `#[tokio::main]` for native. |
+| `crates/openid-connect-wasi/` | Backend server. Asynchronous `wasip3` HTTP handler for WASM, `#[tokio::main]` for native. |
+| `crates/oidc-wasi-http/` | Shared P3 HTTP server/client adapters for Axum, including bounded response reads. |
 | `crates/oidc-admin-wasi/` | Frontend WASI server for the admin SPA. Serves embedded HTML/CSS/JS. |
 | `crates/oidc-dev/` | Native dev orchestrator (DB + backend + frontend + proxy). |
 | `crates/oidc-wasm-dev/` | WASM dev orchestrator (DB + frontend WASI + backend WASI + proxy). |
 | `front/admin/` | Management UI. Native Web Components + `lit-html`. Built with `esbuild`. |
 | `tests/integration/` | Integration tests against real PostgreSQL + HTTP server. |
+| `patches/` | Locally maintained cryptographic dependency fixes and their upstream tests. |
 
 ## Environment Variables
 
@@ -158,6 +164,7 @@ cargo build --release -p openid-connect-wasi --target wasm32-wasip2
 | `OIDC_SIGNING_KID` | `key-1` | Key ID for the global RSA signing key |
 | `OIDC_ED25519_KEY` | *(auto-generated)* | Ed25519 private key in PKCS#8 PEM format (global fallback; per-realm keys preferred in production) |
 | `OIDC_ED25519_KID` | `ed-key-1` | Key ID for the global Ed25519 signing key |
+| `OIDC_ACCESS_TOKEN_SIGNING_ALG` | `RS256` | Access-token signature: `RS256` or `EdDSA`; see [access-token signing](docs/access-token-signing.md) |
 | `OIDC_RESEND_API_KEY` | *(none)* | Resend API key; requires `OIDC_EMAIL_FROM` to enable delivery |
 | `OIDC_EMAIL_FROM` | *(none)* | Verified sender for reset, verification, and organization invitation email |
 | `OIDC_RESEND_ENDPOINT` | `https://api.resend.com/emails` | Resend-compatible email API URL |
@@ -273,16 +280,65 @@ Suggested production approach:
 
 ## Testing
 
+The workspace uses `wasi-pg-client 0.2.1` and `wasip3 0.8`. HTTP handlers,
+outbound HTTP, PostgreSQL sockets, and operation deadlines share the P3 async
+executor. `wstd` and `wstd-axum` are no longer dependencies. The compiler target
+remains `wasm32-wasip2`; Rust's standard library still imports P2 interfaces.
+Run both production components with Wasmtime 48.0.1 or a runtime compatible with
+the same P3 ABI and with the capabilities shown below.
+
 ```bash
+# Lint the entire workspace, including integration test code
+cargo clippy --locked --workspace --all-targets -- -D warnings
+
 # Unit tests (native only, no DB needed)
-cargo test --workspace --exclude integration-tests
+cargo test --locked --workspace --exclude integration-tests
 
 # Integration tests (requires Podman for PostgreSQL container)
-cargo test -p integration-tests -- --test-threads=1
+cargo test --locked -p integration-tests -- --test-threads=1
 
 # WASM build check
-cargo build -p openid-connect-wasi --target wasm32-wasip2 --release
+cargo build --locked -p openid-connect-wasi --target wasm32-wasip2 --release
 ```
+
+CI runs formatting, native and WASI strict Clippy checks, unit tests, release
+WASM builds, patched dependency tests, and P3 runtime probes against a PostgreSQL service.
+`Cargo.lock` is versioned and CI uses `--locked` to validate the same dependency
+versions as local development. CI limits test execution to four threads to bound
+CPU and memory use on shared runners.
+Integration tests require Podman and run separately. API-key rejection tests
+check altered secrets and identical error responses without asserting HTTP
+latency thresholds, which are unreliable on shared runners. These functional
+checks do not establish constant-time execution.
+
+To reproduce the P3 runtime checks locally, use the existing WASM development CLI:
+
+```bash
+cargo run --locked -p oidc-wasm-dev -- runtime-test
+```
+
+The command reuses the CLI's frontend/WASM builds, PostgreSQL container helper,
+development signing keys, and Wasmtime launcher. It checks database readiness,
+cancellation of an unresponsive database, embedded admin assets, outbound HTTP
+streams, duplicate headers, error statuses, and the 16 MiB limit on collected
+WASI response bodies. It stops the test processes and any database it created
+without changing the normal development stack's runtime-state file.
+
+For CI or prebuilt artifacts, pass `--skip-build`. Set `OIDC_DATABASE_URL` to use
+an existing test PostgreSQL server instead of starting a container. Wasmtime and
+OpenSSL must be on `PATH`; Podman is needed only when starting a database. The
+command saves component logs under `target/wasi-runtime-*.log`. Browser E2E tests
+require a running development stack and remain separate from these protocol checks.
+
+Dependency policy can be checked with
+`cargo deny --locked check advisories bans licenses sources`. Local patches for
+`passkey-auth 0.1.3` and `saml 0.0.1-alpha.2` upgrade their ECDSA dependencies to
+use the corrected `crypto-bigint 0.7.10`, resolving
+[`RUSTSEC-2026-0387`](https://rustsec.org/advisories/RUSTSEC-2026-0387.html).
+See [patch maintenance and validation](patches/README.md) for provenance,
+compatibility checks, and conditions for removing these patches.
+For release checks and the existing RSA advisory exception, follow
+[dependency security checks](docs/dependency-security.md).
 
 ### Browser E2E via the dev orchestrators
 
@@ -359,7 +415,7 @@ This is especially useful when running against a manually started proxy or any c
 
 ### WASM Runtime (`wasmtime serve`)
 
-When running as a WASI Preview 2 component, **every HTTP request may instantiate a fresh WASM component** (depending on `--max-instance-reuse-count`). If signing keys are randomly generated at startup, tokens issued by instance *N* will fail verification on instance *N+1* because the keys differ.
+When running as a WASI HTTP component, **every HTTP request may instantiate a fresh WASM component** (depending on `--max-instance-reuse-count`). If signing keys are randomly generated at startup, tokens issued by instance *N* will fail verification on instance *N+1* because the keys differ.
 
 This deployment mode is production-appropriate only when all instances share deterministic key/config material and when abuse controls such as rate limiting are enforced at the gateway/CDN or another shared upstream layer.
 

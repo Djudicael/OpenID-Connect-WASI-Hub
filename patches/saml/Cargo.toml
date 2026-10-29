@@ -1,0 +1,329 @@
+# Locally maintained compatibility patch; see ../README.md.
+
+[package]
+edition = "2024"
+rust-version = "1.91.0"
+name = "saml"
+version = "0.0.1-alpha.2"
+build = false
+exclude = [
+    ".DS_Store",
+    "**/.DS_Store",
+    ".github/",
+    ".claude/",
+    ".tmp/",
+    "examples/idps/",
+    "fuzz/",
+    "mise.toml",
+    "tests/corpus/",
+]
+autolib = false
+autobins = false
+autoexamples = false
+autotests = false
+autobenches = false
+description = "Stateless, async-native SAML 2.0 toolkit with no libxml2/xmlsec C build chain"
+homepage = "https://github.com/danielkov/saml"
+documentation = "https://docs.rs/saml"
+readme = "README.md"
+keywords = [
+    "saml",
+    "sso",
+    "auth",
+    "xml",
+    "security",
+]
+categories = [
+    "authentication",
+    "cryptography",
+]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/danielkov/saml"
+
+[features]
+artifact-binding = []
+default = [
+    "reqwest-client",
+    "rsa-sha",
+    "ecdsa-sha",
+    "xmlenc",
+    "slo",
+    "metadata-emit",
+    "xsd-validate",
+]
+ecdsa-sha = []
+ecp = []
+idp-disco = []
+metadata-emit = []
+reqwest-client = ["dep:reqwest"]
+rsa-sha = []
+slo = []
+weak-algos = ["dep:sha1"]
+xmlenc = []
+xsd-validate = []
+
+[lib]
+name = "saml"
+path = "src/lib.rs"
+
+[[test]]
+name = "artifact_flow_test"
+path = "tests/artifact_flow_test.rs"
+
+[[test]]
+name = "corpus_runner"
+path = "tests/corpus_runner.rs"
+
+[[test]]
+name = "disco_flow_test"
+path = "tests/disco_flow_test.rs"
+
+[[test]]
+name = "encrypted_assertion_flow_test"
+path = "tests/encrypted_assertion_flow_test.rs"
+
+[[test]]
+name = "idp_flow_test"
+path = "tests/idp_flow_test.rs"
+
+[[test]]
+name = "proxy_flow_test"
+path = "tests/proxy_flow_test.rs"
+
+[[test]]
+name = "schema_test"
+path = "tests/schema_test.rs"
+
+[[test]]
+name = "sp_flow_test"
+path = "tests/sp_flow_test.rs"
+
+[[test]]
+name = "xmlsec_interop"
+path = "tests/xmlsec_interop.rs"
+
+[dependencies.aes]
+version = "0.8"
+
+[dependencies.aes-gcm]
+version = "0.10"
+
+[dependencies.base64]
+version = "0.22"
+
+[dependencies.cbc]
+version = "0.1"
+
+[dependencies.const-oid]
+version = "0.9"
+
+[dependencies.ctr]
+version = "0.9"
+
+[dependencies.digest]
+version = "0.10"
+
+[dependencies.ecdsa]
+version = "0.17"
+
+[dependencies.flate2]
+version = "1"
+features = ["rust_backend"]
+default-features = false
+
+[dependencies.hmac]
+version = "0.12"
+
+[dependencies.http]
+version = "1"
+
+[dependencies.p256]
+version = "0.14"
+features = [
+    "ecdsa",
+    "pem",
+]
+
+[dependencies.p384]
+version = "0.14"
+features = [
+    "ecdsa",
+    "pem",
+]
+
+[dependencies.percent-encoding]
+version = "2"
+
+[dependencies.pkcs1]
+version = "0.7"
+features = ["pem"]
+
+[dependencies.pkcs8]
+version = "0.10"
+features = ["pem"]
+
+[dependencies.postcard]
+version = "1"
+features = ["alloc"]
+default-features = false
+
+[dependencies.quick-xml]
+version = "0.41"
+
+[dependencies.rand]
+version = "0.9"
+
+[dependencies.reqwest]
+version = "0.12"
+features = ["rustls-tls"]
+optional = true
+default-features = false
+
+[dependencies.rsa]
+version = "0.9"
+features = ["sha2"]
+
+[dependencies.serde]
+version = "1"
+features = ["derive"]
+
+[dependencies.sha1]
+version = "0.10"
+features = ["oid"]
+optional = true
+
+[dependencies.sha2]
+version = "0.10"
+features = ["oid"]
+
+[dependencies.signature]
+version = "2"
+
+[dependencies.spki]
+version = "0.7"
+
+[dependencies.subtle]
+version = "2"
+
+[dependencies.thiserror]
+version = "2"
+
+[dependencies.url]
+version = "2"
+
+[dependencies.x509-cert]
+version = "0.2"
+features = ["pem"]
+
+[dependencies.zeroize]
+version = "1"
+features = ["derive"]
+
+[dev-dependencies.hex]
+version = "0.4"
+
+[dev-dependencies.proptest]
+version = "1"
+
+[dev-dependencies.tokio]
+version = "1"
+features = [
+    "macros",
+    "rt-multi-thread",
+]
+
+[lints.clippy]
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+arithmetic_side_effects = "deny"
+assertions_on_result_states = "deny"
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+cast_possible_truncation = "deny"
+cast_possible_wrap = "deny"
+cast_precision_loss = "deny"
+cast_sign_loss = "deny"
+dbg_macro = "deny"
+debug_assert_with_mut_call = "deny"
+doc_markdown = "allow"
+expect_used = "deny"
+expl_impl_clone_on_copy = "deny"
+float_cmp = "deny"
+float_cmp_const = "deny"
+get_unwrap = "deny"
+if_let_mutex = "deny"
+indexing_slicing = "deny"
+infallible_try_from = "deny"
+invalid_upcast_comparisons = "deny"
+items_after_statements = "allow"
+iter_not_returning_iterator = "deny"
+large_futures = "deny"
+let_underscore_future = "deny"
+let_underscore_must_use = "deny"
+lossy_float_literal = "deny"
+map_err_ignore = "deny"
+mem_forget = "deny"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+multiple_unsafe_ops_per_block = "deny"
+must_use_candidate = "allow"
+needless_pass_by_value = "allow"
+panic = "deny"
+panic_in_result_fn = "deny"
+print_stderr = "deny"
+print_stdout = "deny"
+rc_mutex = "deny"
+return_self_not_must_use = "allow"
+similar_names = "allow"
+single_match_else = "allow"
+string_slice = "deny"
+struct_field_names = "allow"
+todo = "deny"
+too_many_lines = "allow"
+unchecked_time_subtraction = "deny"
+undocumented_unsafe_blocks = "deny"
+unimplemented = "deny"
+unnecessary_safety_comment = "deny"
+unnecessary_safety_doc = "deny"
+unreachable = "deny"
+unreadable_literal = "allow"
+unused_result_ok = "deny"
+unwrap_in_result = "deny"
+unwrap_used = "deny"
+
+[lints.clippy.complexity]
+level = "deny"
+priority = -1
+
+[lints.clippy.correctness]
+level = "deny"
+priority = -1
+
+[lints.clippy.pedantic]
+level = "deny"
+priority = -1
+
+[lints.clippy.perf]
+level = "deny"
+priority = -1
+
+[lints.clippy.style]
+level = "deny"
+priority = -1
+
+[lints.clippy.suspicious]
+level = "deny"
+priority = -1
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.rust.rust_2018_idioms]
+level = "deny"
+priority = -1
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+priority = 0
+check-cfg = ["cfg(fuzzing)"]

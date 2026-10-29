@@ -89,8 +89,16 @@ pub async fn userinfo_handler(
         Err(_) => return internal_error_response(),
     };
 
-    if session.revoked {
+    if session.revoked || session.family_revoked || session.expires_at <= chrono::Utc::now() {
         return unauthorized_response(None);
+    }
+    match oidc_repository::repositories::realm_repo::RealmRepo
+        .find_by_id(&mut conn, session.realm_id)
+        .await
+    {
+        Ok(Some(realm)) if realm.enabled => {}
+        Ok(_) => return unauthorized_response(None),
+        Err(_) => return internal_error_response(),
     }
 
     // The public `sub` can be pairwise and therefore is not necessarily a UUID.
@@ -103,6 +111,17 @@ pub async fn userinfo_handler(
         Ok(None) => return unauthorized_response(None),
         Err(_) => return internal_error_response(),
     };
+    if !user.enabled {
+        return unauthorized_response(None);
+    }
+    match oidc_repository::repositories::organization_repo::OrganizationRepo
+        .is_managed_user_blocked(&mut conn, user.id)
+        .await
+    {
+        Ok(true) => return unauthorized_response(None),
+        Ok(false) => {}
+        Err(_) => return internal_error_response(),
+    }
 
     let scopes: std::collections::HashSet<String> = session.scope.into_iter().collect();
 
@@ -208,14 +227,22 @@ pub async fn userinfo_handler(
     if scopes
         .iter()
         .any(|scope| scope == "organization" || scope.starts_with("organization:"))
-        && let Ok(Some(organization)) = crate::organization_claims::resolve_organization_claim(
+    {
+        let organization = match crate::organization_claims::resolve_organization_claim(
             &mut conn,
             user.id,
+            session.client_id,
             &scopes.iter().cloned().collect::<Vec<_>>(),
         )
         .await
-        && let Some(obj) = claims.as_object_mut()
-    {
+        {
+            Ok(value) => value.unwrap_or_else(|| json!({})),
+            Err(oidc_core::OidcError::InvalidScope(_)) => json!({}),
+            Err(_) => return internal_error_response(),
+        };
+        let Some(obj) = claims.as_object_mut() else {
+            return internal_error_response();
+        };
         obj.insert("organization".to_string(), organization);
     }
 

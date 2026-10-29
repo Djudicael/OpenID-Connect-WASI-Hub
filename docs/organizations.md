@@ -4,6 +4,11 @@
 
 Organizations are business tenants inside a realm. They group members, verified email domains, identity providers, realm groups, and invitations while users and clients remain realm resources.
 
+Applications using organization claims for authorization should use the additive
+[client-qualified stable-ID contract](organization-authorization.md), not legacy
+group/role display names. This guide describes administration; the linked guide
+defines qualified claims, fresh UserInfo and the private read-only status endpoint.
+
 ![Organization settings and domains](assets/organizations/organization-settings-and-domains.png)
 
 ## Create an organization

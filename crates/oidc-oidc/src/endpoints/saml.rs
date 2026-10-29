@@ -1017,10 +1017,10 @@ pub async fn idp_logout(
         );
     };
     for sid in &parsed.session_index {
-        if let Ok(Some(session)) = SessionRepo.find_by_sid(&mut conn, sid).await {
-            if session.realm_id == realm.id {
-                let _ = SessionRepo.revoke(&mut conn, session.id).await;
-            }
+        if let Ok(Some(session)) = SessionRepo.find_by_sid(&mut conn, sid).await
+            && session.realm_id == realm.id
+        {
+            let _ = SessionRepo.revoke(&mut conn, session.id).await;
         }
     }
     let dispatch = match idp.build_logout_response(
@@ -1087,10 +1087,10 @@ pub async fn broker_logout(
     };
     for upstream in &parsed.session_index {
         let sid = format!("saml:{}:{upstream}", provider.id);
-        if let Ok(Some(session)) = SessionRepo.find_by_sid(&mut conn, &sid).await {
-            if session.realm_id == realm.id {
-                let _ = SessionRepo.revoke(&mut conn, session.id).await;
-            }
+        if let Ok(Some(session)) = SessionRepo.find_by_sid(&mut conn, &sid).await
+            && session.realm_id == realm.id
+        {
+            let _ = SessionRepo.revoke(&mut conn, session.id).await;
         }
     }
     let dispatch = match sp.build_logout_response(

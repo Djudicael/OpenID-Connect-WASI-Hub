@@ -1198,6 +1198,7 @@ async fn authorize_inner(
     if let Err(error) = crate::organization_claims::resolve_organization_claim(
         &mut conn,
         user.id,
+        client.id,
         &requested_scopes,
     )
     .await
@@ -1533,6 +1534,7 @@ async fn authorize_inner(
         let organization = match crate::organization_claims::resolve_organization_claim(
             &mut conn,
             user.id,
+            client.id,
             &requested_scopes,
         )
         .await

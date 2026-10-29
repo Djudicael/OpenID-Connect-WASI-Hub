@@ -550,7 +550,7 @@ pub async fn list_identity_providers(
             )
                 .into_response();
         }
-        Err(response) => return response,
+        Err(error) => return error.into_response(),
     };
     let mut conn = match connect(&state).await {
         Ok(c) => c,

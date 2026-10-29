@@ -25,10 +25,12 @@ fn build_router_with_state(state: AppState) -> Router {
     // production source of truth.
     let rate_limiter = std::sync::Arc::new(crate::middleware::rate_limit::RateLimiter::from_env());
 
-    Router::new()
+    let app = Router::new()
         .merge(router::oidc::router())
         .merge(router::apikey::router())
         .merge(router::health::router())
+        .merge(router::observability::router())
+        .merge(router::organization_authorization::router())
         .merge(router::admin::router())
         .with_state(state.clone())
         .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
@@ -43,7 +45,11 @@ fn build_router_with_state(state: AppState) -> Router {
             crate::middleware::logging::logging_middleware,
         ))
         // Make the RateLimiter available to the middleware via extensions
-        .layer(axum::Extension(rate_limiter))
+        .layer(axum::Extension(rate_limiter));
+    crate::middleware::observability::instrument(
+        app,
+        std::env::var("OIDC_OBSERVABILITY_TIMING").as_deref() == Ok("1"),
+    )
 }
 
 /// Run the axum server on a TCP listener with graceful shutdown on SIGTERM.

@@ -243,16 +243,14 @@ impl RoleRepo {
         conn: &mut Connection,
         user_id: Uuid,
     ) -> Result<Vec<Role>, OidcError> {
-        let sql = format!(
-            "WITH RECURSIVE direct_roles(id) AS (\
+        let sql = "WITH RECURSIVE direct_roles(id) AS (\
                SELECT role_id FROM user_roles WHERE user_id = $1 \
                UNION SELECT gr.role_id FROM group_roles gr JOIN user_groups ug ON ug.group_id = gr.group_id WHERE ug.user_id = $1\
              ), effective(id) AS (\
                SELECT id FROM direct_roles \
                UNION SELECT rc.child_role_id FROM role_composites rc JOIN effective e ON rc.parent_role_id = e.id\
-             ) SELECT roles.id, roles.realm_id, roles.name, roles.description, roles.permissions, roles.created_at, roles.updated_at, roles.client_id FROM roles JOIN effective ON effective.id = roles.id WHERE roles.deleted_at IS NULL ORDER BY roles.name"
-        );
-        conn.query_params(&sql, &[&user_id])
+             ) SELECT roles.id, roles.realm_id, roles.name, roles.description, roles.permissions, roles.created_at, roles.updated_at, roles.client_id FROM roles JOIN effective ON effective.id = roles.id WHERE roles.deleted_at IS NULL ORDER BY roles.name";
+        conn.query_params(sql, &[&user_id])
             .await
             .map_err(mapper::pg_err)?
             .into_rows()

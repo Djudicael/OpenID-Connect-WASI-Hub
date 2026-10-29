@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+exclude = ["patches/passkey-auth", "patches/saml"]
 members = [
     "crates/oidc-core",
     "crates/oidc-repository",
@@ -7,6 +8,7 @@ members = [
     "crates/oidc-apikey",
     "crates/openid-connect-wasi",
     "crates/oidc-admin-wasi",
+    "crates/oidc-wasi-http",
     "crates/oidc-migrate",
     "crates/oidc-dev",
     "crates/oidc-wasm-dev",
@@ -28,11 +30,10 @@ oidc-oidc = { version = "0.1.0", path = "crates/oidc-oidc" }
 oidc-apikey = { version = "0.1.0", path = "crates/oidc-apikey" }
 openid-connect-wasi = { version = "0.1.0", path = "crates/openid-connect-wasi" }
 oidc-admin-wasi = { version = "0.1.0", path = "crates/oidc-admin-wasi" }
+oidc-wasi-http = { version = "0.1.0", path = "crates/oidc-wasi-http" }
 
 # Async / WASI
-wstd = "0.6"
-wstd-axum = "0.6"
-wasip3 = "0.8"
+wasip3 = { version = "0.8", features = ["http-compat"] }
 futures-concurrency = "7"
 
 # Web
@@ -52,7 +53,7 @@ wasi-pg-client = "0.2.1"
 
 # Crypto
 getrandom = "0.4"
-rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
+rustls = { version = "0.23.46", default-features = false, features = ["std", "tls12"] }
 webpki-roots = "0.26"
 lber = "0.5.1"
 bytes = "1"
@@ -87,7 +88,7 @@ subtle = "2"
 pkcs8 = { version = "0.10", features = ["pem"] }
 
 # Dev / Tooling
-tokio = { version = "1", features = ["rt", "macros", "time"] }
+tokio = { version = "1.54.1", features = ["rt", "macros", "time"] }
 dotenvy = "0.15"
 portpicker = "0.1"
 rustainers = "0.15"
@@ -96,3 +97,8 @@ nix = { version = "0.29", features = ["signal", "process"] }
 # Time / Random / Encoding
 chrono = { version = "0.4", features = ["serde"] }
 rand = { version = "0.8", features = ["getrandom"] }
+
+# Remove RUSTSEC-2026-0387 until upstream adopts the corrected RustCrypto stack.
+[patch.crates-io]
+passkey-auth = { path = "patches/passkey-auth" }
+saml = { path = "patches/saml" }

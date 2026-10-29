@@ -30,6 +30,7 @@ Use this page to choose a goal. The guides describe the administration console u
 | Prepare and release an application to production | [Launch a production application](use-cases/production-application-launch.md) |
 | Connect mobile, desktop, terminal, or constrained applications | [Connect mobile, desktop, and command-line applications](use-cases/mobile-desktop-cli.md) |
 | Authenticate a backend service without a person | [Connect a backend service](use-cases/backend-service.md) |
+| Connect an Ed25519-only resource server | [Configure access-token signing](access-token-signing.md) |
 | Give an automation agent the correct identity and access | [Choose an identity for an agent](use-cases/agent-identity.md) |
 | Protect individual API resources with policies | [Protect an API with resource permissions](use-cases/protect-api-authorization.md) |
 
@@ -58,6 +59,7 @@ Use this page to choose a goal. The guides describe the administration console u
 ## Configure tenants and identity sources
 
 - [Organizations](organizations.md)
+- [Client-qualified organization authorization](organization-authorization.md)
 - [LDAP, Active Directory, and Kerberos federation](user-federation.md)
 - [Federation gateway contract](federation-gateway-api.md)
 - [SAML applications and identity providers](saml.md)
@@ -85,6 +87,8 @@ Use this page to choose a goal. The guides describe the administration console u
 ## Operate and recover the platform
 
 - [Operations, sessions, audit, cleanup, and recovery](operations.md)
+- [Check dependency security before a release](dependency-security.md)
+- [Export internal realm metrics](observability-export.md)
 - [Back up, restore, or move a realm](realm-import-export.md)
 - [Production proxy configurations](../deploy/proxy-cookbook.md)
 - [Runtime configuration and build instructions](../README.md#quick-start)

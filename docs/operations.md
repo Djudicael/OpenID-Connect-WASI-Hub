@@ -4,6 +4,16 @@
 
 This guide covers the recurring tasks visible in the administration console. Deployment-specific monitoring, database backup, and secret management should also follow your hosting platform's procedures.
 
+For the WASI deployment, both the Hub and admin frontend use P3 HTTP handlers on
+the `wasm32-wasip2` compiler target. Use Wasmtime 48.0.1 or a compatible P3 runtime
+and enable `component-model-async`, `p3`, and the documented network capabilities.
+See the [runtime setup](../README.md#wasm-runtime-wasmtime-serve) and
+[runtime validation commands](../README.md#testing) before upgrading an instance.
+
+Before releasing dependency updates, follow [dependency security checks](dependency-security.md).
+That guide covers the local WebAuthn/SAML fixes, the existing RSA advisory
+exception, and the checks needed before removing a patch.
+
 ## Monitor availability
 
 Use these unauthenticated health endpoints from the platform:
@@ -17,6 +27,10 @@ Use these unauthenticated health endpoints from the platform:
 Keep health checks separate from user sign-in checks. A successful liveness response does not prove that an application callback, email provider, or external identity provider is configured correctly.
 
 ## Review sessions
+
+For continuous realm-scoped session and audit gauges, see
+[Export internal realm metrics](observability-export.md). This opt-in endpoint
+requires a separate export secret and works inside WASI instances.
 
 Open **Sessions** to see client, grant, scopes, expiry, and status. Revoke one session or select several and choose **Revoke Selected** when users must authenticate again.
 

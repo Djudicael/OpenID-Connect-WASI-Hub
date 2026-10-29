@@ -29,6 +29,7 @@ oidc-apikey = { workspace = true }
 
 # HTTP client for health checks
 reqwest = { workspace = true }
+axum = { workspace = true, features = ["tokio", "http1"] }
 
 # Port scanning
 portpicker = { workspace = true }

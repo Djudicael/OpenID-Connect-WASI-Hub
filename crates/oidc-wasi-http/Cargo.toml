@@ -1,0 +1,15 @@
+[package]
+name = "oidc-wasi-http"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[example]]
+name = "http-client-smoke"
+crate-type = ["cdylib"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+axum = { workspace = true }
+tower = { workspace = true, features = ["util"] }
+wasip3 = { workspace = true }

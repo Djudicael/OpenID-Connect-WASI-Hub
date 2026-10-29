@@ -165,12 +165,10 @@ async fn current_user(state: &OidcState, headers: &HeaderMap) -> Result<User, Oi
         if let Some(session) = SessionRepo
             .find_by_access_token_hash(&mut conn, &sha2_256_hex(raw))
             .await?
+            && let Some(user_id) = session.user_id
+            && let Some(user) = UserRepo.find_by_id(&mut conn, user_id).await?
         {
-            if let Some(user_id) = session.user_id {
-                if let Some(user) = UserRepo.find_by_id(&mut conn, user_id).await? {
-                    return Ok(user);
-                }
-            }
+            return Ok(user);
         }
     }
     Err(OidcError::AuthenticationFailed(

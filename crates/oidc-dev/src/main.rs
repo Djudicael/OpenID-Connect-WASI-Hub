@@ -450,11 +450,19 @@ async fn cmd_wasm() -> Result<()> {
     info!("Starting WASM component via wasmtime on port {port}...");
 
     let mut cmd = Command::new("wasmtime");
-    cmd.arg("run")
+    cmd.arg("serve")
+        .arg("--addr")
+        .arg(format!("{BIND_ADDRESS}:{port}"))
         .arg("-W")
         .arg("component-model-async=y")
         .arg("-S")
         .arg("p3=y")
+        .arg("-S")
+        .arg("cli=y")
+        .arg("-S")
+        .arg("tcp=y")
+        .arg("-S")
+        .arg("allow-ip-name-lookup=y")
         .arg("--wasi")
         .arg("inherit-network")
         .arg("--wasi")

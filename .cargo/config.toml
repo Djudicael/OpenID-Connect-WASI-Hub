@@ -3,7 +3,8 @@
 # Use --target wasm32-wasip2 for WASI builds.
 
 [target.wasm32-wasip2]
-runner = "wasmtime run --wasi inherit-network --wasi inherit-env"
+# HTTP cdylib components are started explicitly with `wasmtime serve` (README).
+runner = "wasmtime run -W component-model-async=y -S p3=y -S cli=y -S inherit-network=y -S inherit-env=y -S tcp=y -S allow-ip-name-lookup=y"
 
 [profile.release]
 opt-level = 3

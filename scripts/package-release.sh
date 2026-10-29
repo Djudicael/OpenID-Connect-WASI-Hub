@@ -78,8 +78,8 @@ if [[ "$SKIP_BUILD" == "false" ]]; then
     echo "[2/4] Building release WASM artifacts..."
     (
         cd "$PROJECT_ROOT"
-        cargo build -p oidc-admin-wasi --target wasm32-wasip2 --release
-        cargo build -p openid-connect-wasi --target wasm32-wasip2 --release
+        cargo build --locked -p oidc-admin-wasi --target wasm32-wasip2 --release
+        cargo build --locked -p openid-connect-wasi --target wasm32-wasip2 --release
     )
 else
     echo "[1/4] Skipping builds (--skip-build)"

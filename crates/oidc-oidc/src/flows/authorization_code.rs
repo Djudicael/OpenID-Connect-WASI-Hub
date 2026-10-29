@@ -100,9 +100,10 @@ impl AuthorizationCodeFlow {
             } else {
                 None
             };
-            let organization =
-                crate::organization_claims::resolve_organization_claim(&mut conn, user.id, &scopes)
-                    .await?;
+            let organization = crate::organization_claims::resolve_organization_claim(
+                &mut conn, user.id, client.id, &scopes,
+            )
+            .await?;
             let role_claims = crate::role_claims::resolve_role_claims(&mut conn, user.id).await?;
             let mapped_claims = crate::protocol_mappers::resolve_mapped_claims(
                 &mut conn,

@@ -101,19 +101,19 @@ async fn permission_references_match_server(
     policies: &[Uuid],
 ) -> Result<bool, oidc_core::OidcError> {
     for id in resources {
-        if !AuthorizationServiceRepo
+        if AuthorizationServiceRepo
             .find_resource(conn, *id)
             .await?
-            .is_some_and(|item| item.resource_server_id == server_id)
+            .is_none_or(|item| item.resource_server_id != server_id)
         {
             return Ok(false);
         }
     }
     for id in policies {
-        if !AuthorizationServiceRepo
+        if AuthorizationServiceRepo
             .find_policy(conn, *id)
             .await?
-            .is_some_and(|item| item.resource_server_id == server_id)
+            .is_none_or(|item| item.resource_server_id != server_id)
         {
             return Ok(false);
         }

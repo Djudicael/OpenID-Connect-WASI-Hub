@@ -110,10 +110,10 @@ async fn valid_profiles(
     ids: &[Uuid],
 ) -> Result<(), OidcError> {
     for id in ids {
-        if !ClientPolicyRepo
+        if ClientPolicyRepo
             .find_profile(conn, *id)
             .await?
-            .is_some_and(|p| p.realm_id == realm)
+            .is_none_or(|p| p.realm_id != realm)
         {
             return Err(OidcError::InvalidInput(format!(
                 "profile {id} does not exist in this realm"

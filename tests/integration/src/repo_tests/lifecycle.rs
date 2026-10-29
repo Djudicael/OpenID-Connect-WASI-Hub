@@ -1360,13 +1360,13 @@ async fn test_audit_event_list_recent() {
     }
 
     let list = AuditEventRepo
-        .list_recent(&mut conn, 3, 0, None, None, None, None, None)
+        .list_recent(&mut conn, 3, 0, Default::default())
         .await
         .expect("list_recent failed");
     assert_eq!(list.len(), 3);
 
     let list = AuditEventRepo
-        .list_recent(&mut conn, 3, 3, None, None, None, None, None)
+        .list_recent(&mut conn, 3, 3, Default::default())
         .await
         .expect("list_recent failed");
     assert_eq!(list.len(), 2);
@@ -1376,6 +1376,24 @@ async fn test_audit_event_list_recent() {
         .await
         .expect("count failed");
     assert_eq!(count, 5);
+
+    let filtered = AuditEventRepo
+        .list_recent(
+            &mut conn,
+            3,
+            0,
+            oidc_repository::repositories::audit_event_repo::AuditEventFilter {
+                event_type: Some("event.2"),
+                realm_id: Some(realm.id),
+                from: Some(Utc::now() - chrono::Duration::minutes(1)),
+                to: Some(Utc::now() + chrono::Duration::minutes(1)),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("filtered list_recent failed");
+    assert_eq!(filtered.len(), 1);
+    assert_eq!(filtered[0].event_type, "event.2");
 }
 
 // ===================================================================

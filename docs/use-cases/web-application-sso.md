@@ -30,9 +30,12 @@ The application redirects users to the correct realm, receives an authorization 
 
 Configure its OIDC library with the realm issuer, client ID, callback address, and requested scopes. Enable state, nonce, issuer, signature, audience, and expiry validation. Keep the client secret on the server side.
 
+For browser applications on separate origins, set `OIDC_CORS_ORIGINS` to the exact comma-separated application origins. Every listed origin supports credentialed requests, including `keycloak-js` code exchange and refresh. Unlisted origins and wildcard configuration do not receive cross-origin access.
+
 ## D. Exercise sign-in and consent
 
 1. Start sign-in from the application.
+   The realm login page carries the authorization request's client ID and scopes into password sign-in before returning to the authorization endpoint.
 2. Complete password, MFA, required-action, organization-selection, and consent screens as configured.
 3. Exchange the code once and create the application's local session.
 4. Verify expected `sub`, `iss`, `aud`, scope, role, and organization claims.
